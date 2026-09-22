@@ -1,0 +1,12 @@
+# Windows
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Python helpers under skills/*/scripts
+__pycache__/
+*.pyc
+
+# Written by `install.ps1 -Mode copy` into the install target, never into the repo.
+# Ignored so a copy-installed tree accidentally opened here stays clean.
+.agent-skills-source.json
