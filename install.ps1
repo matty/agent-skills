@@ -64,7 +64,6 @@ param(
 
     [string[]]$Skills = @('*'),
 
-    [ValidateSet('claude', 'codex', 'agents')]
     [string[]]$Targets = @('claude', 'codex'),
 
     [ValidateSet('link', 'copy')]
@@ -76,6 +75,24 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# `pwsh -File` hands every argument over as a plain string, so `-Skills a,b` arrives as the
+# single element "a,b". Split it back out here so the comma form works under -File, -Command
+# and dot-sourcing alike. $Targets is validated below rather than with [ValidateSet], which
+# would reject "claude,codex" before this runs.
+function Expand-ListArg {
+    param([string[]]$Value)
+    @($Value | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+$Skills  = Expand-ListArg $Skills
+$Targets = Expand-ListArg $Targets
+
+$knownTargets = @('claude', 'codex', 'agents')
+$badTargets   = @($Targets | Where-Object { $_ -notin $knownTargets })
+if ($badTargets.Count -gt 0) {
+    throw "unknown target(s): $($badTargets -join ', ') - valid targets are $($knownTargets -join ', ')"
+}
 
 $RepoRoot   = $PSScriptRoot
 $SkillsRoot = Join-Path $RepoRoot 'skills'
