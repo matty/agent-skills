@@ -30,6 +30,7 @@ full installer reference and for how to add or change a skill.
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
 | `blender-to-unity-vrchat` | Scale/axis conventions, FBX export settings, UV2 authoring, modular kits, LODs, collision, plus batch-export / UV2 / mesh-audit `bpy` scripts |
 | `udon-performance` | UdonSharp cost model, event-driven design, sync budgets, ownership, late joiners, pooling |
+| `blender-mesh-topology` | Clean low-count topology: hand-designed grids with 3-to-1 reductions, fair blend surfaces, Quad Remesher from Python with frozen borders, plus grid / remesh / audit / review-render `bpy` scripts |
 
 Facts with a shelf life (VRChat's required Unity version, platform limits, SDK APIs)
 carry a source link in the skill — re-check those rather than trusting the number.
