@@ -66,6 +66,7 @@ Full table in `references/budgets.md`. Starting points:
 | Lighting flat or slow, lightmap bake setup, light probes, VRC Light Volumes, LTCGI, reflection probes, occlusion culling | `vrchat-lighting-and-baking` |
 | VRAM, download size, compression formats, mipmaps, the 100 MB Quest limit | `vrchat-texture-and-vram` |
 | Geometry coming out of Blender: scale, UV2, LODs, colliders, modular kits, batch export | `blender-to-unity-vrchat` |
+| UV distortion, texel density, automated unwrapping and packing with RizomUV | `rizomuv-uv-pipeline` |
 | Scripts, sync, networking, pickups, per-frame Udon cost | `udon-performance` |
 
 ## Rules of thumb that survive contact with reality

@@ -263,6 +263,9 @@ function Install-Skill {
     }
     else {
         Copy-Item -LiteralPath $Skill.FullName -Destination $dest -Recurse -Force
+        # bytecode caches are build output, not part of the skill (git ignores them too)
+        Get-ChildItem -LiteralPath $dest -Directory -Recurse -Filter '__pycache__' |
+            Remove-Item -Recurse -Force
         [pscustomobject]@{
             repo      = $RepoRoot
             skill     = $Skill.Name

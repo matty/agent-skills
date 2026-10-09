@@ -36,6 +36,8 @@ Performance is decided in Blender, before Unity sees anything: how geometry is s
 
 Author UV2 for hero geometry rather than letting Unity generate it — `scripts/lightmap_uv2.py` adds and packs a second channel over a selection with consistent margins. Rules and symptoms: `../vrchat-lighting-and-baking/references/lightmap-uvs.md`.
 
+If RizomUV is installed, or UV0 needs minimum distortion or an exact texel density, use `rizomuv-uv-pipeline` instead: it unwraps both channels headless from Blender and grades them.
+
 ## Materials and atlasing
 
 Material count drives SetPass calls more than triangle count drives anything.
