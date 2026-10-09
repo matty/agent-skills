@@ -6,6 +6,8 @@ skill works in either one.
 
 ## Install
 
+Needs PowerShell 7 (`pwsh`); Windows PowerShell 5.1 won't run it.
+
 ```pwsh
 pwsh -File install.ps1 list                          # what's here, and where it's installed
 pwsh -File install.ps1 install                       # all skills, into Claude Code + Codex
@@ -15,10 +17,29 @@ pwsh -File install.ps1 update -Prune                 # git pull, refresh, drop r
 
 Restart Claude Code / Codex afterwards — both scan for skills at startup.
 
-By default the installer creates directory junctions (no admin rights, no duplication)
-pointing back at this repo, so editing a skill here takes effect immediately. Use
-`-Mode copy` on a machine where this repo isn't kept. See [AGENTS.md](AGENTS.md) for the
-full installer reference and for how to add or change a skill.
+Skills go to `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex). Add
+`-Targets claude,agents,codex` only for an older Codex that still reads `~/.codex/skills`;
+current Codex lists a skill twice if it finds it in both.
+
+**From a git clone** the installer creates directory junctions (no admin rights, no
+duplication) pointing back at the repo, so editing a skill here takes effect immediately.
+Keep the clone where it is: deleting it breaks the junctions.
+
+**From a downloaded zip** it copies the files instead, so you can delete the unzipped
+folder afterwards. Windows may block a script downloaded from the internet, so either
+unblock it first or bypass the policy for this one run:
+
+```pwsh
+Get-ChildItem -Recurse | Unblock-File                # once, in the unzipped folder
+pwsh -File install.ps1 install
+# or
+pwsh -ExecutionPolicy Bypass -File install.ps1 install
+```
+
+To update a zip install, download the new zip and run `install` (or `update`) from it.
+
+`-Mode link` / `-Mode copy` override the automatic choice. See [AGENTS.md](AGENTS.md)
+for the full installer reference and for how to add or change a skill.
 
 ## VRChat world creation (Blender + Unity)
 

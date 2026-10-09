@@ -84,7 +84,7 @@ skill that no longer exists.
 |---|---|
 | `list` | Every repo skill and its state in each target (`Link` / `Copy` / `Foreign` / `Missing`) |
 | `install` | Install the selected skills |
-| `update` | `git pull --ff-only`, then refresh what is already installed |
+| `update` | `git pull --ff-only` (skipped outside a git checkout), then refresh what is already installed |
 | `uninstall` | Remove the selected skills |
 
 ```pwsh
@@ -98,42 +98,59 @@ pwsh -File install.ps1 install -WhatIf               # dry run
 
 ### Targets
 
-| Target | Path |
-|---|---|
-| `claude` | `~/.claude/skills` |
-| `codex` | `~/.codex/skills` |
-| `agents` | `~/.agents/skills` |
+| Target | Path | Read by |
+|---|---|---|
+| `claude` | `~/.claude/skills` | Claude Code |
+| `agents` | `~/.agents/skills` | Codex (its documented user skills folder) |
+| `codex` | `~/.codex/skills` | older Codex builds only |
 
-Default is `-Targets claude,codex`.
+Default is `-Targets claude,agents`. Don't add `codex` alongside `agents` for a current
+Codex: it does not merge same-named skills, so each one would be listed twice. Source:
+https://developers.openai.com/codex/skills (redirects to learn.chatgpt.com/docs/build-skills).
+To move an existing machine off `codex`, install to `agents`, then
+`pwsh -File install.ps1 uninstall -Targets codex`.
 
-**A target root may itself be a link.** On this machine `~/.claude/skills` is a junction
-to `~/.agents/skills`. The installer detects that, resolves it, and installs into the
-real folder — writing per-skill links *inside* an unresolved junction would silently
-land them somewhere else. It prints which folder it chose, and visits a folder once
-even when two targets resolve to it.
+These folders also hold entries this repo doesn't own: Claude Code's `synced/` folder in
+`~/.claude/skills`, Codex's `.system/` in `~/.codex/skills`, and skills installed by other
+tools (which typically put the real folder in `~/.agents/skills` and link it into the
+others). The installer only ever touches entries it manages; anything else is reported as
+`Foreign` and skipped unless you pass `-Force`.
 
-That hub layout is why `~/.agents/skills` can also hold skills that are not in this repo
-(the Marvelous Designer ones, and the `synced/` folder). The installer only ever touches
-entries it manages; anything else is reported as `Foreign` and skipped unless you pass
-`-Force`.
+**A target root may itself be a link** (e.g. `~/.claude/skills` as a junction to
+`~/.agents/skills`). The installer detects that, resolves it, and installs into the real
+folder — writing per-skill links *inside* an unresolved junction would silently land
+them somewhere else. It prints which folder it chose, and visits a folder once even when
+two targets resolve to it.
 
 ### link vs copy
 
-`-Mode link` (default) makes a directory junction from the target to `skills/<name>` in
-this repo. No admin rights, no duplication, and edits are live. It requires the repo to
-stay on disk at that path.
+`-Mode auto` (default) picks `link` when `install.ps1` sits in a git checkout and `copy`
+otherwise, so someone who downloads the zip, installs, and deletes the folder still has
+working skills. `list` and `install` print which mode was chosen and why.
+
+`-Mode link` makes a directory junction from the target to `skills/<name>` in this repo.
+No admin rights, no duplication, and edits are live. It requires the repo to stay on
+disk at that path; deleting or moving it leaves dangling junctions and the skills
+silently disappear.
 
 `-Mode copy` duplicates the files and writes `.agent-skills-source.json` recording the
-commit it came from. Use it where the repo is not kept — a machine that only consumes
-skills, or a sandbox. `update` re-copies these; for junctions `update` has nothing to do
-beyond the `git pull`, and says so.
+commit it came from (`unknown` from a zip). Use it where the repo is not kept — a machine
+that only consumes skills, or a sandbox. `update` re-copies these; for junctions `update`
+has nothing to do beyond the `git pull`, and says so.
+
+`install.ps1` needs PowerShell 7. A downloaded copy may be blocked by the execution
+policy; run `Get-ChildItem -Recurse | Unblock-File` in the folder first, or use
+`pwsh -ExecutionPolicy Bypass -File install.ps1 ...`.
 
 ### On a fresh machine
 
 ```pwsh
-gh repo clone matty/agent-skills ~/code/agent-skills
+git clone https://github.com/matty/agent-skills.git ~/code/agent-skills
 pwsh -File ~/code/agent-skills/install.ps1 install
 ```
+
+Or without git: download the repo zip, unzip, unblock, run `install`, then delete the
+folder (auto mode copies).
 
 ## Conventions
 

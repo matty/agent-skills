@@ -5,13 +5,15 @@
 
 .DESCRIPTION
     Skills live in <repo>/skills/<name>/SKILL.md. This script exposes selected ones
-    to Claude Code and Codex, either as directory junctions (default, no admin rights,
-    edits in the repo are live) or as copies.
+    to Claude Code and Codex, either as directory junctions (no admin rights, edits in
+    the repo are live) or as copies. From a git clone it links; from an unzipped
+    download it copies, so the download folder can be deleted afterwards.
 
     Target roots:
-        claude  ~/.claude/skills
-        codex   ~/.codex/skills
-        agents  ~/.agents/skills
+        claude  ~/.claude/skills   Claude Code
+        agents  ~/.agents/skills   Codex (its current user skills folder)
+        codex   ~/.codex/skills    older Codex builds only - current Codex lists a skill
+                                   twice if it is in both this and ~/.agents/skills
 
     If a target root is itself a junction or symlink (e.g. ~/.claude/skills -> ~/.agents/skills),
     the script resolves it and installs into the real folder, then reports that it did so.
@@ -27,10 +29,12 @@
     Names or wildcards, e.g. -Skills vrchat-*,udon-performance. Default: all.
 
 .PARAMETER Targets
-    Any of claude, codex, agents. Default: claude, codex.
+    Any of claude, agents, codex. Default: claude, agents.
 
 .PARAMETER Mode
-    link (default) creates a junction to the repo, so edits in the repo are live.
+    auto (default) is link when this folder is a git checkout, copy otherwise.
+    link creates a junction to the repo, so edits in the repo are live. The repo must
+         stay where it is - deleting it leaves dangling junctions and the skills vanish.
     copy duplicates the files and records the source commit so `update` can refresh them.
 
 .PARAMETER Prune
@@ -42,7 +46,8 @@
     pointing somewhere else).
 
 .PARAMETER NoPull
-    update only: skip the git pull and just refresh from the working tree.
+    update only: skip the git pull and just refresh from the working tree. Implied when
+    this folder is not a git checkout (e.g. an unzipped download).
 
 .EXAMPLE
     pwsh -File install.ps1 list
@@ -51,7 +56,7 @@
     pwsh -File install.ps1 install -Skills vrchat-*
 
 .EXAMPLE
-    pwsh -File install.ps1 install -Targets agents -Mode copy
+    pwsh -File install.ps1 install -Targets claude,agents,codex
 
 .EXAMPLE
     pwsh -File install.ps1 update -Prune
@@ -64,10 +69,10 @@ param(
 
     [string[]]$Skills = @('*'),
 
-    [string[]]$Targets = @('claude', 'codex'),
+    [string[]]$Targets = @('claude', 'agents'),
 
-    [ValidateSet('link', 'copy')]
-    [string]$Mode = 'link',
+    [ValidateSet('auto', 'link', 'copy')]
+    [string]$Mode = 'auto',
 
     [switch]$Prune,
     [switch]$Force,
@@ -100,6 +105,15 @@ $MarkerName = '.agent-skills-source.json'
 
 if (-not (Test-Path -LiteralPath $SkillsRoot)) {
     throw "No skills folder at $SkillsRoot - is install.ps1 still in the repo root?"
+}
+
+# A zip download has no .git (worktrees have a .git file, hence no -PathType). Junctions
+# into a folder that is about to be deleted would dangle, so auto copies there instead.
+$IsGitCheckout = Test-Path -LiteralPath (Join-Path $RepoRoot '.git')
+$ModeNote = 'from -Mode'
+if ($Mode -eq 'auto') {
+    $Mode     = if ($IsGitCheckout) { 'link' } else { 'copy' }
+    $ModeNote = if ($IsGitCheckout) { 'auto: git checkout' } else { 'auto: not a git checkout' }
 }
 
 # --------------------------------------------------------------------------- helpers
@@ -185,6 +199,8 @@ function Select-RepoSkills {
 }
 
 function Get-RepoCommit {
+    # Without this check, a zip unpacked inside some other repo would report that repo's commit.
+    if (-not $IsGitCheckout) { return 'unknown' }
     $sha = & git -C $RepoRoot rev-parse --short HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $sha) { return "$sha".Trim() }
     return 'unknown'
@@ -305,6 +321,7 @@ $roots     = Get-TargetRoots $Targets
 function Invoke-List {
     Write-Host ""
     Write-Host "repo    $RepoRoot @ $(Get-RepoCommit)"
+    Write-Host "mode    $Mode ($ModeNote)"
     foreach ($root in $roots) { Write-Host "target  $($root.Name.PadRight(14)) $($root.Path)" }
     Write-Host ""
 
@@ -329,6 +346,7 @@ function Invoke-Install {
     param($Selected)
 
     $keep = @($Selected.Name)
+    Write-Skip "mode $Mode ($ModeNote)"
     foreach ($root in $roots) {
         Write-Step "$($root.Name)  ->  $($root.Path)"
         foreach ($skill in $Selected) {
@@ -349,7 +367,10 @@ function Invoke-Install {
 }
 
 function Invoke-Update {
-    if (-not $NoPull) {
+    if (-not $IsGitCheckout) {
+        Write-Skip "not a git checkout - skipping git pull, refreshing copies from $RepoRoot"
+    }
+    elseif (-not $NoPull) {
         Write-Step "git pull --ff-only"
         & git -C $RepoRoot pull --ff-only
         if ($LASTEXITCODE -ne 0) { throw "git pull failed - resolve it, then re-run" }
