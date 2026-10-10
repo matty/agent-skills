@@ -1,6 +1,6 @@
 ---
 name: rizomuv-uv-pipeline
-description: Drive RizomUV headless from Python through RizomUVLink to auto-seam, unfold, optimise and pack UVs with minimum distortion - fileless transfer from Blender, hard-surface and organic presets, exact texel-density packing, lightmap UV2, a distortion and padding gate with retries, stretch maps, and safe parallel batches. Use when RizomUV is installed and UVs need automating or batch processing, when UVs come out stretched, overlapping or badly packed, when enforcing texel density, or when RizomUV's Pack or texel density seems to do nothing; for a Blender-only lightmap UV2 see blender-to-unity-vrchat.
+description: Drive RizomUV headless from Python through RizomUVLink to auto-seam, unfold, optimise and pack UVs with minimum distortion - fileless transfer from Blender, hard-surface and organic presets, exact texel-density packing, lightmap UV2, a distortion and padding gate with retries, stretch maps, and safe parallel batches. Use when RizomUV is installed and UVs need automating or batch processing, when UVs come out stretched, overlapping or badly packed, when enforcing texel density, or when RizomUV's Pack or texel density seems to do nothing; for UV technique in general (seams, padding, stacking, baking rules) see uv-unwrapping, for a Blender-only lightmap UV2 see blender-to-unity-vrchat.
 ---
 
 # RizomUV UV pipeline (headless, from Python)

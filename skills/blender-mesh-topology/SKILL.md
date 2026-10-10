@@ -1,6 +1,6 @@
 ---
 name: blender-mesh-topology
-description: Design clean, low-count, flowing topology for generated or hard-surface Blender meshes - hand-designed column/row grids with regular 3-to-1 reductions, thin-plate (fair) surfaces for blends, flat-part fills, driving Quad Remesher's engine from Python with frozen borders, and validation (mesh audit, joint matching, close-up wire and matcap renders). Use when a mesh shades badly, pinches, has messy or fanned topology, needs a lower quad count without losing its look, or when a generator's layout must be repeatable; not for UVs (see rizomuv-uv-pipeline), rigging or sculpting.
+description: Design clean, low-count, flowing topology for generated or hard-surface Blender meshes - hand-designed column/row grids with regular 3-to-1 reductions, thin-plate (fair) surfaces for blends, flat-part fills, driving Quad Remesher's engine from Python with frozen borders, and validation (mesh audit, joint matching, close-up wire and matcap renders). Use when a mesh shades badly, pinches, has messy or fanned topology, needs a lower quad count without losing its look, or when a generator's layout must be repeatable; not for UVs (see uv-unwrapping), rigging or sculpting.
 ---
 
 # Clean topology for generated meshes

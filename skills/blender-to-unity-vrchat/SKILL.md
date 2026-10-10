@@ -38,6 +38,8 @@ Author UV2 for hero geometry rather than letting Unity generate it — `scripts/
 
 If RizomUV is installed, or UV0 needs minimum distortion or an exact texel density, use `rizomuv-uv-pipeline` instead: it unwraps both channels headless from Blender and grades them.
 
+How to unwrap either channel well (seams, hard edges for baking, texel density, padding, stacking) and a UV audit script: `uv-unwrapping`.
+
 ## Materials and atlasing
 
 Material count drives SetPass calls more than triangle count drives anything.
