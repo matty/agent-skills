@@ -68,7 +68,7 @@ for the full installer reference and for how to add or change a skill.
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
 | `vrchat-world-qa` | Independent stage-by-stage QA for world builds: pass/fail checklists from spec to optimisation, a fixed verdict block, visual review against mockups and plans, plus a `bpy` measurement / ortho-render / overlay script |
 | `vrchat-world-sdk-setup` | Worlds SDK setup and testing: Creator Companion project and Unity version, scene descriptor, reserved and free layers, allowlisted components, ClientSim and multi-client Build & Test, publish fields, cross-platform PC / Android / iOS builds on one blueprint ID |
-| `udon-performance` | UdonSharp cost model, event-driven design, sync budgets, ownership, late joiners, pooling |
+| `vrchat-udon` | Udon / UdonSharp scripting: cost model, event-driven design, sync budgets, ownership, late joiners, pooling |
 
 Facts with a shelf life (VRChat's required Unity version, platform limits, SDK APIs)
 carry a source link in the skill — re-check those rather than trusting the number.

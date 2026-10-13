@@ -94,10 +94,10 @@ skill that no longer exists.
 
 ```pwsh
 pwsh -File install.ps1 list
-pwsh -File install.ps1 install -Skills vrchat-*,udon-performance
+pwsh -File install.ps1 install -Skills vrchat-*,blender-to-unity
 pwsh -File install.ps1 install                       # all of them
 pwsh -File install.ps1 update -Prune
-pwsh -File install.ps1 uninstall -Skills udon-performance
+pwsh -File install.ps1 uninstall -Skills vrchat-udon
 pwsh -File install.ps1 install -WhatIf               # dry run
 ```
 

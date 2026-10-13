@@ -103,7 +103,7 @@ ledger. The pipeline still runs; that stage just gets less specialist guidance.
 | 7 | Substance MCP; `references/texturing.md` | Blender procedural materials and bakes (`references/texturing.md`) |
 | 10 | `blender-unity-placement-sync`, `unity-batching-and-instancing`, `vrchat-texture-and-vram`, `vrchat-world-sdk-setup` | Placement by hand through Unity MCP, flagged: user moves are not tracked. Scene setup from the official VRChat creator docs |
 | 11 | `vrchat-lighting-and-baking` | Baked lighting with Unity defaults, flagged for extra QA |
-| 12 | `udon-performance`; `vrchat-world-sdk-setup` for ClientSim and multi-client testing | Event-driven UdonSharp, manual sync, no `Update()` |
+| 12 | `vrchat-udon`; `vrchat-world-sdk-setup` for ClientSim and multi-client testing | Event-driven UdonSharp, manual sync, no `Update()` |
 | 13 | `vrchat-world-optimization`; `vrchat-world-sdk-setup` for platform builds | `vrchat-world-qa` stage 13 checklist |
 | every task | `vrchat-world-qa` for the QA agent | QA agent uses the stage's acceptance checks from the brief |
 

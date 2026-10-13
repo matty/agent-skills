@@ -1,9 +1,9 @@
 ---
-name: udon-performance
-description: Write and fix UdonSharp scripts for VRChat worlds with performance and networking in mind - avoiding Update, caching lookups, event-driven design, sync variable budgets, manual vs continuous sync, late joiners, ownership, object pooling and toggling expensive objects. Use when Udon scripts cost frametime, when networking is laggy, desynced or "clogged", or when designing interactive world systems.
+name: vrchat-udon
+description: Write, design and fix Udon / UdonSharp scripts for VRChat worlds with performance and networking in mind - avoiding Update, caching lookups, event-driven design, sync variable budgets, manual vs continuous sync, late joiners, ownership, object pooling and toggling expensive objects. Use when Udon scripts cost frametime, when networking is laggy, desynced or "clogged", or when designing interactive world systems.
 ---
 
-# Udon / UdonSharp performance
+# Udon and UdonSharp for VRChat worlds
 
 **Udon runs 200×–1000× slower than the equivalent compiled C#.** That single fact drives every rule here. Code that would be free in a normal Unity project is a frametime problem in a VRChat world, and it is multiplied by however many copies of the behaviour exist in the scene.
 

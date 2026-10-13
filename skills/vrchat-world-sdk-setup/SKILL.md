@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-sdk-setup
-description: Set up, test and prepare a VRChat world for publishing with the Worlds SDK - Creator Companion project and the required Unity version, the VRC Scene Descriptor (spawns, respawn height, reference camera), VRChat's reserved and free layers, allowlisted and SDK components (pickups, object sync, stations, mirrors, spatial audio, portals), ClientSim testing in Play mode, Build & Test with several clients, the publish fields (capacity, content warnings, tags, thumbnail), and cross-platform PC / Android (Quest) / iOS builds on one blueprint ID. Use when creating or fixing a world scene's VRChat setup, when players spawn wrong, fall forever or cannot interact, when objects end up on the wrong layer after upload, when testing a world before upload, when preparing PC and Quest versions, or when a build or upload fails SDK validation; for Udon script design see udon-performance, for performance and budgets see vrchat-world-optimization, for lighting see vrchat-lighting-and-baking.
+description: Set up, test and prepare a VRChat world for publishing with the Worlds SDK - Creator Companion project and the required Unity version, the VRC Scene Descriptor (spawns, respawn height, reference camera), VRChat's reserved and free layers, allowlisted and SDK components (pickups, object sync, stations, mirrors, spatial audio, portals), ClientSim testing in Play mode, Build & Test with several clients, the publish fields (capacity, content warnings, tags, thumbnail), and cross-platform PC / Android (Quest) / iOS builds on one blueprint ID. Use when creating or fixing a world scene's VRChat setup, when players spawn wrong, fall forever or cannot interact, when objects end up on the wrong layer after upload, when testing a world before upload, when preparing PC and Quest versions, or when a build or upload fails SDK validation; for Udon script design see vrchat-udon, for performance and budgets see vrchat-world-optimization, for lighting see vrchat-lighting-and-baking.
 ---
 
 # VRChat world SDK setup
@@ -63,14 +63,14 @@ object.
 | Need | Component | Notes |
 |---|---|---|
 | Pick up an object | VRC Pickup + Rigidbody + collider | Put it on the Pickup layer; set Respawn behaviour in the descriptor |
-| Sync a moving object | VRC Object Sync | One per synced object; costs network budget (`udon-performance`) |
+| Sync a moving object | VRC Object Sync | One per synced object; costs network budget (`vrchat-udon`) |
 | Seats, vehicles | VRC Station | Needs an entry and exit point; test sitting and leaving in ClientSim |
 | Mirror | VRC Mirror Reflection | Expensive: off by default behind a toggle, layer mask trimmed (`vrchat-lighting-and-baking` for cost) |
 | Positional sound | AudioSource + VRC Spatial Audio Source | Audio is restricted on Android: test the Quest build |
 | Portal to another world | VRC Portal Marker | |
 | Avatar pedestal | VRC Avatar Pedestal | |
 | UI that players click | Canvas + VRC Ui Shape | |
-| Logic | Udon / UdonSharp behaviours | Design rules: `udon-performance` |
+| Logic | Udon / UdonSharp behaviours | Design rules: `vrchat-udon` |
 
 ## 5. Colliders and walkability
 

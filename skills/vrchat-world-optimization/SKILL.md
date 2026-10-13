@@ -38,7 +38,7 @@ Typical order of real wins in a VRChat world:
 3. **Texture memory** — the usual cause of "stutters on load / eats all my VRAM" → `vrchat-texture-and-vram`.
 4. **Draw calls and material count** → `unity-batching-and-instancing`.
 5. **Transparency / overdraw** — stacked alpha-blended layers destroy Quest fill rate; prefer opaque or cutout.
-6. **Udon** — runs 200×–1000× slower than compiled C# → `udon-performance`.
+6. **Udon** — runs 200×–1000× slower than compiled C# → `vrchat-udon`.
 7. **Triangles** — usually the *least* important item here. A 1M-tri world with 30 draw calls beats a 200k-tri world with 900.
 
 ### 3. Fix, re-measure, record
@@ -69,7 +69,7 @@ Full table in `references/budgets.md`. Starting points:
 | Structuring a modular kit across .blend files | `blender-kit-library` |
 | Too many triangles in a mesh, bad shading, messy topology | `blender-mesh-topology` |
 | UV layout, texel density, padding, lightmap UV2 authoring | `uv-unwrapping` (`rizomuv-uv-pipeline` to automate it with RizomUV) |
-| Scripts, sync, networking, pickups, per-frame Udon cost | `udon-performance` |
+| Scripts, sync, networking, pickups, per-frame Udon cost | `vrchat-udon` |
 | Scene descriptor, spawns, layers, testing, Android / iOS builds and upload prep | `vrchat-world-sdk-setup` |
 | Layout moved in Unity and Blender out of step | `blender-unity-placement-sync` |
 | Checking a fix or a stage against budgets, with evidence | `vrchat-world-qa` |

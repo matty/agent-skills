@@ -135,7 +135,7 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 ## 12 - Interactivity (Udon developer)
 
 - `T-UDON-<id>`, one per entry in `interactivity`: UdonSharp, event-driven, sync as specified. Brief: load
-  `udon-performance`.
+  `vrchat-udon`.
 - QA: I1-I4.
 
 ## 13 - Optimisation audit (optimiser)

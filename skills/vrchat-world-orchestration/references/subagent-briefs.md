@@ -164,7 +164,7 @@ Load: `vrchat-lighting-and-baking`. Writes: the world scene's lighting objects, 
 Checks: L1-L5.
 
 **Stage 12, T-UDON-shop_doors (Udon developer).** Goal: the interaction as described in the spec, synced as
-specified, no `Update()`. Load: `udon-performance`. Writes: `Assets/World/Scripts/`, the objects it adds
+specified, no `Update()`. Load: `vrchat-udon`. Writes: `Assets/World/Scripts/`, the objects it adds
 behaviours to. Checks: I1-I4.
 
 **Stage 13, T-OPT (optimiser).** Goal: every budget measured per platform and met; a report of the numbers. Load:

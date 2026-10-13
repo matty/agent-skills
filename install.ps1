@@ -26,7 +26,7 @@
     uninstall  Remove the selected skills from the selected targets.
 
 .PARAMETER Skills
-    Names or wildcards, e.g. -Skills vrchat-*,udon-performance. Default: all.
+    Names or wildcards, e.g. -Skills vrchat-*,blender-to-unity. Default: all.
 
 .PARAMETER Targets
     Any of claude, agents, codex. Default: claude, agents.
