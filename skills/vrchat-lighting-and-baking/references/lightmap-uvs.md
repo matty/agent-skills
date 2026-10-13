@@ -12,15 +12,19 @@ Unity bakes lightmaps into the **second UV channel** (`UV1` in Blender terms / `
 
 ## Authoring UV2 in Blender (preferred)
 
-Control beats Unity's automatic packer for hero geometry:
+Control beats Unity's automatic packer for hero geometry. How to make a good UV2 is the `uv-unwrapping` skill's
+job (and `rizomuv-uv-pipeline` automates it); without either, the minimum that bakes cleanly:
 
-1. Add a second UV map named `UVMap.001` / `Lightmap` (Object Data Properties → UV Maps → +). Order matters, not name: the second slot becomes UV2 in Unity.
-2. With it active: `U → Lightmap Pack` (island margin ~0.2–0.4), or `Smart UV Project` (angle limit 66°, island margin 0.02–0.05) for cleaner results on architectural shapes.
-3. `UV → Average Islands Scale` then re-pack to equalize texel density.
-4. Keep the mesh's UV0 untouched — re-unwrapping the wrong channel is the most common accident.
-5. Export FBX with both UV layers (default). In Unity, leave *Generate Lightmap UVs* **off** for these meshes.
+1. Add a **second** UV map (order matters, not name: the second slot becomes UV2 in Unity). Never re-unwrap UV0 by
+   accident: make the new map active first.
+2. Unwrap it into few, large charts cut at hard angles: Smart UV Project at about 66 deg works for architecture.
+   Blender's Lightmap Pack makes one chart per face and suits only very simple meshes.
+3. Average Islands Scale, then pack with padding in **pixels at the rectangle the mesh will get in the lightmap**
+   (its footprint, below), not at 1024: 2 texels minimum, 4 safer. A margin chosen for a whole 1024 map is a
+   fraction of a texel on a small object and bleeds.
+4. Export with both UV layers; in Unity leave *Generate Lightmap UVs* **off** for these meshes.
 
-The `blender-to-unity-vrchat` skill ships a script that adds and packs a second UV channel across selected objects with a consistent margin; `uv-unwrapping` can audit and pack one too.
+Footprint in pixels = sqrt(surface area in m2) x lightmap texels per metre x Scale In Lightmap.
 
 ## Letting Unity generate them
 
@@ -49,13 +53,14 @@ Unity regenerates on every reimport, so a change to the mesh reshuffles the atla
 
 ## Practical texel-density guide
 
-Lightmap resolution is *texels per unit* and units are metres.
+Lightmap resolution is *texels per unit* and units are metres. This skill owns these numbers.
 
 | Surface | Texels/unit |
 |---|---|
-| Large outdoor terrain, skybox-lit ground | 2–5 |
-| General interior walls/floors | 8–15 |
-| Hero surface with crisp contact shadows | 20–40 |
-| Small props | let Scale In Lightmap drop them to 0.25–0.5× |
+| Large outdoor terrain, skybox-lit ground | 2-5 |
+| Facades and exteriors seen from a distance | 6-10 |
+| General interior walls/floors | 10-20 |
+| Hero surface with crisp contact shadows | 20-40 |
+| Small props | let Scale In Lightmap drop them to 0.25-0.5x |
 
 Set the scene value at the low end and promote individual renderers. That is the single biggest lever on bake time and build size.

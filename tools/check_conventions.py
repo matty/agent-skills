@@ -2,7 +2,7 @@
 
 Skills in this repo are independent (see AGENTS.md), so a few facts live in more than one skill: the kit piece
 naming pattern, the VRChat platform budgets, the FBX export settings, the Blender -> Unity axis conversion, the
-kit_status values, and one script shipped identically in two skills. This finds every copy and fails if any
+VR texel-density classes, the kit_status values, and one script shipped identically in two skills. This finds every copy and fails if any
 disagrees with the canonical value below. When a fact changes, change CANON here and every copy it lists.
 
 Host: plain Python 3.9+, standard library. Run from anywhere:
@@ -28,6 +28,8 @@ CANON = {
     },
     "kit_status": ["grey", "modelled", "uv", "textured", "exported"],
     "axis_text": "(-x, z, -y)",
+    "texel_rule": "1150 / d",
+    "texel_classes": [("512", "0-3"), ("256", "3-6"), ("128", "6-12"), ("64", "> 12")],
 }
 
 # Row labels (regex, case-insensitive) for the budget tables in markdown.
@@ -208,6 +210,20 @@ def main():
     for rel in ("vrchat-world-orchestration/SKILL.md", "vrchat-world-orchestration/references/world-spec.md"):
         if not re.search(status_re, read(rel)):
             fail(rel, "kit_status values are not %s" % ", ".join(CANON["kit_status"]))
+
+    for rel in ("uv-unwrapping/SKILL.md", "uv-unwrapping/references/texel-density.md",
+                "rizomuv-uv-pipeline/SKILL.md", "rizomuv-uv-pipeline/references/texel-density.md"):
+        text = read(rel)
+        if CANON["texel_rule"] not in text:
+            fail(rel, "does not state the texel rule %s" % CANON["texel_rule"])
+        if rel.endswith("rizomuv-uv-pipeline/SKILL.md"):
+            if "512 / 256 / 128 / 64" not in text:
+                fail(rel, "texel classes are not 512 / 256 / 128 / 64")
+            continue
+        for px, dist in CANON["texel_classes"]:
+            # the class and its distance band appear together on one line (a table row or a sentence)
+            if not any(re.search(r"(?<!\d)%s(?!\d)" % px, line) and dist in line for line in text.splitlines()):
+                fail(rel, "texel class %s px/m at %s m not found" % (px, dist))
 
     check_identical("blender-to-unity-vrchat/scripts/kit_library.py",
                     "vrchat-world-orchestration/scripts/kit_library.py")

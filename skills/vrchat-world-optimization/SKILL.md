@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-optimization
-description: Triage and fix performance problems in VRChat worlds built in Unity - framerate drops, high draw calls, VRAM blowout, long downloads, Quest/Android builds failing the 100 MB limit. Use when asked to optimize, profile or audit a world, when planning a performance budget before building, or when choosing between batching, atlasing, LODs, occlusion culling and baked lighting. Routes to the deeper skills for instancing, lighting, textures, Blender export and Udon.
+description: Triage and fix performance problems in VRChat worlds built in Unity - framerate drops, high draw calls, VRAM blowout, long downloads, Quest/Android builds failing the 100 MB limit. Use when asked to optimize, profile or audit a world, when planning a performance budget before building, or when choosing between batching, atlasing, LODs, occlusion culling and baked lighting. Routes to the deeper skills for instancing, lighting, textures, Blender export, topology, UVs and Udon; for a whole world build from brief to upload, vrchat-world-orchestration is the entry point and calls this skill for its final audit.
 ---
 
 # VRChat world optimization
@@ -63,11 +63,15 @@ Full table in `references/budgets.md`. Starting points:
 | Symptom / task | Skill |
 |---|---|
 | Too many draw calls, repeated props, GPU instancing, atlasing, `DrawMeshInstanced` | `unity-batching-and-instancing` |
-| Lighting flat or slow, lightmap bake setup, light probes, VRC Light Volumes, LTCGI, reflection probes, occlusion culling | `vrchat-lighting-and-baking` |
+| Lighting flat or slow, lightmap bake setup and resolution, light probes, VRC Light Volumes, LTCGI, reflection probes, occlusion culling | `vrchat-lighting-and-baking` |
 | VRAM, download size, compression formats, mipmaps, the 100 MB Quest limit | `vrchat-texture-and-vram` |
-| Geometry coming out of Blender: scale, UV2, LODs, colliders, modular kits, batch export | `blender-to-unity-vrchat` |
-| UV distortion, texel density, automated unwrapping and packing with RizomUV | `rizomuv-uv-pipeline` |
+| Geometry coming out of Blender: scale, LODs, colliders, modular kits, batch export | `blender-to-unity-vrchat` |
+| Too many triangles in a mesh, bad shading, messy topology | `blender-mesh-topology` |
+| UV layout, texel density, padding, lightmap UV2 authoring | `uv-unwrapping` (`rizomuv-uv-pipeline` to automate it with RizomUV) |
 | Scripts, sync, networking, pickups, per-frame Udon cost | `udon-performance` |
+| Layout moved in Unity and Blender out of step | `blender-unity-placement-sync` |
+| Checking a fix or a stage against budgets, with evidence | `vrchat-world-qa` |
+| Building or rebuilding a whole world end to end | `vrchat-world-orchestration` (it calls this skill for its final audit) |
 
 ## Rules of thumb that survive contact with reality
 

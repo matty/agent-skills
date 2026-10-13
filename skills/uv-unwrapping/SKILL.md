@@ -104,7 +104,7 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 |---|---|---|
 | First-person games | 1024 (10.24 px/cm) | industry convention, https://help.maxon.net/c4d/en-us/Content/html/Texel_Density.html |
 | Third-person games | 512 (5.12 px/cm) | same |
-| VR: what a headset resolves at distance d | about 1150 / d (770 at 1.5 m, 380 at 3 m) | Derived in the `rizomuv-uv-pipeline` skill (texel density), with classes 512 / 256 / 128 / 64 px/m by nearest viewing distance |
+| VR: what a headset resolves at distance d | about 1150 / d (770 at 1.5 m, 380 at 3 m) | `references/texel-density.md`: classes T512 / T256 / T128 / T64 px/m by nearest viewing distance (0-3 / 3-6 / 6-12 / > 12 m) |
 
 - **Blender has no texel-density tool** (4.2 to 5.2). Average Islands Scale (`uv.average_islands_scale()`) only
   evens islands out relative to each other. Set an absolute density with `uv_audit.set_texel_density(objs,
@@ -116,7 +116,7 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 - Vary it on purpose: hidden faces (undersides, backs against walls) smaller, faces seen up close larger, but keep
   each island internally even.
 - Map size for a unique texture: `next_pow2(px_per_m x sqrt(area_m2 / coverage))` with coverage about 0.65, capped
-  by the platform (`rizomuv-uv-pipeline` has `texture_size()`).
+  by the platform (`references/texel-density.md`).
 
 ## 7. Packing and padding
 
@@ -185,7 +185,7 @@ Rules from the Unity 2022.3 manual (the VRChat version, 2022.3.22f1):
   Margin assumes the mesh fills a whole 1024 lightmap.
 
 Footprint sizing, Unity's settings and lightmap symptoms: the `vrchat-lighting-and-baking` skill. `uv_audit.pack`
-(with `layer=1`) packs the second UV layer here; `blender-to-unity-vrchat` also ships a one-shot UV2 script.
+(with `layer=1`) packs the second UV layer here, for the footprint the mesh will get.
 
 ## 10. Symptom, cause, fix
 

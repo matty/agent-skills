@@ -1,51 +1,22 @@
 # Texel density: choosing it, packing to it, checking it
 
-How many texels per metre a surface should get, and how to make RizomUV deliver exactly that. Worked out for a
+How to make RizomUV deliver exactly the texel density a surface should get. Worked out for a
 PC VRChat dark ride (9 Oct 2026), where every viewing position is known; the method carries to any world.
 
 ## Contents
 
-- Principle: match the display
-- Classes by viewing distance
-- Shared trims and tiling materials
+- Choosing the density
 - Unique textures: size and pack
 - Lightmaps are a separate density
 - Checks
 
-## Principle: match the display
+## Choosing the density
 
-A texture only needs as many texels per metre as the headset shows pixels per metre at the closest distance anyone
-sees the surface from. Fewer looks soft; more is memory the GPU never samples (it reads a smaller mip).
-
-A headset shows roughly 20 pixels per degree (Index about 14, Quest 3 about 25, Bigscreen Beyond about 32; take
-horizontal pixels per eye divided by the horizontal field of view for any other device, and re-check these as
-headsets change). One metre at distance d spans 57.3 / d degrees, so at 20 ppd the screen shows about
-
-    px_per_m = 1150 / d          770 at 1.5 m, 380 at 3 m, 190 at 6 m, 95 at 12 m
-
-## Classes by viewing distance
-
-Quantise to powers of two so textures and trims line up:
-
-| Class | Nearest viewing distance | Target | Typical surfaces |
-|---|---|---|---|
-| T512 | 0-3 m | 512 px/m | anything within arm's reach of a seat or a walkway, the vehicle itself, door reveals |
-| T256 | 3-6 m | 256 px/m | the far side of a room, upper walls, most ceilings |
-| T128 | 6-12 m | 128 px/m | back walls of large halls, beds beyond a hedge, a facade seen across a garden |
-| T64 | > 12 m | 64 px/m | skyline, treeline cards, the sky dome |
-
-When viewers follow a fixed path (a ride), measure it: sample eye points along the path for every seat, take the
-shortest distance from any of them to each placed instance, and assign its class automatically. In a walkable
-world, use the nearest point a player can stand, at eye height. A prop used in several places takes the class
-of its nearest instance.
-
-## Shared trims and tiling materials
-
-One density everywhere (512 px/m for a T512-led world), authored once: a 2048 trim sheet covers 4 m of strip; a
-2048 tile repeats every 4 m. Far surfaces use the **same** material and sample lower mips. Do not make
-lower-density copies: they cost a material and a texture, break batching and instancing, and save nothing. Raise
-anisotropic filtering (4+) on floors seen at grazing angles. Trim UVs are best generated where the mesh is built
-(exact strip coordinates); RizomUV `Hotspot` can match irregular pieces to trim rectangles.
+The density comes from viewing distance: about `1150 / d` px/m at 20 pixels per degree, quantised into classes
+T512 (0-3 m), T256 (3-6 m), T128 (6-12 m) and T64 (> 12 m). Shared trims and tiling materials keep one density
+everywhere (512 px/m for a T512-led world) and far surfaces sample lower mips; never make lower-density copies.
+The derivation, class assignment and trim rules are in the `uv-unwrapping` skill (texel density); this file is how
+RizomUV delivers a chosen density exactly.
 
 ## Unique textures: size and pack
 
@@ -79,7 +50,7 @@ Padding: 8 px at 1024 keeps islands one pixel apart down to the 128 px mip; scal
 ## Lightmaps are a separate density
 
 Lightmaps are measured in texels per metre per scene, much lower than textures (interiors around 20, close-up
-surfaces 30, tunnels 12, exteriors 8 and facades 6 in the ride; see `vrchat-lighting-and-baking` for scene
+surfaces 30, tunnels 12, exteriors 8 and facades 6 in the ride; the `vrchat-lighting-and-baking` skill owns scene
 lightmap resolution and Scale In Lightmap). Unity and Bakery give each renderer its own rectangle, so pack each
 mesh's UV2 on its own, filling the tile, at the size that rectangle will have:
 

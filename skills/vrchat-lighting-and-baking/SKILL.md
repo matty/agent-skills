@@ -1,6 +1,6 @@
 ---
 name: vrchat-lighting-and-baking
-description: Set up and debug lighting for VRChat worlds in Unity Built-in RP - lightmap baking (Progressive and Bakery), lightmap UVs and texel density, light probes vs VRC Light Volumes, reflection probes, LTCGI area lights, mirrors, and occlusion culling. Use when lighting looks flat, avatars render black or wrongly lit, bakes take forever or produce seams and splotches, lightmaps bloat the build, or realtime lights are killing framerate.
+description: Set up and debug lighting for VRChat worlds in Unity Built-in RP - lightmap baking (Progressive and Bakery), lightmap UVs and texel density, light probes vs VRC Light Volumes, reflection probes, LTCGI area lights, mirrors, and occlusion culling. Use when lighting looks flat, avatars render black or wrongly lit, bakes take forever or produce seams and splotches, lightmaps bloat the build, or realtime lights are killing framerate; this skill owns lightmap resolution, footprint and bake settings, while how to unwrap the lightmap UV2 itself is uv-unwrapping.
 ---
 
 # VRChat world lighting and baking
@@ -20,7 +20,7 @@ Getting only one half right is the classic failure: a beautiful baked room where
 
 1. **Lighting mode**: Baked Indirect or Mixed → *Shadowmask* on PC; **Subtractive** on Quest (one directional light baking shadows, nothing realtime).
 2. **Mark geometry**: Contribute GI + Lightmap Static on anything that should receive baked light. Props that move must *not* be static.
-3. **Lightmap UVs**: either author UV2 in Blender (better control, see `blender-to-unity-vrchat`) or tick *Generate Lightmap UVs* on import. Rules and failure modes in `references/lightmap-uvs.md`.
+3. **Lightmap UVs**: either author UV2 in Blender (better control; how to unwrap it well is the `uv-unwrapping` skill) or tick *Generate Lightmap UVs* on import. Rules and failure modes in `references/lightmap-uvs.md`.
 4. **Texel density**: set the scene *Lightmap Resolution* (texels per unit) low — 5–15 for large worlds — and raise *Scale In Lightmap* only on surfaces that show detail (shadow-catching floors, hero walls). Blanket-raising the scene resolution is how bakes end up at 8 × 2048 maps and 200 MB.
 5. **Lightmap size**: 1024 on Quest, 1024–2048 on PC. Fewer, well-packed maps beat many sparse ones. Check Lighting → Baked Lightmaps to see what you actually produced.
 6. **Directional mode**: Non-Directional halves lightmap memory and is the right default on Quest; Directional only where normal-mapped detail must respond to baked light.

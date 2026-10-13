@@ -1,6 +1,6 @@
 ---
 name: rizomuv-uv-pipeline
-description: Drive RizomUV headless from Python through RizomUVLink to auto-seam, unfold, optimise and pack UVs with minimum distortion - fileless transfer from Blender, hard-surface and organic presets, exact texel-density packing, lightmap UV2, a distortion and padding gate with retries, stretch maps, and safe parallel batches. Use when RizomUV is installed and UVs need automating or batch processing, when UVs come out stretched, overlapping or badly packed, when enforcing texel density, or when RizomUV's Pack or texel density seems to do nothing; for UV technique in general (seams, padding, stacking, baking rules) see uv-unwrapping, for a Blender-only lightmap UV2 see blender-to-unity-vrchat.
+description: Drive RizomUV headless from Python through RizomUVLink to auto-seam, unfold, optimise and pack UVs with minimum distortion - fileless transfer from Blender, hard-surface and organic presets, exact texel-density packing, lightmap UV2, a distortion and padding gate with retries, stretch maps, and safe parallel batches. Use when RizomUV is installed and UVs need automating or batch processing, when UVs come out stretched, overlapping or badly packed, when enforcing texel density, or when RizomUV's Pack or texel density seems to do nothing; for UV technique in general (seams, padding, stacking, baking rules, choosing a texel density, a Blender-only lightmap UV2) see uv-unwrapping.
 ---
 
 # RizomUV UV pipeline (headless, from Python)
@@ -19,7 +19,7 @@ misbehaves on every mesh (`references/verifying-an-install.md`).
 | Curved or organic props, revolved bodies, anything without obvious seams | **RizomUV, `organic`**. Blender's unwrap cannot open a closed body by itself, and Smart UV Project leaves visible stretch on curves (urn angular p95 1.09 against 1.43) |
 | Hard-surface kit pieces | RizomUV, `hard`, with the structural seams marked. Blender's Minimum Stretch on the same seams comes close; RizomUV packs tighter |
 | Trim-sheet and tiling surfaces | neither: generate UVs where the mesh is built, at world scale. RizomUV `Hotspot` only for irregular pieces |
-| A lightmap UV2 with no RizomUV | `blender-to-unity-vrchat` (its UV2 script) or `uv-unwrapping` (its audit packs a lightmap layer) |
+| A lightmap UV2 with no RizomUV | `uv-unwrapping` (its audit packs a lightmap layer for the footprint) |
 
 ## 2. Unwrap
 
@@ -147,7 +147,7 @@ per degree), quantised into classes (512 / 256 / 128 / 64 px/m). Shared trims an
 density everywhere; unique textures are sized `ru.texture_size(TD, area_m2)` (`next_pow2(TD x sqrt(area / 0.65))`)
 and packed at that density with `pack_spec(..., px_per_unit=TD)`. The lightmap UV defaults to a fixed 128 px pack;
 `uv2="footprint"` sizes it from the mesh's area at `lightmap_texels_per_m`, which is what Unity and Bakery will
-give the renderer. How to measure, assign and check it: `references/texel-density.md`.
+give the renderer. Packing to it and checking it: `references/texel-density.md`; why these numbers: the `uv-unwrapping` skill.
 
 ## 8. Batches and parallel work
 
