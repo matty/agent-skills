@@ -1,0 +1,276 @@
+"""Read-only measurements for world QA: kit pieces, placements, linking, plus orthographic review renders and overlays.
+
+Host: Blender 4.1+ (bpy), no add-ons. Changes nothing in the file and never saves it.
+
+Command line (open the file read-only; one JSON report, one summary line per piece):
+    blender -b KIT_Arch_Exterior.blend --python qa_measure.py -- --module 1.0 --json report.json
+    blender -b MASTER.blend --python qa_measure.py -- --module 1.0 --json report.json
+            --render top --center 15 13 --extent 30 27 --px-per-m 20 --png plan_render.png
+    blender -b MASTER.blend --python qa_measure.py -- --render front --center 8 20 3 --extent 12 6 --px-per-m 40
+            --png elev.png --overlay world/diagrams/elevation_square_north_row.svg --overlay-out elev_overlay.svg
+
+From a live Blender (Blender MCP execute_blender_code), without saving:
+    ns = {}; exec(open(r"<skill>/scripts/qa_measure.py", encoding="utf-8").read(), ns)
+    rep = ns["measure"](module=1.0)          # dict: pieces, placements, libraries, appended, stray
+    ns["problems"](rep, piece_tris={"EXT": 800})
+
+Per piece collection (name <FAMILY>_<Type>_<Size>_<Variant>): name check, LOD0 triangles (modifiers applied),
+materials, UV layer count, n-gons, edges shared by more than two faces, loose vertices, non-identity object
+transforms, bounds and extents in grid modules against the Size token, and the `kit_status` custom property.
+Per placement (collection instance): asset, linked or local, position and Z rotation, on-grid and 90-degree checks.
+Per file: linked libraries, kit-named collections that are local copies (appended, not linked), stray meshes.
+Deeper checks belong to the specialist skills: UV distortion, padding and texel density (uv-unwrapping),
+topology flow (blender-mesh-topology), export settings (blender-to-unity-vrchat).
+"""
+
+import json
+import math
+import os
+import re
+import sys
+
+import bmesh
+import bpy
+from mathutils import Matrix, Vector
+
+NAME_RE = re.compile(r"^([A-Z]{2,5})_[A-Za-z0-9]+_(\d+(?:x\d+){0,2}|Free)_[A-Z]\d?$")
+EPS = 1e-4
+
+
+def _identity(mw):
+    return all(abs(mw[i][j] - (1.0 if i == j else 0.0)) < EPS for i in range(4) for j in range(4))
+
+
+def _mesh_stats(ob, depsgraph):
+    ev = ob.evaluated_get(depsgraph)
+    me = ev.to_mesh()
+    try:
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        tris = sum(len(f.verts) - 2 for f in bm.faces)
+        ngons = sum(1 for f in bm.faces if len(f.verts) > 4)
+        over = sum(1 for e in bm.edges if len(e.link_faces) > 2)
+        boundary = sum(1 for e in bm.edges if len(e.link_faces) == 1)
+        loose = sum(1 for v in bm.verts if not v.link_edges)
+        bm.free()
+    finally:
+        ev.to_mesh_clear()
+    return {"tris": tris, "ngons": ngons, "edges_over_2_faces": over, "boundary_edges": boundary,
+            "loose_verts": loose, "uv_layers": len(ob.data.uv_layers),
+            "materials": [s.material.name if s.material else None for s in ob.material_slots]}
+
+
+def _bounds(objs):
+    lo, hi = Vector((math.inf,) * 3), Vector((-math.inf,) * 3)
+    for ob in objs:
+        for c in ob.bound_box:
+            p = ob.matrix_world @ Vector(c)
+            lo, hi = Vector(map(min, lo, p)), Vector(map(max, hi, p))
+    return lo, hi
+
+
+def measure_piece(coll, module, depsgraph):
+    m = NAME_RE.match(coll.name)
+    rep = {"piece": coll.name, "name_ok": bool(m), "kit_status": coll.get("kit_status"), "objects": {},
+           "transform_issues": []}
+    objs = list(coll.all_objects)
+    render = [o for o in objs if o.type == "MESH" and not o.name.endswith("_COL")]
+    for ob in objs:
+        if not _identity(ob.matrix_world):
+            rep["transform_issues"].append(ob.name)
+        if ob.type == "MESH":
+            rep["objects"][ob.name] = _mesh_stats(ob, depsgraph)
+    lod0 = [o for o in render if "_LOD" not in o.name or o.name.endswith("_LOD0")]
+    rep["lod0_tris"] = sum(rep["objects"][o.name]["tris"] for o in lod0)
+    rep["has_collision"] = any(o.name.endswith("_COL") for o in objs)
+    if render:
+        lo, hi = _bounds(render)
+        rep["bounds_m"] = [round(v, 4) for v in (*lo, *hi)]
+        ext = [(hi[i] - lo[i]) / module for i in range(3)]
+        rep["extent_modules"] = [round(e, 3) for e in ext]
+        if m and m.group(2) != "Free":
+            want = [int(t) for t in m.group(2).split("x")]
+            grid = [e for e in ext if e >= 0.5]
+            rep["size_ok"] = [round(e) for e in grid] == want and all(abs(e - round(e)) <= 0.01 for e in grid)
+            rep["pivot_ok"] = all(abs(v) <= 0.01 for v in lo)
+    return rep
+
+
+def measure(module=1.0, scene=None):
+    scene = scene or bpy.context.scene
+    dg = bpy.context.evaluated_depsgraph_get()
+    local_kit = [c for c in bpy.data.collections if c.library is None and NAME_RE.match(c.name)]
+    linked_names = {c.name for c in bpy.data.collections if c.library is not None}
+    places = []
+    for ob in scene.objects:
+        if ob.instance_type == "COLLECTION" and ob.instance_collection is not None:
+            coll = ob.instance_collection
+            loc, rot, _s = ob.matrix_world.decompose()
+            rz = math.degrees(rot.to_euler().z)
+            grid_piece = bool(NAME_RE.match(coll.name)) and NAME_RE.match(coll.name).group(2) != "Free"
+            places.append({
+                "object": ob.name, "asset": coll.name, "linked": coll.library is not None,
+                "id": ob.get("placement_id"), "pos": [round(v, 4) for v in loc], "rot_z": round(rz, 3),
+                "on_grid": (not grid_piece) or all(abs(v / module - round(v / module)) < 1e-3 for v in loc[:2]),
+                "right_angle": (not grid_piece) or abs((rz + 360.0) % 90.0) < 1e-2 or abs((rz + 360.0) % 90.0 - 90) < 1e-2,
+            })
+    used_locally = {p["asset"] for p in places if not p["linked"]}
+    owned = {o.name for c in local_kit for o in c.all_objects}
+    return {
+        "file": bpy.data.filepath,
+        "module": module,
+        "libraries": [lib.filepath for lib in bpy.data.libraries],
+        "pieces": [measure_piece(c, module, dg) for c in sorted(local_kit, key=lambda c: c.name)],
+        "placements": places,
+        # a kit-named local collection that is also placed here is a copy, not a link
+        "appended": sorted(n for n in used_locally if NAME_RE.match(n)),
+        "shadowing_linked": sorted(c.name for c in local_kit if c.name in linked_names),
+        "stray_meshes": sorted(o.name for o in scene.objects
+                               if o.type == "MESH" and o.library is None and o.name not in owned),
+    }
+
+
+def problems(rep, piece_tris=None):
+    """Readable failures. piece_tris: {family: max LOD0 triangles}."""
+    out = []
+    for p in rep["pieces"]:
+        n = p["piece"]
+        if not p["name_ok"]:
+            out.append("%s: name does not follow <FAMILY>_<Type>_<Size>_<Variant>" % n)
+        if p["transform_issues"]:
+            out.append("%s: non-identity transforms on %s" % (n, ", ".join(p["transform_issues"])))
+        if p.get("size_ok") is False:
+            out.append("%s: extents %s modules do not match the Size token" % (n, p.get("extent_modules")))
+        if p.get("pivot_ok") is False:
+            out.append("%s: min corner %s not at the origin" % (n, p.get("bounds_m", [])[:3]))
+        fam = n.split("_")[0]
+        if piece_tris and fam in piece_tris and p["lod0_tris"] > piece_tris[fam]:
+            out.append("%s: %d LOD0 tris > budget %d" % (n, p["lod0_tris"], piece_tris[fam]))
+        for on, st in p["objects"].items():
+            if st["ngons"]:
+                out.append("%s/%s: %d n-gons" % (n, on, st["ngons"]))
+            if st["edges_over_2_faces"]:
+                out.append("%s/%s: %d edges shared by 3+ faces" % (n, on, st["edges_over_2_faces"]))
+            if st["loose_verts"]:
+                out.append("%s/%s: %d loose vertices" % (n, on, st["loose_verts"]))
+            if None in st["materials"]:
+                out.append("%s/%s: empty material slot" % (n, on))
+    for pl in rep["placements"]:
+        if not pl["on_grid"]:
+            out.append("placement %s (%s) off grid at %s" % (pl["object"], pl["asset"], pl["pos"][:2]))
+        if not pl["right_angle"]:
+            out.append("placement %s (%s) rotated %s deg" % (pl["object"], pl["asset"], pl["rot_z"]))
+    out += ["%s is placed from a local copy (appended), not linked" % n for n in rep["appended"]]
+    out += ["local collection %s shadows a linked one of the same name" % n for n in rep["shadowing_linked"]]
+    return out
+
+
+# Camera direction (eye towards target) and up, Blender axes. An elevation of a facade facing south is "front",
+# north "back", east "right", west "left"; a plan is "top".
+VIEWS = {
+    "top": ((0, 0, -1), (0, 1, 0)), "front": ((0, 1, 0), (0, 0, 1)), "back": ((0, -1, 0), (0, 0, 1)),
+    "right": ((-1, 0, 0), (0, 0, 1)), "left": ((1, 0, 0), (0, 0, 1)),
+}
+
+
+def render_ortho(path, view, center, extent, px_per_m=20.0, distance=200.0):
+    """Orthographic Workbench render of everything visible. view: top/front/back/right/left ("front" looks along +Y,
+    so it shows a facade facing south). extent: (width, height) in metres of the framed area. Restores the scene."""
+    scene = bpy.context.scene
+    fwd, up = (Vector(v) for v in VIEWS[view])
+    c = Vector((list(center) + [0, 0, 0])[:3])
+    cam_data = bpy.data.cameras.new("qa_cam")
+    cam_data.type = "ORTHO"
+    cam_data.ortho_scale = max(extent)
+    cam_data.clip_end = distance * 2
+    cam = bpy.data.objects.new("qa_cam", cam_data)
+    scene.collection.objects.link(cam)
+    right = fwd.cross(up)
+    cam.matrix_world = Matrix.Translation(c - fwd * distance) @ Matrix((right, up, -fwd)).transposed().to_4x4()
+    saved = (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
+             scene.render.resolution_percentage, scene.render.filepath, scene.render.film_transparent)
+    try:
+        scene.camera = cam
+        try:
+            scene.render.engine = "BLENDER_WORKBENCH"
+        except TypeError as exc:
+            print("[qa] cannot select Workbench:", exc)
+        scene.render.resolution_x = max(16, int(round(extent[0] * px_per_m)))
+        scene.render.resolution_y = max(16, int(round(extent[1] * px_per_m)))
+        scene.render.resolution_percentage = 100
+        scene.render.film_transparent = True
+        scene.render.filepath = path
+        bpy.ops.render.render(write_still=True)
+    finally:
+        (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
+         scene.render.resolution_percentage, scene.render.filepath, scene.render.film_transparent) = saved
+        bpy.data.objects.remove(cam)
+        bpy.data.cameras.remove(cam_data)
+    return path
+
+
+def overlay_svg(render_png, reference, out_svg, opacity=0.5, size=None):
+    """An SVG that lays a reference drawing over a render at the same scale, for any browser to open. A reference
+    SVG with a data-frame attribute (spec_to_svg output) is cropped to its drawn area; a PNG is stretched to the
+    render. The render must cover the same world area: a plan's zone bounds, an elevation's width x height."""
+    w, h = size or tuple(bpy.data.images.load(render_png, check_existing=True).size[:])
+    rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(out_svg))).replace("\\", "/")
+    ref = '<image href="%s" width="%d" height="%d" opacity="%g" preserveAspectRatio="none"/>' % (
+        rel(reference), w, h, opacity)
+    if reference.lower().endswith(".svg"):
+        with open(reference, encoding="utf-8") as f:
+            head = f.read(2000)
+        frame = re.search(r'data-frame="([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)"', head)
+        full = re.search(r'<svg[^>]* width="([\d.]+)" height="([\d.]+)"', head)
+        if frame and full:
+            fx, fy, fw, fh = frame.groups()
+            ref = ('<svg width="%d" height="%d" viewBox="%s %s %s %s" preserveAspectRatio="none" opacity="%g">'
+                   '<image href="%s" width="%s" height="%s"/></svg>'
+                   % (w, h, fx, fy, fw, fh, opacity, rel(reference), full.group(1), full.group(2)))
+    with open(out_svg, "w", encoding="utf-8") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">'
+                '<rect width="100%%" height="100%%" fill="#fff"/><image href="%s" width="%d" height="%d"/>%s</svg>\n'
+                % (w, h, rel(render_png), w, h, ref))
+    return out_svg
+
+
+def _main():
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if not argv:
+        return
+    import argparse
+    ap = argparse.ArgumentParser(prog="qa_measure.py")
+    ap.add_argument("--module", type=float, default=1.0)
+    ap.add_argument("--json")
+    ap.add_argument("--piece-tris", help='JSON, e.g. {"EXT": 800}')
+    ap.add_argument("--render", choices=sorted(VIEWS))
+    ap.add_argument("--center", type=float, nargs="+")
+    ap.add_argument("--extent", type=float, nargs=2)
+    ap.add_argument("--px-per-m", type=float, default=20.0)
+    ap.add_argument("--png")
+    ap.add_argument("--overlay")
+    ap.add_argument("--overlay-out")
+    a = ap.parse_args(argv)
+    rep = measure(a.module)
+    probs = problems(rep, json.loads(a.piece_tris) if a.piece_tris else None)
+    for p in rep["pieces"]:
+        print("%-32s %6d tris  status=%s" % (p["piece"], p["lod0_tris"], p["kit_status"]))
+    print("[qa] %d piece(s), %d placement(s), %d librar(ies)" % (len(rep["pieces"]), len(rep["placements"]),
+                                                                  len(rep["libraries"])))
+    for p in probs:
+        print("[qa] PROBLEM " + p)
+    if a.json:
+        rep["problems"] = probs
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump(rep, f, indent=2)
+    if a.render:
+        render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m)
+        print("[qa] rendered " + a.png)
+        if a.overlay:
+            size = (max(16, int(round(a.extent[0] * a.px_per_m))), max(16, int(round(a.extent[1] * a.px_per_m))))
+            print("[qa] overlay " + overlay_svg(a.png, a.overlay, a.overlay_out or a.png + ".overlay.svg",
+                                               size=size))
+
+
+if __name__ == "__main__":
+    _main()
