@@ -80,7 +80,8 @@ same collection, with the same name, pivot and extents. kit_status = modelled on
 
 ## Load these skills first
 - blender-mesh-topology: clean low-count topology for the window and door surrounds
-- blender-to-unity-vrchat: kit piece rules and mesh hygiene before export
+- blender-kit-library: kit piece rules
+- blender-to-unity: mesh hygiene before export
 
 ## Inputs (read only)
 - world/spec.yaml excerpt:
@@ -132,7 +133,7 @@ Load: none (paste `world-spec.md`). Inputs: brief, intake answers, mockups. Writ
 Writes: `world/spec.yaml`. Checks: P1-P4, S1, S3.
 
 **Stage 4, T-GREY-EXT (kit modeller).** Goal: every EXT piece as a collection of box geometry at its exact extents,
-pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-to-unity-vrchat`. Writes:
+pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-kit-library`. Writes:
 `blender/kits/KIT_Arch_Exterior.blend`. Checks: B1. Fallback: the kit rules in `world-spec.md`.
 
 **Stage 4, T-GREY-MASTER (integrator, live Blender).** Goal: MASTER laid out from `zones[].placements` with linked
@@ -151,7 +152,7 @@ Writes: `blender/textures/EXT/`, `blender/substance/EXT/`, the materials in the 
 Writes: `blender/MASTER.blend`. Checks: A1-A5.
 
 **Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`.
-Load: `blender-to-unity-vrchat`. Writes: `export/fbx/EXT/`, the KIT file (status only). Checks: E1-E4. Fallback:
+Load: `blender-to-unity`. Writes: `export/fbx/EXT/`, the KIT file (status only). Checks: E1-E4. Fallback:
 the export settings listed in `stages.md`.
 
 **Stage 10, T-UNITY-SYNC-MASTER (Unity integrator).** Goal: Unity's MASTER root matches Blender's MASTER, snapshot

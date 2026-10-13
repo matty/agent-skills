@@ -1,6 +1,6 @@
 ---
 name: blender-unity-placement-sync
-description: Keep a modular layout in step between Blender and Unity - every placed kit piece or assembly gets a stable id, both sides dump their placements to JSON, and a three-way merge against the last synced snapshot pushes Blender moves to Unity and Unity moves back to the MASTER or ASM .blend without losing either, with conflicts, duplicates, deletions and Unity-only additions reported instead of overwritten. Use when a Blender layout must be rebuilt in Unity as prefab instances, when someone moved, rotated, added, deleted or re-organised pieces in Unity and Blender must catch up (or the reverse), when placements were lost or reset after a re-export, or when setting up a repeatable layout round trip; for kit file structure and Unity packaging see blender-to-unity-vrchat.
+description: Keep a modular layout in step between Blender and Unity - every placed kit piece or assembly gets a stable id, both sides dump their placements to JSON, and a three-way merge against the last synced snapshot pushes Blender moves to Unity and Unity moves back to the MASTER or ASM .blend without losing either, with conflicts, duplicates, deletions and Unity-only additions reported instead of overwritten. Use when a Blender layout must be rebuilt in Unity as prefab instances, when someone moved, rotated, added, deleted or re-organised pieces in Unity and Blender must catch up (or the reverse), when placements were lost or reset after a re-export, or when setting up a repeatable layout round trip; for kit file structure see blender-kit-library, for Unity packaging see blender-to-unity.
 ---
 
 # Blender <-> Unity placement sync
@@ -10,7 +10,8 @@ instances, Unity places prefab instances. Exporting geometry does not move place
 merged FBX throws away whatever was done in Unity. This skill syncs **placements only**, both ways, and never
 silently overwrites a change.
 
-What it relies on (`blender-to-unity-vrchat` covers how to set these up; this skill only needs them to hold):
+What it relies on (`blender-kit-library` and `blender-to-unity` cover how to set these up; this skill only needs
+them to hold):
 
 | Side | Requirement |
 |---|---|

@@ -18,7 +18,7 @@ checks; fixes go back to the builder.
 3. **Measure with tools**, not by eye. `scripts/qa_measure.py` covers names, triangles, materials, UV layers,
    transforms, pivots, extents, placements and linking on its own. For depth, load the specialist skill named in
    the check (UV audit from `uv-unwrapping`, joint matching from `blender-mesh-topology`, export checks from
-   `blender-to-unity-vrchat`) and use its own tools; if it is not installed, use the check's fallback and say so in
+   `blender-to-unity`) and use its own tools; if it is not installed, use the check's fallback and say so in
    the evidence. Save raw outputs under `world/reports/qa/<task>/` and cite them.
 4. **Look**: render the result from the views the spec and mockups define and compare (`references/visual-review.md`).
    A thing that passes every number but does not look like the approved mockup or plan still fails `G4`.

@@ -65,7 +65,8 @@ Full table in `references/budgets.md`. Starting points:
 | Too many draw calls, repeated props, GPU instancing, atlasing, `DrawMeshInstanced` | `unity-batching-and-instancing` |
 | Lighting flat or slow, lightmap bake setup and resolution, light probes, VRC Light Volumes, LTCGI, reflection probes, occlusion culling | `vrchat-lighting-and-baking` |
 | VRAM, download size, compression formats, mipmaps, the 100 MB Quest limit | `vrchat-texture-and-vram` |
-| Geometry coming out of Blender: scale, LODs, colliders, modular kits, batch export | `blender-to-unity-vrchat` |
+| Geometry coming out of Blender: scale, LODs, colliders, batch export | `blender-to-unity` |
+| Structuring a modular kit across .blend files | `blender-kit-library` |
 | Too many triangles in a mesh, bad shading, messy topology | `blender-mesh-topology` |
 | UV layout, texel density, padding, lightmap UV2 authoring | `uv-unwrapping` (`rizomuv-uv-pipeline` to automate it with RizomUV) |
 | Scripts, sync, networking, pickups, per-frame Udon cost | `udon-performance` |

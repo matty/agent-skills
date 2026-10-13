@@ -97,7 +97,7 @@ ledger. The pipeline still runs; that stage just gets less specialist guidance.
 
 | Stage | Load | If it is not installed |
 |---|---|---|
-| 4, 5, 8, 9 | `blender-to-unity-vrchat` (kit files, export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md` and the export settings in `references/stages.md` |
+| 4, 5, 8, 9 | `blender-kit-library` (kit files), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md` and the export settings in `references/stages.md` |
 | 5 | `blender-mesh-topology` | Brief carries the topology checks from `vrchat-world-qa` |
 | 6 | `uv-unwrapping`; `rizomuv-uv-pipeline` if RizomUV is installed | Blender Smart UV Project plus a manual texel-density pass, flagged for extra QA |
 | 7 | Substance MCP; `references/texturing.md` | Blender procedural materials and bakes (`references/texturing.md`) |

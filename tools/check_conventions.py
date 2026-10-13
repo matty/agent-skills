@@ -176,12 +176,12 @@ def check_identical(*rels):
 
 
 def main():
-    check_regex_py("blender-to-unity-vrchat/scripts/kit_library.py", "NAME_RE", "piece_re")
-    check_regex_py("blender-to-unity-vrchat/scripts/kit_library.py", "ASM_RE", "asm_re")
+    check_regex_py("blender-kit-library/scripts/kit_library.py", "NAME_RE", "piece_re")
+    check_regex_py("blender-kit-library/scripts/kit_library.py", "ASM_RE", "asm_re")
     check_regex_py("vrchat-world-orchestration/scripts/spec_validate.py", "NAME_RE", "piece_re")
     check_regex_py("vrchat-world-orchestration/scripts/spec_validate.py", "ASM_RE", "asm_re")
     check_regex_py("vrchat-world-qa/scripts/qa_measure.py", "NAME_RE", "piece_re")
-    for rel in ("blender-to-unity-vrchat/references/kit-library.md",
+    for rel in ("blender-kit-library/SKILL.md",
                 "vrchat-world-orchestration/references/world-spec.md"):
         check_regex_md(rel, "piece_re")
         check_regex_md(rel, "asm_re")
@@ -195,8 +195,8 @@ def main():
     check_budget_py("vrchat-world-orchestration/scripts/spec_validate.py")
     check_budget_template("vrchat-world-orchestration/templates/spec.yaml")
 
-    check_patterns("blender-to-unity-vrchat/scripts/batch_export_fbx.py", FBX_CODE, "FBX settings")
-    for rel in ("blender-to-unity-vrchat/references/fbx-export.md",
+    check_patterns("blender-to-unity/scripts/batch_export_fbx.py", FBX_CODE, "FBX settings")
+    for rel in ("blender-to-unity/references/fbx-export.md",
                 "blender-unity-placement-sync/SKILL.md",
                 "vrchat-world-orchestration/references/stages.md"):
         check_patterns(rel, FBX_TEXT, "FBX settings")
@@ -225,7 +225,7 @@ def main():
             if not any(re.search(r"(?<!\d)%s(?!\d)" % px, line) and dist in line for line in text.splitlines()):
                 fail(rel, "texel class %s px/m at %s m not found" % (px, dist))
 
-    check_identical("blender-to-unity-vrchat/scripts/kit_library.py",
+    check_identical("blender-kit-library/scripts/kit_library.py",
                     "vrchat-world-orchestration/scripts/kit_library.py")
 
     if FAIL:

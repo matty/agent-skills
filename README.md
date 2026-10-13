@@ -45,6 +45,7 @@ for the full installer reference and for how to add or change a skill.
 
 | Skill | Covers |
 |---|---|
+| `blender-kit-library` | Modular kits across .blend files: KIT / ASM / MASTER files, linking instead of appending, piece naming, grid modules and pivots, one writer per file, plus a create / link / place / audit `bpy` script |
 | `blender-mesh-topology` | Clean low-count topology: hand-designed grids with 3-to-1 reductions, fair blend surfaces, Quad Remesher from Python with frozen borders, plus grid / remesh / audit / review-render `bpy` scripts |
 | `uv-unwrapping` | Entry point for UVs: tiling, trim, unique or lightmap UVs, seams and hard edges for baking, distortion, texel density, padding in pixels per mip, stacking and mirroring, lightmap UV rules, Blender UV operators from Python, engine notes (Unity), plus a UV audit / texel-density / pack `bpy` script |
 | `rizomuv-uv-pipeline` | RizomUV driven headless from Python (RizomUVLink): fileless transfer from Blender, seam presets, minimum-distortion unwrap with a measured quality gate, texel-density and lightmap packing, the undocumented Pack behaviour, plus launcher / unwrap / metrics / Blender bridge / process pool / smoke-test scripts |
@@ -53,6 +54,7 @@ for the full installer reference and for how to add or change a skill.
 
 | Skill | Covers |
 |---|---|
+| `blender-to-unity` | Scale/axis conventions, FBX export settings, UV0/UV2 channel rules, atlasing, per-piece Unity folders, prefabs and shared materials, LODs, collision, VRChat notes, plus batch-export / mesh-audit `bpy` scripts |
 | `blender-unity-placement-sync` | Two-way layout sync between MASTER/ASM .blend files and Unity: stable placement ids, three-way merge against the last synced snapshot, conflict / duplicate / deletion handling, plus `bpy` dump/apply, plain-Python merge and Unity editor scripts |
 
 ## VRChat world creation (Blender + Unity)
@@ -64,7 +66,6 @@ for the full installer reference and for how to add or change a skill.
 | `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, instancing-ready shader code |
 | `vrchat-lighting-and-baking` | Lightmap baking, lightmap UVs and texel density, VRC Light Volumes, probes, reflection probes, LTCGI, mirrors, occlusion culling |
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
-| `blender-to-unity-vrchat` | Scale/axis conventions, FBX export settings, UV0/UV2 channel rules, modular kits as KIT / ASM / MASTER .blend files with linked collections, piece naming and pivots, per-piece Unity folders and prefabs, LODs, collision, plus batch-export / mesh-audit / kit-library `bpy` scripts |
 | `vrchat-world-qa` | Independent stage-by-stage QA for world builds: pass/fail checklists from spec to optimisation, a fixed verdict block, visual review against mockups and plans, plus a `bpy` measurement / ortho-render / overlay script |
 | `vrchat-world-sdk-setup` | Worlds SDK setup and testing: Creator Companion project and Unity version, scene descriptor, reserved and free layers, allowlisted components, ClientSim and multi-client Build & Test, publish fields, cross-platform PC / Android / iOS builds on one blueprint ID |
 | `udon-performance` | UdonSharp cost model, event-driven design, sync budgets, ownership, late joiners, pooling |

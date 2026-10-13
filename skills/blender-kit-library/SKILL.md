@@ -1,8 +1,14 @@
-# Kit library: KIT, ASM and MASTER .blend files
+---
+name: blender-kit-library
+description: Organise a modular environment kit across several Blender files - KIT files (one per visual family, one collection per piece), ASM files of linked assemblies and a layout-only MASTER file, linking instead of appending, library overrides, relative paths and reloading, piece naming (<FAMILY>_<Type>_<Size>_<Variant>), grid modules and bottom-left pivots, one writer per .blend, plus a script that creates, links, places and audits pieces. Use when building a modular kit or a large scene in Blender, when copies of a piece drift apart or stop being identical, when several agents or people must work on one environment at once, when deciding how kit pieces are named, sized or pivoted, or when a scene's .blend files need structuring; engine-neutral - for getting pieces into Unity see blender-to-unity, for syncing a layout with Unity see blender-unity-placement-sync.
+---
 
-How to lay out a modular world across several .blend files so pieces are edited in one place, every copy stays
-identical (and so instances in Unity), and several agents or people can work at once without overwriting each other.
-Helpers: `../scripts/kit_library.py`.
+# Blender kit library: KIT, ASM and MASTER files
+
+How to lay out a modular environment across several .blend files so pieces are edited in one place, every copy stays
+identical (so an engine can instance it), and several agents or people can work at once without overwriting each
+other. Engine-neutral: it ends at well-formed piece collections, whatever engine they go to.
+Helpers: `scripts/kit_library.py`.
 
 ## The three layers
 
@@ -18,7 +24,7 @@ Edits always happen in the lowest layer that owns the thing: geometry in KIT, ar
 
 - **Link** collections (`File > Link`, or `kit_library.link_piece`) and place them as **collection instances**. Every
   instance points at the one collection in the KIT file, so editing the piece updates every placement and every copy
-  stays an identical mesh (which is what GPU instancing in Unity needs).
+  stays an identical mesh (which is what GPU instancing in an engine needs).
 - **Append** copies the data into the file. The copy drifts from the kit at the first edit and the instancing is gone.
   Do not append kit pieces into ASM or MASTER.
 - **Library overrides** only when an instance genuinely needs a local change Blender cannot get otherwise (rare in a
@@ -64,7 +70,7 @@ Regex: `^[A-Z]{2,5}_[A-Za-z0-9]+_(\d+(x\d+){0,2}|Free)_[A-Z]\d?$`, and `^ASM_[A-
 
 The **collection** carries the piece name. Inside it: the render mesh with the same name (or `_LOD0`, `_LOD1`...
 siblings), and an optional `<Piece>_COL` collision shell. Names are load-bearing: linking, FBX export (one FBX per
-collection), Unity prefab paths and placement sync all key on them. Renaming a piece is a breaking change. Do it in
+collection), engine prefab or asset names and placement sync all key on them. Renaming a piece is a breaking change. Do it in
 the KIT file, then re-link and re-place everywhere, and note it in the ledger.
 
 ## Grid, pivots and scale
@@ -99,3 +105,9 @@ from a KIT never see a half-written file, but two writers to the same file silen
 and instance offset at zero, unapplied transforms, footprint against the `Size` token at the grid module, materials
 outside the family's `M_<FAMILY>_*` set, missing UV2, and stray objects outside any piece collection. It changes
 nothing.
+
+## Getting the kit into an engine
+
+Export one file per piece collection (FBX or glTF), named after the collection, at identity transform. For Unity
+(export settings, per-piece folders, prefabs, shared family materials): `blender-to-unity`. To keep a MASTER layout
+and a Unity scene in step both ways: `blender-unity-placement-sync`.

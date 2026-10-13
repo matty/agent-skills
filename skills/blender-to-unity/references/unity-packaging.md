@@ -1,7 +1,7 @@
 # Packaging kit pieces in Unity
 
 How exported kit pieces land in a Unity project so each one can be found, swapped or deleted on its own, while
-architecture still shares materials (and so draw calls). Pairs with `kit-library.md` on the Blender side.
+architecture still shares materials (and so draw calls). Pairs with the `blender-kit-library` skill on the Blender side.
 
 ## Folder layout
 

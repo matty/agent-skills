@@ -53,7 +53,7 @@ after seeing the result. Give every mockup a view, and add one view per zone at 
 
 ## Kit rules
 
-These hold whether or not `blender-to-unity-vrchat` (which covers kit libraries in depth) is installed.
+These hold whether or not `blender-kit-library` (which covers kit libraries in depth) is installed.
 
 ### Files
 

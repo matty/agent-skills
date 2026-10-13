@@ -1,7 +1,7 @@
 """Kit library helpers: KIT pieces as collections, linked and placed as collection instances.
 
-Kit rules (naming, pivots, KIT / ASM / MASTER files): the kit-library reference in blender-to-unity-vrchat, or
-world-spec.md in vrchat-world-orchestration. This file ships identically in both skills; keep the copies the same
+Kit rules (naming, pivots, KIT / ASM / MASTER files): the blender-kit-library skill's SKILL.md, or world-spec.md in
+vrchat-world-orchestration. This file ships identically in both skills; keep the copies the same
 (tools/check_conventions.py in the agent-skills repo checks it).
 
 Host: Blender 4.1+ (bpy), no add-ons.

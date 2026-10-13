@@ -1,4 +1,4 @@
-# FBX export settings for Unity / VRChat, annotated
+# FBX export settings for Unity, annotated
 
 Blender's FBX exporter, static world geometry. Defaults are fine for most fields; these are the ones that matter.
 

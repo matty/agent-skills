@@ -20,7 +20,7 @@ transforms, bounds and extents in grid modules against the Size token, and the `
 Per placement (collection instance): asset, linked or local, position and Z rotation, on-grid and 90-degree checks.
 Per file: linked libraries, kit-named collections that are local copies (appended, not linked), stray meshes.
 Deeper checks belong to the specialist skills: UV distortion, padding and texel density (uv-unwrapping),
-topology flow (blender-mesh-topology), export settings (blender-to-unity-vrchat).
+topology flow (blender-mesh-topology), export settings (blender-to-unity).
 """
 
 import json

@@ -15,7 +15,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | `qa_measure` | Piece names, LOD0 tris, materials, UV layer count, n-gons, bad edges, transforms, extents vs Size, pivots, `kit_status`; placements on grid and at right angles; linked vs appended; ortho renders and overlays | `scripts/qa_measure.py` (this skill) |
 | UV audit | Distortion, texel density, padding, overlap, seams vs hard edges | Load `uv-unwrapping` (or `rizomuv-uv-pipeline` for its metrics) |
 | Topology audit | Joint matching between pieces, shading review renders | Load `blender-mesh-topology` |
-| Export checks | FBX settings and re-import test | Load `blender-to-unity-vrchat` |
+| Export checks | FBX settings and re-import test | Load `blender-to-unity` |
 | Spec validator | Schema, names, budgets, ledger graph | The validator that ships with the pipeline skill (`vrchat-world-orchestration`), else check the spec by hand against these lists |
 | Placement report | Last merge and commit result per scope | `world/placements/<scope>.report.txt`, written by `blender-unity-placement-sync` |
 | Unity MCP | Import settings, hierarchy, console, Stats, screenshots | MCP tools |
