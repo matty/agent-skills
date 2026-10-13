@@ -117,3 +117,6 @@ before touching the matrix in `export_placements.py`.
 4. Move the same one differently on both sides: merge exits 2 with one conflict; resolve it with `--take-id`.
 5. Duplicate one in Unity and move the copy: the copy becomes a new placement in Blender; the original keeps its id.
 6. Delete one in Blender: it disappears in Unity. Commit after each step must succeed.
+
+Last full pass: 2026-10-14, Blender 5.2.2 and Unity 2022.3.22f1 (a VRChat world project), including a re-parent
+into a folder in Unity (not an edit) and a duplicate made with Ctrl+D after a script reload.

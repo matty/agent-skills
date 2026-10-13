@@ -26,7 +26,7 @@ using UnityEngine.SceneManagement;
 
 namespace PlacementSync
 {
-    [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; }
+    [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; public string name; }
     [Serializable] public class Dump { public string scope; public string side = "unity"; public Item[] items; public string[] assets; }
     [Serializable] public class Assign { public string key; public string id; }
     [Serializable] public class Plan { public string scope; public string side; public Assign[] assign; public string[] delete; public Item[] update; public Item[] create; }
@@ -229,6 +229,15 @@ namespace PlacementSync
             return string.Join("/", parts);
         }
 
+        // Readable hierarchy path for reports only; never used to find an object (names need not be unique).
+        static string NameOf(Transform root, Transform t)
+        {
+            var parts = new List<string>();
+            for (var c = t; c != null && c != root; c = c.parent) parts.Add(c.name);
+            parts.Reverse();
+            return string.Join("/", parts);
+        }
+
         static Item ToItem(Transform root, Transform t)
         {
             var pos = root.InverseTransformPoint(t.position);
@@ -244,6 +253,7 @@ namespace PlacementSync
                 rot = new[] { rot.x, rot.y, rot.z, rot.w },
                 scl = new[] { ls.x / rs.x, ls.y / rs.y, ls.z / rs.z },
                 key = KeyOf(root, t),
+                name = NameOf(root, t),
             };
         }
 

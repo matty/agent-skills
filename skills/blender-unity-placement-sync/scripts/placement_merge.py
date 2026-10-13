@@ -83,6 +83,11 @@ def _state(item):
     return {k: item[k] for k in ("asset", "pos", "rot", "scl")}
 
 
+def label(it):
+    """How a report names an object: Unity's hierarchy path when the dump has one, else its key."""
+    return it.get("name") or it["key"]
+
+
 def resolve_ids(items, base, side, assigns):
     """id -> item for one side. Duplicate ids (an object duplicated after it was synced) keep the id on the copy
     closest to the snapshot; the others, and items with no id yet, get fresh ids recorded in `assigns`."""
@@ -103,7 +108,7 @@ def resolve_ids(items, base, side, assigns):
             rest = group[1:]
             if rest:
                 notes.append("%s: id %s on %d objects; kept on %s, re-issued for %s"
-                             % (side, pid, len(group), group[0]["key"], ", ".join(it["key"] for it in rest)))
+                             % (side, pid, len(group), label(group[0]), ", ".join(label(it) for it in rest)))
         else:
             rest = group
         for it in rest:
