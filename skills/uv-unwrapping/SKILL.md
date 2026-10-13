@@ -75,7 +75,7 @@ operator's parameters: [references/blender-uv-tools.md](references/blender-uv-to
   (density): one part of an island gets more texels than another.
 - Measure, do not eyeball: `uv_audit` reports angular p95 (1.00 = shapes kept) and area p95 (log2 of the density
   change inside an island). This repo's gate, measured on real props: **angular p95 <= 1.15 and area p95 <= 0.20**
-  (`rizomuv-uv-pipeline/references/distortion-and-quality.md`). No engine or vendor publishes a number for texture
+  (measured with the `rizomuv-uv-pipeline` skill's grader). No engine or vendor publishes a number for texture
   UVs; Unity's own lightmap unwrapper defaults to 8% angle and 15% area error.
 - In Blender: UV editor Overlays > Display Stretch (`SpaceUVEditor.show_stretch`, `display_stretch_type`
   `ANGLE` or `AREA`; blue = low, red = high), and a generated `UV_GRID` or `COLOR_GRID` image on the material.
@@ -104,7 +104,7 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 |---|---|---|
 | First-person games | 1024 (10.24 px/cm) | industry convention, https://help.maxon.net/c4d/en-us/Content/html/Texel_Density.html |
 | Third-person games | 512 (5.12 px/cm) | same |
-| VR: what a headset resolves at distance d | about 1150 / d (770 at 1.5 m, 380 at 3 m) | `rizomuv-uv-pipeline/references/texel-density.md`, with classes 512 / 256 / 128 / 64 px/m by nearest viewing distance |
+| VR: what a headset resolves at distance d | about 1150 / d (770 at 1.5 m, 380 at 3 m) | Derived in the `rizomuv-uv-pipeline` skill (texel density), with classes 512 / 256 / 128 / 64 px/m by nearest viewing distance |
 
 - **Blender has no texel-density tool** (4.2 to 5.2). Average Islands Scale (`uv.average_islands_scale()`) only
   evens islands out relative to each other. Set an absolute density with `uv_audit.set_texel_density(objs,
@@ -184,8 +184,8 @@ Rules from the Unity 2022.3 manual (the VRChat version, 2022.3.22f1):
   Margin Method **Calculate** with honest Min Lightmap Resolution and Min Object Scale; the manual 4 px Pack
   Margin assumes the mesh fills a whole 1024 lightmap.
 
-Footprint sizing, Unity's settings and lightmap symptoms: `vrchat-lighting-and-baking/references/lightmap-uvs.md`;
-a ready Blender script for UV2: `blender-to-unity-vrchat/scripts/lightmap_uv2.py`.
+Footprint sizing, Unity's settings and lightmap symptoms: the `vrchat-lighting-and-baking` skill. `uv_audit.pack`
+(with `layer=1`) packs the second UV layer here; `blender-to-unity-vrchat` also ships a one-shot UV2 script.
 
 ## 10. Symptom, cause, fix
 

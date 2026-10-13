@@ -88,6 +88,6 @@ me.uv_layers.active_index = 1                     # every UV operator below writ
 5. `ua.audit(ob, layer=1, map_px=footprint_px, pad_px=4, lightmap=True)`: no issues.
 6. In Unity, Generate Lightmap UVs off for this mesh. Check Scene view's UV Overlap draw mode after baking.
 
-The footprint (texels per metre x mesh size x Scale In Lightmap) and the scene settings are in
-`vrchat-lighting-and-baking/references/lightmap-uvs.md`; `rizomuv-uv-pipeline` can size and pack it automatically
+The footprint (texels per metre x mesh size x Scale In Lightmap) and the scene settings are covered by the
+`vrchat-lighting-and-baking` skill; `rizomuv-uv-pipeline` can size and pack it automatically
 (`uv2="footprint"`).

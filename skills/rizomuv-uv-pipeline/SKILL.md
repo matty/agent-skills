@@ -19,7 +19,7 @@ misbehaves on every mesh (`references/verifying-an-install.md`).
 | Curved or organic props, revolved bodies, anything without obvious seams | **RizomUV, `organic`**. Blender's unwrap cannot open a closed body by itself, and Smart UV Project leaves visible stretch on curves (urn angular p95 1.09 against 1.43) |
 | Hard-surface kit pieces | RizomUV, `hard`, with the structural seams marked. Blender's Minimum Stretch on the same seams comes close; RizomUV packs tighter |
 | Trim-sheet and tiling surfaces | neither: generate UVs where the mesh is built, at world scale. RizomUV `Hotspot` only for irregular pieces |
-| A lightmap UV2 with no RizomUV | `blender-to-unity-vrchat/scripts/lightmap_uv2.py` |
+| A lightmap UV2 with no RizomUV | `blender-to-unity-vrchat` (its UV2 script) or `uv-unwrapping` (its audit packs a lightmap layer) |
 
 ## 2. Unwrap
 

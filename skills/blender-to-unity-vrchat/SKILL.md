@@ -46,7 +46,7 @@ family: `references/unity-packaging.md`. Moving a MASTER layout into Unity (and 
 | UV0 | first UV map | Textures. May overlap and tile freely |
 | UV2 | second UV map | **Lightmaps.** No overlap, inside 0–1, padded |
 
-Author UV2 for hero geometry rather than letting Unity generate it — `scripts/lightmap_uv2.py` adds and packs a second channel over a selection with consistent margins. Rules and symptoms: `../vrchat-lighting-and-baking/references/lightmap-uvs.md`.
+Author UV2 for hero geometry rather than letting Unity generate it — `scripts/lightmap_uv2.py` adds and packs a second channel over a selection with consistent margins. Lightmap UV rules, footprint sizing and bake symptoms: the `vrchat-lighting-and-baking` skill.
 
 If RizomUV is installed, or UV0 needs minimum distortion or an exact texel density, use `rizomuv-uv-pipeline` instead: it unwraps both channels headless from Blender and grades them.
 

@@ -20,7 +20,7 @@ Control beats Unity's automatic packer for hero geometry:
 4. Keep the mesh's UV0 untouched — re-unwrapping the wrong channel is the most common accident.
 5. Export FBX with both UV layers (default). In Unity, leave *Generate Lightmap UVs* **off** for these meshes.
 
-There is a ready script at `../../blender-to-unity-vrchat/scripts/lightmap_uv2.py` that adds and packs a second UV channel across selected objects with a consistent margin.
+The `blender-to-unity-vrchat` skill ships a script that adds and packs a second UV channel across selected objects with a consistent margin; `uv-unwrapping` can audit and pack one too.
 
 ## Letting Unity generate them
 

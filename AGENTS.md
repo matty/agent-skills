@@ -13,6 +13,7 @@ skills/<skill-name>/
   SKILL.md          required — YAML frontmatter + the skill body
   references/*.md   optional — detail loaded on demand, one topic per file
   scripts/*         optional — runnable helpers the skill points at
+  templates/*       optional — files the skill tells an agent to copy into a project
 install.ps1         the installer (see below)
 README.md           what each skill covers
 AGENTS.md           this file
@@ -161,3 +162,9 @@ folder (auto mode copies).
   (Blender's `bpy`, plain Python, etc.) — a skill script is often run by an agent that
   has not read the surrounding skill.
 - ASCII in prose; no em dashes in skill bodies, to match the existing files.
+- **Skills are independent.** Each skill works when it is the only one installed: it carries the scripts,
+  conventions and numbers it needs. A skill may *name* another skill ("for automated unwrapping, load
+  `rizomuv-uv-pipeline`") but never points into another skill's `scripts/` or `references/` by path, since
+  installs can be partial and folders move. When two skills need the same convention (piece naming, a budget
+  table), each states it; keep them in agreement when one changes. Skills work together by routing: an
+  orchestrating skill tells an agent which skill to load, and that skill uses its own files.
