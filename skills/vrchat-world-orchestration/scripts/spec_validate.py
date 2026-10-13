@@ -30,7 +30,7 @@ PLATFORM_LIMITS = {
     "quest": {"world_tris": 250000, "view_tris": 100000, "materials": 25, "setpass": 50, "batches": 150,
               "texture_vram_mb": 150, "map_px": 1024, "lightmap_px": 1024},
     "pc": {"world_tris": 1000000, "view_tris": 300000, "materials": 60, "setpass": 150, "batches": 400,
-           "texture_vram_mb": 1500, "map_px": 4096, "lightmap_px": 2048},
+           "texture_vram_mb": 1500, "map_px": 2048, "lightmap_px": 2048},
 }
 QUEST_DOWNLOAD_MB = 100      # hard limit
 HUMAN = {"door_h": 2.1, "door_w": 1.0, "ceiling": 2.6}

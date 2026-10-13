@@ -64,7 +64,8 @@ Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-P
 Kit rules agents need even without other skills: piece = one collection named `<FAMILY>_<Type>_<Size>_<Variant>`,
 mesh objects at identity transform, `instance_offset` zero, walls run along X with thickness in +Y, Size counts
 modules in X, Y, Z skipping axes thinner than half a module; link with relative paths; MASTER and ASM never hold
-geometry. Full rules: `world-spec.md`.
+geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit_library.py` path in the brief:
+`new_piece`, `link_piece`, `reload_libraries`, and `audit_kit` to self-check before reporting.
 
 ## 5 - Kit modelling (kit modellers, parallel per KIT file)
 

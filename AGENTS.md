@@ -15,6 +15,7 @@ skills/<skill-name>/
   scripts/*         optional — runnable helpers the skill points at
   templates/*       optional — files the skill tells an agent to copy into a project
 install.ps1         the installer (see below)
+tools/check_conventions.py   checks conventions duplicated across skills still agree
 README.md           what each skill covers
 AGENTS.md           this file
 ```
@@ -53,7 +54,10 @@ duplicating the material.
 3. Move anything long or narrow into `references/` and link to it from `SKILL.md`.
    `SKILL.md` should stay skimmable; depth lives one hop away.
 4. Update `README.md`'s table when you add or rename a skill.
-5. Commit the skill and its README row together. One skill per commit where practical;
+5. Run `python tools/check_conventions.py` if you touched a naming pattern, a budget number, the FBX export
+   settings, the axis conversion, `kit_status`, or `kit_library.py` (shipped in two skills). It lists every copy
+   that disagrees; update `CANON` in it when a fact really changes.
+6. Commit the skill and its README row together. One skill per commit where practical;
    commit messages are `<skill-name>: what changed`.
 
 ### Adding a skill
