@@ -1,6 +1,6 @@
-# Writing an instancing-compatible shader (Built-in RP + VRChat stereo)
+# Writing an instancing-compatible shader (Built-in RP + single-pass instanced stereo)
 
-Two things share the same machinery in VRChat: **GPU instancing** and **Single Pass Instanced stereo rendering** (each eye is an instance). Get the macros wrong and you either lose instancing or get eye-swapped / one-eye rendering in the headset. Always test in VR, not just the Game view.
+Two things share the same machinery in VR projects that render with Single Pass Instanced stereo (VRChat does): **GPU instancing** and **Single Pass Instanced stereo rendering** (each eye is an instance). Get the macros wrong and you either lose instancing or get eye-swapped / one-eye rendering in the headset. Always test in VR, not just the Game view.
 
 ## Minimal unlit shader with a per-instance color
 

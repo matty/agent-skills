@@ -1,11 +1,12 @@
 ---
 name: unity-batching-and-instancing
-description: Reduce draw calls in Unity Built-in Render Pipeline projects, especially VRChat worlds - GPU instancing, static and dynamic batching, MaterialPropertyBlocks, texture atlasing, and Graphics/VRCGraphics.DrawMeshInstanced from Udon. Use when draw calls or SetPass calls are too high, when repeated props should share one draw call, when instancing "is enabled but not working", or when deciding whether to merge meshes, atlas materials or instance.
+description: Reduce draw calls in Unity Built-in Render Pipeline projects - GPU instancing, static and dynamic batching, MaterialPropertyBlocks, texture atlasing, instancing-ready shaders and Graphics.DrawMeshInstanced, with VRChat notes (VRCGraphics.DrawMeshInstanced from Udon, Quest). Use when draw calls or SetPass calls are too high, when repeated props should share one draw call, when instancing "is enabled but not working", or when deciding whether to merge meshes, atlas materials or instance.
 ---
 
-# Batching and GPU instancing (Built-in RP / VRChat)
+# Batching and GPU instancing (Unity Built-in RP)
 
-VRChat worlds are **Built-in Render Pipeline**. There is **no SRP Batcher**, so the tools are: fewer materials, static batching, GPU instancing, and drawing procedurally. Apply them per object class — a scene needs a mix, not one answer.
+The Built-in Render Pipeline has **no SRP Batcher**, so the tools are: fewer materials, static batching, GPU instancing, and drawing procedurally. Apply them per object class — a scene needs a mix, not one answer. VRChat worlds are Built-in RP; what differs
+there is in `references/vrchat-notes.md`.
 
 ## Pick the right mechanism
 
@@ -14,7 +15,7 @@ VRChat worlds are **Built-in Render Pipeline**. There is **no SRP Batcher**, so 
 | Level geometry, never moves, unique shapes | **Static batching** + material atlasing, chunked per room |
 | Same mesh repeated many times (chairs, bottles, bolts, foliage, kit pieces) | **GPU instancing** |
 | Repeated meshes that must also be lightmapped | Instancing works **only if they bake into the same lightmap texture**; otherwise static-batch them |
-| Thousands of copies, purely decorative, no per-object components | **`VRCGraphics.DrawMeshInstanced`** from Udon |
+| Thousands of copies, purely decorative, no per-object components | **`Graphics.DrawMeshInstanced`** each frame (VRChat: `VRCGraphics.DrawMeshInstanced` from Udon) |
 | Moving objects sharing a mesh and material | GPU instancing (dynamic batching is obsolete and CPU-expensive) |
 | Different meshes, same look | **Atlas the textures**, then one material → static batching becomes possible |
 
@@ -46,7 +47,7 @@ With Unity MCP: `execute_code` to sweep the scene and report renderers grouped b
 ## Static batching, honestly
 
 - It does **not** merge draw calls into one; it merges *state changes* by pre-combining geometry into a combined mesh with submeshes, so consecutive draws avoid mesh binding.
-- The combined mesh is **baked into the build**: more download size, more memory. On Quest this can cost more than it saves — check the build report both ways.
+- The combined mesh is **baked into the build**: more download size, more memory. On mobile targets this can cost more than it saves — check the build report both ways.
 - It breaks if the object moves (it cannot move), and it is incompatible with MaterialPropertyBlocks.
 - **Chunk it.** Mark static per room or per district, not for the entire world, or you lose frustum and occlusion culling.
 
@@ -56,16 +57,16 @@ Legacy CPU-side vertex merging, limited to small meshes (~300 vertices, fewer wi
 
 ## Atlasing: the highest-leverage move
 
-Most VRChat worlds are material-bound, not triangle-bound. Combining 20 prop textures into one 2048 atlas turns 20 SetPass calls into 1 and makes static batching viable.
+Most prop-built scenes are material-bound, not triangle-bound. Combining 20 prop textures into one 2048 atlas turns 20 SetPass calls into 1 and makes static batching viable.
 
 - Atlas **by logical group and locality** (one atlas per room / per kit), not by flattening unrelated assets — a global atlas forces every texture into memory for a single visible prop.
 - Keep lightmap UVs (UV2) intact when re-laying out UV0.
 - Channel-pack metallic/roughness/AO into one texture rather than three.
-- Do the atlasing at authoring time in Blender (`blender-to-unity-vrchat`) so the source of truth is the asset, not an editor script.
+- Do the atlasing at authoring time in Blender (`blender-to-unity`) so the source of truth is the asset, not an editor script.
 
-## Drawing instances from Udon
+## Drawing instances procedurally
 
-For large decorative counts where per-object GameObjects are wasteful, VRChat whitelists `VRCGraphics.DrawMeshInstanced`. It must be called **every frame**, is capped at **1023 matrices per call**, and Unity culls the group as a whole — individual instances are not frustum- or occlusion-culled. Full working pattern, including per-instance colors and the `_Udon` global-property rules, in `references/udon-drawmeshinstanced.md`.
+For large decorative counts where per-object GameObjects are wasteful, `Graphics.DrawMeshInstanced` draws up to **1023 matrices per call**. It must be called **every frame**, and the instances are not individually frustum- or occlusion-culled, so a thousand of them behind a wall still cost vertex work. In VRChat, Udon cannot call `Graphics.*`; it uses `VRCGraphics.DrawMeshInstanced` instead, with its own rules: `references/udon-drawmeshinstanced.md`.
 
 ## Decision checklist for a new prop set
 
