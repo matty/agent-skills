@@ -17,7 +17,7 @@ them to hold):
 |---|---|
 | Blender | Each piece or assembly is a collection, placed as collection instances (linked or local). The collection name is the asset name |
 | Unity | Each asset is a prefab with the **same file name** under `Assets/World/Kits/` or `Assets/World/Assemblies/` (other roots via config), its root at identity rotation and scale |
-| Export | FBX exported with -Z forward, Y up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform off, so a piece arrives in Unity at scale 1 and rotation 0 |
+| Export | FBX exported with -Z forward, Y up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform ("Apply Transform") on, so a piece arrives in Unity at scale 1 and rotation 0 |
 
 ## Files
 

@@ -150,9 +150,9 @@ def check_budget_template(rel):
 
 # ---- export settings, axes, kit_status, shared scripts -------------------------------------------------------------
 
-FBX_TEXT = [r"-Z\s*Forward", r"Y\s*Up", r"FBX\s*All", r"Use Space Transform\W+on", r"Bake Space Transform\W+off"]
+FBX_TEXT = [r"-Z\s*Forward", r"Y\s*Up", r"FBX\s*All", r"Use Space Transform\W+on", r"Bake Space Transform(\s*\([^)]*\))?\W+on\b"]
 FBX_CODE = [r'axis_forward="-Z"', r'axis_up="Y"', r'apply_scale_options="FBX_SCALE_ALL"',
-            r"use_space_transform=True", r"bake_space_transform=False"]
+            r"use_space_transform=True", r"bake_space_transform=True"]
 
 
 def check_patterns(rel, pats, what):

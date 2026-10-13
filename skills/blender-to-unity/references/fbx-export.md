@@ -20,7 +20,7 @@ Blender's FBX exporter, static world geometry. Defaults are fine for most fields
 | Up | **Y Up** (default) | Unity is Y-up |
 | Apply Unit | on | Metre-consistent |
 | Use Space Transform | on | Applies the axis conversion to the data |
-| Bake Space Transform | **off** | Known to break normals/animation in several Unity versions; leave it off unless you have a specific reason |
+| Bake Space Transform ("Apply Transform", experimental) | **on** for static meshes | Writes the axis change into the vertices. With it off, the root arrives in Unity with a -90/270 deg X rotation, which breaks prefab roots at identity and placement sync. Verified on Blender 5.2 / Unity 2022.3. It can misbehave with armatures and animation: for rigged or animated assets leave it off and accept the root rotation |
 
 Always **apply rotation and scale in Blender** (`Ctrl+A → Rotation & Scale`) regardless of these settings. Exporter tricks cannot fully compensate for a dirty transform.
 
@@ -58,7 +58,8 @@ Off entirely for static geometry. For animated world props, export with Baked An
 
 ## Sanity test after the first export of a new asset
 
-1. Drop the FBX into the scene. Transform should read position 0, rotation 0, **scale 1,1,1**.
+1. Drop the FBX into the scene. Transform should read position 0, **rotation 0,0,0**, **scale 1,1,1**. A root at
+   X -90 or 270 means Bake Space Transform was off; Unity's Bake Axis Conversion import option does not fix it.
 2. A 2 m door should be 2 m against a 1.6 m capsule.
 3. Face the object: no inside-out faces, smoothing intact.
 4. Mesh inspector: expected triangle count, expected UV channel count (2 if you authored lightmap UVs), expected submesh count.

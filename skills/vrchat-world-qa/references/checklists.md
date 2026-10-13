@@ -122,7 +122,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 |---|---|---|
 | N1 | One folder per piece (`Assets/World/Kits/<FAMILY>/<Piece>/`) with its FBX and a prefab variant; family materials in `<FAMILY>/_Shared/` | Unity MCP `manage_asset` search |
 | N2 | No extracted per-FBX materials where `_Shared` ones exist; submesh count equals material slots | Unity MCP |
-| N3 | Import settings: Read/Write off, Generate Lightmap UVs off, no cameras or lights, Animation Type None | Unity MCP `execute_code` reading `ModelImporter` |
+| N3 | Import settings: Read/Write off, Generate Lightmap UVs off, no cameras or lights, Animation Type None; each model root at rotation 0,0,0 and scale 1 (X -90 or 270 means the FBX was exported with Bake Space Transform off, which a Blender re-import in E2 does not show) | Unity MCP `execute_code` reading `ModelImporter` |
 | N4 | Placement sync committed for every scope; the last merge reports 0 conflicts and 0 blocked | Placement report |
 | N5 | Spot check: three placements compared Blender `look` vs Unity screenshot from the same position | `references/visual-review.md` |
 | N6 | Static flags as planned; instanced pieces are not Batching Static and their materials have GPU instancing on | Unity MCP |

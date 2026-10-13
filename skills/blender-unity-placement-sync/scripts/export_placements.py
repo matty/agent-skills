@@ -36,7 +36,7 @@ from mathutils import Matrix, Quaternion, Vector
 PROP = "placement_id"
 
 # Blender (right-handed, Z up) -> Unity (left-handed, Y up), matching the FBX exporter's -Z forward / Y up with
-# Use Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test in ../SKILL.md.
+# Use Space Transform and Bake Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test in ../SKILL.md.
 C = Matrix(((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))
 CT = C.transposed()
 

@@ -91,12 +91,12 @@ Full annotated table in `references/fbx-export.md`. The essentials:
 Path Mode: Copy (+ embed off)
 Include:   Selected Objects; Object Types = Mesh (+ Armature only if rigged)
 Transform: Scale 1.0, Apply Scalings = "FBX All", -Z Forward, Y Up,
-           Apply Unit = on, Use Space Transform = on, Bake Space Transform = off
+           Apply Unit = on, Use Space Transform = on, Bake Space Transform = on
 Geometry:  Smoothing = Face, Apply Modifiers = on, Tangent Space only if normal-mapped
 Animation: off for static world geometry
 ```
 
-`Apply Scalings: FBX All` is what stops Unity showing a 100× or 0.01 scale on the transform.
+`Apply Scalings: FBX All` is what stops Unity showing a 100× or 0.01 scale on the transform, and `Bake Space Transform` (labelled "Apply Transform" in the export panel) is what stops it showing a -90 or 270 deg X rotation on the root: with it off, Blender writes the axis change as a rotation on the root node instead of into the vertices.
 
 ## Batch export
 
