@@ -126,6 +126,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | N4 | Placement sync committed for every scope; the last merge reports 0 conflicts and 0 blocked | Placement report |
 | N5 | Spot check: three placements compared Blender `look` vs Unity screenshot from the same position | `references/visual-review.md` |
 | N6 | Static flags as planned; instanced pieces are not Batching Static and their materials have GPU instancing on | Unity MCP |
+| N7 | VRChat scene setup: one scene descriptor, spawns on floors, respawn height below the lowest floor, nothing on reserved or player layers; cross-platform worlds have Android texture overrides at 1024 or below and a mobile shader plan | Unity MCP; `vrchat-world-sdk-setup` checklist if installed |
 
 ## Stage 11 - Lighting and bake
 
@@ -141,9 +142,9 @@ named in the check and say in the evidence that the deeper audit was unavailable
 
 | Id | Check | How |
 |---|---|---|
-| I1 | Each system in `interactivity` exists and works in Play mode (ClientSim) | Unity MCP play, console |
+| I1 | Each system in `interactivity` exists and works in Play mode (ClientSim) | Unity MCP play, console; `vrchat-world-sdk-setup` for ClientSim use |
 | I2 | No `Update()` loops where events would do; sync mode and payloads as `udon-performance` | Read scripts |
-| I3 | Late joiner sees the right state | ClientSim with a second client if available, else reasoning from sync code |
+| I3 | Late joiner sees the right state | Build & Test with 2+ clients (ClientSim simulates only the local player), else reasoning from sync code |
 | I4 | No console errors or warnings from Udon on start or interaction | `read_console` |
 
 ## Stage 13 - Optimisation audit
@@ -156,6 +157,7 @@ Load `vrchat-world-optimization` and run its pre-upload audit end to end, then:
 | O2 | Quest build under 100 MB (hard limit) when `quest` is in `platforms` | Build report |
 | O3 | Worst view in each zone measured, not the average | Stand at each zone's busiest point |
 | O4 | Regressions since the last audit explained | Compare with the previous report in `world/reports/` |
+| O5 | Every platform in `world.platforms` builds with no SDK validation errors or console errors, uses one blueprint ID, and passes a ClientSim walk and a 2-client Build & Test; publish fields drafted | Unity MCP, build logs |
 
 ## Platform targets
 

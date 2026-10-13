@@ -17,9 +17,11 @@ everything you know about the build lives in files so any session can resume it.
 2. **The spec is the source of truth.** `world/spec.yaml` (`references/world-spec.md`) holds every dimension, name,
    budget and placement agents build to; plans and elevations are generated from it, never drawn by hand. A change
    of intent is a spec change first, then a regenerate, then work.
-3. **Files have one writer.** Each brief lists the only files its agent may write; two tasks that write the same
-   file never run at once (the validator enforces it on the ledger). The live Blender (Blender MCP) belongs to one
-   integrator at a time; kit work runs headless (`blender -b`), one process per KIT file.
+3. **Files and editors have one writer.** Each brief lists the only files its agent may write; two tasks that
+   write the same file never run at once (the validator enforces it on the ledger). The live editors are writers
+   too: list `@blender-live` (Blender MCP) and `@unity` (Unity MCP, the one open Unity project) in `writes` for any
+   task that drives them, so the validator serialises those tasks as well. Kit work runs headless (`blender -b`),
+   one process per KIT file, and needs neither.
 4. **Link, never append.** `MASTER.blend` holds layout only: linked instances of pieces from `KIT_*.blend` and
    assemblies from `ASM_*.blend`. Geometry is edited in its KIT file and nowhere else.
 5. **Nothing is done until QA passes it.** After each build task, a separate QA subagent loads `vrchat-world-qa` and
@@ -46,14 +48,27 @@ Details, inputs, outputs, owners and QA checklists per stage: `references/stages
 | 7 | Texturing | texture artist | Family materials, trim sheets, unique prop textures |
 | 8 | Assemblies and dressing | integrator | ASM files and MASTER complete with final pieces |
 | 9 | Export | exporter | One FBX per piece |
-| 10 | Unity assembly | Unity integrator | Prefabs, materials, placements synced into the scene |
+| 10 | Unity assembly | Unity integrator | Prefabs, materials, placements synced, VRChat scene set up, platform overrides in place |
 | 11 | Lighting and bake | lighting artist | Baked lighting, probes or Light Volumes |
 | 12 | Interactivity | Udon developer | The spec's interactive systems working |
-| 13 | Optimisation audit | optimiser | Every budget measured and met; ready for the user to upload |
+| 13 | Optimisation audit and platform builds | optimiser | Every budget met on every platform build; PC and Android (and iOS) builds validated on one blueprint ID; ready for the user to upload |
 
 Greybox pieces are the first version of each kit piece, in the same collection with the final name, so stages 5-7
 improve pieces in place and MASTER never needs re-linking. Each piece collection carries a `kit_status` custom
 property: `grey`, `modelled`, `uv`, `textured`, `exported`.
+
+## Scale the pipeline to the world
+
+Ask at intake, record as `world.scale` in the spec.
+
+| | `full` (default) | `small` |
+|---|---|---|
+| Fits | Several zones, a kit of dozens of pieces, cross-platform | One zone or a few rooms, about 30 pieces or fewer |
+| Stages 1-3 | Separate tasks, spec gate after 2 | One planning task (mockups, spec, kit plan), spec gate after it |
+| KIT files | One per family | One `KIT_World.blend` may hold every family (pieces and `M_<FAMILY>_*` materials still named by family) |
+| QA | One pass per task | One pass per stage, over all of that stage's tasks |
+| Gates | Spec, greybox | Spec, greybox (never skipped: they are the cheap moments to change course) |
+| Everything else | As written | As written: same names, same spec, same ledger, so a small world can grow into a full one |
 
 ## Stage 0: intake
 
@@ -62,6 +77,7 @@ Detect first, then ask the user to confirm or change, in one message:
 | Question | Default | Detect by |
 |---|---|---|
 | Platforms | PC and Quest | - |
+| Pipeline scale | `full`, or `small` for one zone and about 30 pieces or fewer | Size of the brief |
 | Performance tier | Quest-safe | - |
 | Generated or library assets for props (`generate_3d`, asset libraries) | **No** | - |
 | Substance Designer / Painter | Use if present, else the Blender fallback | Substance MCP `sd_ping`, install folders |
@@ -85,10 +101,10 @@ ledger. The pipeline still runs; that stage just gets less specialist guidance.
 | 5 | `blender-mesh-topology` | Brief carries the topology checks from `vrchat-world-qa` |
 | 6 | `uv-unwrapping`; `rizomuv-uv-pipeline` if RizomUV is installed | Blender Smart UV Project plus a manual texel-density pass, flagged for extra QA |
 | 7 | Substance MCP; `references/texturing.md` | Blender procedural materials and bakes (`references/texturing.md`) |
-| 10 | `blender-unity-placement-sync`, `unity-batching-and-instancing`, `vrchat-texture-and-vram` | Placement by hand through Unity MCP, flagged: user moves are not tracked |
+| 10 | `blender-unity-placement-sync`, `unity-batching-and-instancing`, `vrchat-texture-and-vram`, `vrchat-world-sdk-setup` | Placement by hand through Unity MCP, flagged: user moves are not tracked. Scene setup from the official VRChat creator docs |
 | 11 | `vrchat-lighting-and-baking` | Baked lighting with Unity defaults, flagged for extra QA |
-| 12 | `udon-performance` | Event-driven UdonSharp, manual sync, no `Update()` |
-| 13 | `vrchat-world-optimization` | `vrchat-world-qa` stage 13 checklist |
+| 12 | `udon-performance`; `vrchat-world-sdk-setup` for ClientSim and multi-client testing | Event-driven UdonSharp, manual sync, no `Update()` |
+| 13 | `vrchat-world-optimization`; `vrchat-world-sdk-setup` for platform builds | `vrchat-world-qa` stage 13 checklist |
 | every task | `vrchat-world-qa` for the QA agent | QA agent uses the stage's acceptance checks from the brief |
 
 ## Delegating in Claude Code and Codex

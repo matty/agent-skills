@@ -94,6 +94,8 @@ def check_spec(spec, f, root=None):
     platforms = world.get("platforms") or []
     if not platforms or any(p not in PLATFORM_LIMITS for p in platforms):
         f.error("world.platforms must list pc and/or quest, got %r" % platforms)
+    if world.get("scale", "full") not in ("full", "small"):
+        f.error("world.scale must be full or small")
     if world.get("allow_generated_assets") not in (True, False):
         f.error("world.allow_generated_assets must be true or false (ask the user at intake)")
     module = (spec.get("grid") or {}).get("module")

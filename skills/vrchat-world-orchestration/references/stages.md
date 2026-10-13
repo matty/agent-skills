@@ -54,7 +54,7 @@ Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-P
   box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut where the spec says,
   `kit_status = grey`. Headless: `blender -b <KIT> --python <task>.py`, saving at the end.
 - `T-GREY-ASM-<name>` (after the kits it uses): build each assembly from linked pieces.
-- `T-GREY-MASTER` (after all of the above; integrator, live Blender): link and place assemblies and pieces from the
+- `T-GREY-MASTER` (after all of the above; integrator, live Blender, writes `@blender-live`): link and place assemblies and pieces from the
   spec's placements. Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF`
   collection).
 - QA: B1-B7, for each KIT task and for MASTER.
@@ -115,9 +115,15 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
   `<FAMILY>/_Shared/` and remap by name, make a prefab variant per FBX.
 - `T-UNITY-SYNC-<scope>`: placement sync for each ASM scope, then MASTER. Brief: load
   `blender-unity-placement-sync`; first time, install its Unity scripts.
-- `T-UNITY-SETUP`: VRChat scene descriptor, spawn, static flags, GPU instancing on the materials of repeated pieces.
-  Brief: load `unity-batching-and-instancing` and `vrchat-texture-and-vram`.
-- QA: N1-N6.
+- `T-UNITY-SETUP`: VRChat scene setup (scene descriptor, spawns, respawn height, reference camera, layers,
+  colliders for walkable areas), static flags, GPU instancing on the materials of repeated pieces. Brief: load
+  `vrchat-world-sdk-setup`, `unity-batching-and-instancing`.
+- `T-UNITY-PLATFORM` (cross-platform worlds): per-platform texture import overrides (1024 or below on Android),
+  mobile shader choice per material, per-platform objects, Android and iOS modules present. Brief: load
+  `vrchat-texture-and-vram` and `vrchat-world-sdk-setup` (cross-platform). Done here, not at the end, so every later
+  stage is measured on the platform that is hardest to fit.
+- Every Unity task lists `@unity` in `writes`: one Unity editor, one writer at a time.
+- QA: N1-N7.
 - From here on, layout edits happen on either side and go through placement sync, never by re-exporting MASTER.
 
 ## 11 - Lighting and bake (lighting artist)
@@ -137,7 +143,13 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 - `T-OPT`: measure everything in `budgets` on every platform build; fix in rank order of cost; re-measure. Brief:
   load `vrchat-world-optimization`. Fixes that change geometry or UVs go back to the owning KIT task as new tasks,
   never patched in Unity.
-- QA: O1-O4. Then tell the user the world is ready to upload, with the measured numbers. Uploading is the user's.
+- `T-BUILD-<platform>` (after `T-OPT`), one per platform in `world.platforms`, run one at a time (`@unity`): switch
+  the build target, clear SDK validation and console errors, Play-mode test with ClientSim, Build & Test with two
+  clients, and set the Pipeline Manager to the same blueprint ID as the PC build. Brief: load
+  `vrchat-world-sdk-setup`. Draft the publish fields (name, description, capacities, content warnings, tags,
+  thumbnail) for the user.
+- QA: O1-O5. Then tell the user the world is ready to upload on each platform, with the measured numbers and the
+  drafted publish fields. Uploading is the user's: it publishes under their account.
 
 ## Parallelism at a glance
 
@@ -145,5 +157,5 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 |---|---|
 | Greybox/modelling/UV tasks for different KIT files | ASM tasks wait for the kits they use; MASTER waits for ASMs |
 | Texturing a family while another family is modelled | UVs of a trim family wait for its trim layout |
-| QA of one task while other tasks build | Anything that writes MASTER: one at a time |
-| Udon work once the Unity scene exists | Lighting bake waits for final geometry and placements |
+| QA of one task while other tasks build | Anything that writes MASTER, or drives the live Blender (`@blender-live`): one at a time |
+| Udon scripts written outside Unity, in parallel with other work | Anything that drives the Unity editor (`@unity`): one at a time; lighting bake waits for final geometry and placements |

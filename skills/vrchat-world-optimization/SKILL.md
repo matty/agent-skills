@@ -69,6 +69,7 @@ Full table in `references/budgets.md`. Starting points:
 | Too many triangles in a mesh, bad shading, messy topology | `blender-mesh-topology` |
 | UV layout, texel density, padding, lightmap UV2 authoring | `uv-unwrapping` (`rizomuv-uv-pipeline` to automate it with RizomUV) |
 | Scripts, sync, networking, pickups, per-frame Udon cost | `udon-performance` |
+| Scene descriptor, spawns, layers, testing, Android / iOS builds and upload prep | `vrchat-world-sdk-setup` |
 | Layout moved in Unity and Blender out of step | `blender-unity-placement-sync` |
 | Checking a fix or a stage against budgets, with evidence | `vrchat-world-qa` |
 | Building or rebuilding a whole world end to end | `vrchat-world-orchestration` (it calls this skill for its final audit) |

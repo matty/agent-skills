@@ -11,7 +11,7 @@ writes it; subagents return report blocks that the master merges.
 | `stage` | The stage the master is working on |
 | `intake` | Stage 0 answers (mirrored into the spec) |
 | `gates.<name>` | `status` (`pending`, `approved`, `changes-requested`), `after` (tasks that must finish before asking), `by`, `at`, `notes` with the user's words |
-| `tasks[]` | `id`, `stage`, `title`, `role`, `deps` (task ids or `gate:<name>`), `writes` (files or folders it alone may write), `status`, `attempts`, `brief`, `report`, `qa` |
+| `tasks[]` | `id`, `stage`, `title`, `role`, `deps` (task ids or `gate:<name>`), `writes` (files or folders it alone may write, plus `@unity` / `@blender-live` when it drives that editor), `status`, `attempts`, `brief`, `report`, `qa` |
 | `flags.generated_assets` | Every prop made with `generate_3d` or imported from a library: piece, source, task |
 | `flags.overrides` | Library overrides in ASM or MASTER, with the reason |
 | `flags.open_conflicts` | Unresolved placement-sync conflicts waiting on the user |

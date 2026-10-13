@@ -52,7 +52,7 @@ tasks:
     title: Lay out MASTER from the plans with greybox pieces
     role: integrator
     deps: [T-GREY-EXT]
-    writes: [blender/MASTER.blend]
+    writes: [blender/MASTER.blend, "@blender-live"]   # @ = a live editor: one task at a time
     status: todo
     attempts: 0
 

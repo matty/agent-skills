@@ -22,6 +22,7 @@ it knows. Write it to `world/briefs/<task>.md` and pass the whole text as the su
 
 ## You may write ONLY
 - <exact files or folders>
+- <@unity / @blender-live if this task owns that editor for its duration; otherwise do not touch it>
 Anything else is out of bounds, including files you think need fixing. Report those instead.
 
 ## Steps

@@ -6,6 +6,7 @@ version: 1
 world:
   name: Example Market
   platforms: [pc, quest]            # pc, quest - asked at intake, cross-platform by default
+  scale: full                       # full | small (one zone, about 30 pieces or fewer)
   performance_tier: quest-safe      # quest-safe | pc-high
   allow_generated_assets: false     # props only, and only if the user allows it at intake
   mockups: true                     # false when the host has no image tool (stage 1 skipped)
