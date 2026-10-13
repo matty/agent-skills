@@ -1,0 +1,65 @@
+# Pipeline ledger - the master agent's memory. Copy to <project>/world/ledger.yaml.
+# Only the master agent writes this file. Rules: ../references/ledger.md
+version: 1
+world: Example Market
+stage: 0                              # the stage the master is working on
+updated: 2026-10-13T18:00:00Z
+
+intake:                               # answers from stage 0, mirrored into spec.yaml
+  platforms: [pc, quest]
+  allow_generated_assets: false
+  performance_tier: quest-safe
+  substance: {designer: true, painter: true}
+  blender_cli: C:/Users/me/.blender/blender-5.2.2/blender.exe
+  unity_project: C:/Users/me/Unity/ExampleMarket
+
+gates:                                # user approvals; tasks list them in deps as gate:<name>
+  spec:
+    status: pending                   # pending | approved | changes-requested
+    after: [T-SPEC-01]                # tasks that must be done before the gate is asked
+    by: null
+    at: null
+    notes: ""
+  greybox:
+    status: pending
+    after: [T-GREY-MASTER]
+    by: null
+    at: null
+    notes: ""
+
+tasks:
+  - id: T-SPEC-01
+    stage: 2
+    title: Write spec.yaml, plans and elevations from the mockups
+    role: planner
+    deps: []
+    writes: [world/spec.yaml, world/diagrams/]
+    status: todo                      # todo | running | qa | done | failed | escalated | blocked | skipped
+    attempts: 0
+    brief: world/briefs/T-SPEC-01.md
+    report: world/reports/T-SPEC-01.yaml
+    qa: world/reports/qa/T-SPEC-01/verdict.yaml
+  - id: T-GREY-EXT
+    stage: 4
+    title: Greybox every EXT piece
+    role: kit-modeller
+    deps: [gate:spec]
+    writes: [blender/kits/KIT_Arch_Exterior.blend]
+    status: todo
+    attempts: 0
+  - id: T-GREY-MASTER
+    stage: 4
+    title: Lay out MASTER from the plans with greybox pieces
+    role: integrator
+    deps: [T-GREY-EXT]
+    writes: [blender/MASTER.blend]
+    status: todo
+    attempts: 0
+
+flags:
+  generated_assets: []                # props made with generate_3d or imported from a library: {piece, source, task}
+  overrides: []                       # library overrides in ASM/MASTER: {file, object, reason}
+  open_conflicts: []                  # unresolved placement-sync conflicts: {scope, id, why}
+
+log:                                  # append-only, newest last
+  - {at: 2026-10-13T18:00:00Z, event: "ledger created"}

@@ -46,6 +46,7 @@ for the full installer reference and for how to add or change a skill.
 | Skill | Covers |
 |---|---|
 | `vrchat-world-optimization` | Entry point: profiling order, budgets, pre-upload audit, routing to the rest |
+| `vrchat-world-orchestration` | Master-agent pipeline for a whole world build: intake, mockups, YAML world spec with generated SVG plans/elevations, KIT/ASM/MASTER .blend structure, greybox and user gates, subagent briefs, QA after every task, resumable ledger, plus spec validator and SVG generator scripts |
 | `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, instancing-ready shader code |
 | `vrchat-lighting-and-baking` | Lightmap baking, lightmap UVs and texel density, VRC Light Volumes, probes, reflection probes, LTCGI, mirrors, occlusion culling |
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
