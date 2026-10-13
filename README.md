@@ -49,7 +49,7 @@ for the full installer reference and for how to add or change a skill.
 | `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, instancing-ready shader code |
 | `vrchat-lighting-and-baking` | Lightmap baking, lightmap UVs and texel density, VRC Light Volumes, probes, reflection probes, LTCGI, mirrors, occlusion culling |
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
-| `blender-to-unity-vrchat` | Scale/axis conventions, FBX export settings, UV2 authoring, modular kits, LODs, collision, plus batch-export / UV2 / mesh-audit `bpy` scripts |
+| `blender-to-unity-vrchat` | Scale/axis conventions, FBX export settings, UV2 authoring, modular kits as KIT / ASM / MASTER .blend files with linked collections, piece naming and pivots, per-piece Unity folders and prefabs, LODs, collision, plus batch-export / UV2 / mesh-audit / kit-library `bpy` scripts |
 | `udon-performance` | UdonSharp cost model, event-driven design, sync budgets, ownership, late joiners, pooling |
 | `blender-mesh-topology` | Clean low-count topology: hand-designed grids with 3-to-1 reductions, fair blend surfaces, Quad Remesher from Python with frozen borders, plus grid / remesh / audit / review-render `bpy` scripts |
 | `uv-unwrapping` | Entry point for UVs: tiling, trim, unique or lightmap UVs, seams and hard edges for baking, distortion, texel density, padding in pixels per mip, stacking and mirroring, lightmap UV2 rules, Blender UV operators from Python, plus a UV audit / texel-density / pack `bpy` script |

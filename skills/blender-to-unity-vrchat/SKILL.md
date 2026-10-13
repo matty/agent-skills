@@ -1,6 +1,6 @@
 ---
 name: blender-to-unity-vrchat
-description: Author and export world geometry from Blender to Unity for VRChat - scale and axis conventions, FBX export settings, applied transforms, UV0 vs lightmap UV2, texture atlasing, modular kits, LOD chains, collision meshes, batch export and mesh auditing scripts. Use when assets come into Unity at the wrong size or rotation, when preparing meshes for baking or instancing, when building a modular kit, or when setting up a repeatable Blender to Unity export pipeline.
+description: Author and export world geometry from Blender to Unity for VRChat - scale and axis conventions, FBX export settings, applied transforms, UV0 vs lightmap UV2, texture atlasing, modular kits split into KIT / ASM / MASTER .blend files with linked collections, piece naming and pivots, per-piece Unity folders and prefabs, LOD chains, collision meshes, batch export and mesh and kit auditing scripts. Use when assets come into Unity at the wrong size or rotation, when preparing meshes for baking or instancing, when building or organising a modular kit across several .blend files, when deciding how kit pieces are named, linked or packaged in Unity, or when setting up a repeatable Blender to Unity export pipeline; to sync a layout's placements between Blender and Unity see blender-unity-placement-sync, to run a whole world build see vrchat-world-orchestration.
 ---
 
 # Blender → Unity (VRChat worlds)
@@ -17,6 +17,18 @@ Performance is decided in Blender, before Unity sees anything: how geometry is s
 | Origins | Put the origin where the object is placed or pivots from — floor centre for props, hinge for doors |
 | Naming | Descriptive and stable; Unity prefab references break when you rename meshes |
 | Modularity | Model kit pieces on a grid (0.25 m / 0.5 m / 1 m) so copies snap and stay *identical* — identical meshes are what makes GPU instancing possible |
+
+## Kit libraries across .blend files
+
+For anything bigger than a room, split the world into **KIT** files (one per visual family, one collection per piece),
+**ASM** files (assemblies built from linked kit pieces) and one **MASTER** file (layout only). Link, never append, so
+every copy stays an identical, instanceable mesh. Naming (`EXT_Wall_2x3_A`), bottom-left grid pivots, families and
+the one-writer-per-file rule: `references/kit-library.md`. `scripts/kit_library.py` creates pieces, links and places
+them, reloads libraries and audits a kit.
+
+On the Unity side each piece gets its own folder, FBX and prefab variant, with architecture sharing one material per
+family: `references/unity-packaging.md`. Moving a MASTER layout into Unity (and Unity edits back) is
+`blender-unity-placement-sync`.
 
 ## Mesh hygiene before export
 
