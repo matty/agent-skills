@@ -1,13 +1,15 @@
 ---
 name: uv-unwrapping
-description: How to UV unwrap models properly in Blender for games, Unity and VRChat - choosing tiling, trim-sheet, unique or lightmap UVs, seam placement, hard edges and seams for normal-map baking, distortion, texel density in px/m, straightening and orienting islands, padding in pixels that survives mipmaps, stacking and mirroring, lightmap UV2 rules, and Blender's UV operators from Python, with an audit script that measures all of it. Use when unwrapping or reviewing UVs, when textures look stretched, blurry, mismatched in density or backwards, when seams or normal-map lines show, when bakes bleed or pick up the wrong parts, when islands waste space, or when choosing seams, padding, map size or texel density; to automate unwrapping with RizomUV see rizomuv-uv-pipeline, for lightmap bake settings see vrchat-lighting-and-baking.
+description: How to UV unwrap models properly in Blender for real-time 3D (games, VR, any engine) - choosing tiling, trim-sheet, unique or lightmap UVs, seam placement, hard edges and seams for normal-map baking, distortion, texel density in px/m, straightening and orienting islands, padding in pixels that survives mipmaps, stacking and mirroring, lightmap UV rules, and Blender's UV operators from Python, with an audit script that measures all of it. Use when unwrapping or reviewing UVs, when textures look stretched, blurry, mismatched in density or backwards, when seams or normal-map lines show, when bakes bleed or pick up the wrong parts, when islands waste space, or when choosing seams, padding, map size or texel density; to automate unwrapping with RizomUV see rizomuv-uv-pipeline; engine specifics (Unity) are in this skill's engine notes, and lightmap bake settings belong to the engine's lighting skill (vrchat-lighting-and-baking for Unity / VRChat).
 ---
 
 # UV unwrapping
 
 Decide what each surface's UVs are for before cutting a single seam: the purpose sets the seams, the density, the
 padding and whether islands may overlap. Then unwrap, check with numbers rather than by eye, and pack with padding
-given in pixels. `scripts/uv_audit.py` measures every rule below on a real mesh.
+given in pixels. `scripts/uv_audit.py` measures every rule below on a real mesh. Everything here is engine-neutral;
+what a particular engine does with the UVs (channels, tangents, lightmap generators) is in
+[references/engine-notes.md](references/engine-notes.md).
 
 ## 1. Pick the UV strategy per surface
 
@@ -16,7 +18,7 @@ given in pixels. `scripts/uv_audit.py` measures every rule below on a real mesh.
 | Walls, floors, terrain, large plain surfaces | **tiling material** | world scale, may run far outside 0-1; Cube Projection with `cube_size` = metres per tile (section 6) |
 | Mouldings, frames, pipes, trims, kit edges | **trim sheet** | straightened strips laid on the trim's rows, U free to run along the strip ([references/workflows.md](references/workflows.md)) |
 | Props and hero pieces with their own texture or a bake | **unique unwrap** | the full process in section 2, packed into 0-1 |
-| Every lightmapped mesh in Unity | **lightmap UV2**, a second UV map | its own rules: no overlap, inside 0-1, 2+ texels between charts (section 9) |
+| Every mesh that receives baked lightmaps | **lightmap UV**, usually the second UV map | its own rules: no overlap, inside 0-1, 2+ texels between charts (section 9) |
 
 One mesh can mix them (tiling walls with a trim-sheet cornice). Repeated props share one mesh and one set of UVs.
 
@@ -41,7 +43,7 @@ One mesh can mix them (tiling walls with a trim-sheet cornice). Repeated props s
 8. **Stack** identical parts and mirrored halves where the texture allows it (section 8).
 9. **Pack** with padding in pixels (section 7).
 10. **Audit**: `ua.audit_selected(map_px=..., pad_px=..., px_per_m=..., baking=True)` must print no issues.
-11. **Add the lightmap UV2** as the second UV map if the mesh is lightmapped (section 9).
+11. **Add the lightmap UV** as the second UV map if the mesh is lightmapped (section 9).
 
 Choosing a tool: Blender's own tools do all of this. If RizomUV is installed, `rizomuv-uv-pipeline` automates the
 extra seams, unwrap, distortion check, texel density and packing for whole batches and grades the result. It does
@@ -59,7 +61,7 @@ not straighten or stack islands, and it still needs the structural seams of step
 | Organic and symmetric forms: few, hidden; along the mirror axis to share texture space, or offset from the centre of a face | fewer visible breaks; an offset mirror seam keeps the lighting seam off the centre line |
 
 Seams do not need to form closed loops: a cut only has to relieve the area that would stretch. Too many seams cost
-vertices (Unity splits a vertex wherever UVs or normals differ), visible breaks and wasted gutter space; too few
+vertices (engines split a vertex wherever UVs or normals differ), visible breaks and wasted gutter space; too few
 cost stretch. There is no correct number: stop adding them when distortion passes.
 
 A closed tube never opens by itself: angle-based seams cut its caps off, and the tube unwraps folded onto itself
@@ -76,7 +78,7 @@ operator's parameters: [references/blender-uv-tools.md](references/blender-uv-to
 - Measure, do not eyeball: `uv_audit` reports angular p95 (1.00 = shapes kept) and area p95 (log2 of the density
   change inside an island). This repo's gate, measured on real props: **angular p95 <= 1.15 and area p95 <= 0.20**
   (measured with the `rizomuv-uv-pipeline` skill's grader). No engine or vendor publishes a number for texture
-  UVs; Unity's own lightmap unwrapper defaults to 8% angle and 15% area error.
+  UVs; engine lightmap unwrappers use comparable tolerances (engine notes).
 - In Blender: UV editor Overlays > Display Stretch (`SpaceUVEditor.show_stretch`, `display_stretch_type`
   `ANGLE` or `AREA`; blue = low, red = high), and a generated `UV_GRID` or `COLOR_GRID` image on the material.
   Area mode also lights up islands you scaled on purpose: read it within an island.
@@ -121,7 +123,8 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 ## 7. Packing and padding
 
 Padding is the empty gap between islands. Each mip level halves it, so it has to be big enough at the smallest mip
-anyone sees, and on the smallest platform override (a 2048 texture capped at 1024 for Android halves every gap).
+anyone sees, and on the smallest platform override (a 2048 texture capped at 1024 for a mobile build halves every
+gap).
 
 | Map size | Gap between islands (Polycount) | Minimum for pieces only seen close | Gap to the tile edge |
 |---|---|---|---|
@@ -157,35 +160,37 @@ bpy.ops.uv.pack_islands(margin_method="FRACTION", margin=16 / (2 * 1024), rotate
 |---|---|
 | Tiling and trim UV0 | yes, freely |
 | Unique UV0, painted, no bake | stack identical parts and mirrored halves to save space; mirrored islands print text backwards |
-| Unique UV0 that takes a baked normal map or AO | stack, but keep **one copy inside 0-1 and move the others exactly +1 in U before baking** (Cycles skipped islands at +1 U and baked the copy inside 0-1, verified on 5.2.2); offsets of whole tiles look the same with the texture on Repeat (Unity's default). Unstack parts that are occluded differently: stacked AO is one shadow for all copies |
-| Lightmap UV2 | **never**: Unity and Bakery require no overlap, inside 0-1 |
+| Unique UV0 that takes a baked normal map or AO | stack, but keep **one copy inside 0-1 and move the others exactly +1 in U before baking** (Cycles skipped islands at +1 U and baked the copy inside 0-1, verified on 5.2.2); offsets of whole tiles look the same with the texture on Repeat (the usual engine default). Unstack parts that are occluded differently: stacked AO is one shadow for all copies |
+| Lightmap UV | **never**: lightmappers require no overlap, inside 0-1 |
 
-- Mirrored islands shade correctly with a normal map baked in the mirrored layout: Unity stores the tangent's
-  handedness per vertex, and Blender and Unity both use MikkTSpace. Do not flip, rotate or move islands after the
-  bake.
+- Mirrored islands shade correctly with a normal map baked in the mirrored layout, in any engine that stores the
+  tangent's handedness per vertex and uses MikkTSpace like Blender (engine notes). Do not flip, rotate or move
+  islands after the bake.
 - The Mirror modifier stacks the mirrored half on the original's UVs by default. Its U Offset (`offset_u = 1.0`)
   moves the copy out of 0-1 for baking; Mirror U (`use_mirror_u`) flips the copy to the other side of the tile
-  instead of stacking it. Apply the modifier before making a lightmap UV2: every modifier copy reuses its source's
+  instead of stacking it. Apply the modifier before making a lightmap UV: every modifier copy reuses its source's
   UVs.
 - Baking rules (hard edges, cage, triangulation, tangent space): [references/baking-and-normal-maps.md](references/baking-and-normal-maps.md).
 
-## 9. Lightmap UV2
+## 9. Lightmap UV
 
-Unity bakes lightmaps from the second UV channel (Mesh.uv2, "UV1"): in Blender, the second UV map in the list.
-Rules from the Unity 2022.3 manual (the VRChat version, 2022.3.22f1):
+Engines bake lightmaps from a dedicated UV channel; in Blender that is normally the second UV map in the list.
+Which channel a given engine reads, and its generator's settings: engine notes.
 
-- Inside 0-1, no overlaps, charts at least **2 texels apart at the final lightmap resolution** (Unity's bilinear
-  filter reads 4 texels). Size that gap for the smallest footprint the mesh gets in the atlas, not for 1024.
-- Few, large charts, cut at hard angles (Unity's own unwrapper cuts at 88 deg); even relative area unless a part
-  deserves more lightmap detail; straight, axis-aligned chart edges let Unity's Stitch Seams hide the seam.
+- Inside 0-1, no overlaps, charts at least **2 texels apart at the final lightmap resolution** (bilinear filtering
+  reads neighbouring texels, so closer charts bleed). Size that gap for the smallest footprint the mesh gets in the
+  atlas, not for 1024.
+- Few, large charts, cut at hard angles (lightmap unwrappers typically cut near 88 deg); even relative area unless a
+  part deserves more lightmap detail; straight, axis-aligned chart edges let a lightmapper's seam stitching hide
+  the seam.
 - Start from a copy of a unique UV0 with every stack and mirror pulled apart, or a seam-based unwrap or Smart UV
   Project on the second map. `uv.lightmap_pack` makes one chart per face: only for very simple meshes.
-- Unity's Generate Lightmap UVs overwrites uv2: leave it off for meshes with an authored UV2. When generating, use
-  Margin Method **Calculate** with honest Min Lightmap Resolution and Min Object Scale; the manual 4 px Pack
-  Margin assumes the mesh fills a whole 1024 lightmap.
+- An engine's automatic lightmap UV generator overwrites the channel: turn it off for meshes with an authored
+  lightmap UV. When you do let it generate, give it margins computed for the real lightmap resolution, not a fixed
+  pixel count that assumes a whole map per mesh.
 
-Footprint sizing, Unity's settings and lightmap symptoms: the `vrchat-lighting-and-baking` skill. `uv_audit.pack`
-(with `layer=1`) packs the second UV layer here, for the footprint the mesh will get.
+Footprint sizing and bake settings belong to the engine's lighting setup (`vrchat-lighting-and-baking` for Unity /
+VRChat). `uv_audit.pack` (with `layer=1`) packs the second UV layer here, for the footprint the mesh will get.
 
 ## 10. Symptom, cause, fix
 
@@ -195,13 +200,13 @@ Footprint sizing, Unity's settings and lightmap symptoms: the `vrchat-lighting-a
 | Blurry here, crisp there | uneven texel density inside or between objects | Average Islands Scale, `set_texel_density`, same px/m for neighbours |
 | A line across a flat surface | seam in view, or seam pixels not padded | move the seam to a hard edge or hidden side; pad the gap (section 7) |
 | Normal-map line along a hard edge, light leaking at corners | hard edge without a UV seam, or a bake without a cage | a seam on every hard edge (`audit(baking=True)`), bake with an averaged cage |
-| X-shaped shading blotches, seams only in the engine | baker and engine triangulated or computed tangents differently | triangulate before baking and export that mesh; Unity: import normals, MikkTSpace tangents |
+| X-shaped shading blotches, seams only in the engine | baker and engine triangulated or computed tangents differently | triangulate before baking and export that mesh; import normals in the engine and use MikkTSpace tangents |
 | Coloured fringe at island edges from a distance | gaps too small for the mips or the platform override | Polycount padding column; bake dilation to fill gaps |
 | Baked AO or normals garbled where parts overlap | stacked or mirrored copies left inside 0-1 during the bake | move copies +1 U; bake the whole mesh |
 | Text or decals read backwards | flipped island | `uv.select_by_winding`, flip it back before texturing |
-| Lightmap shadows on the wrong surface, specks at chart edges | UV2 overlapping, or charts under 2 texels apart | unstack, more padding at the real footprint, Margin Method Calculate |
+| Lightmap shadows on the wrong surface, specks at chart edges | lightmap UV overlapping, or charts under 2 texels apart | unstack, more padding at the real footprint, or computed margins in the engine's generator |
 | Islands waste half the map | curved strips not straightened, free rotation, tiny islands everywhere | straighten, pack `CARDINAL`, merge tiny islands into neighbours with fewer seams |
-| Modifier copies (Mirror, Array) share UVs or overlap in UV2 | modifiers reuse the source UVs | Mirror's UV offsets for UV0; apply and unwrap uniquely for UV2 |
+| Modifier copies (Mirror, Array) share UVs or overlap in the lightmap UV | modifiers reuse the source UVs | Mirror's UV offsets for UV0; apply and unwrap uniquely for the lightmap UV |
 | Re-running a script unwraps differently | `uv.unwrap` without `method` inherits the last one | always pass `method` |
 
 ## Script
@@ -223,9 +228,9 @@ One line per object: `OK` or `CHECK`, islands, coverage, angular and area p95, p
 uneven density, folded faces (always a fault; whole mirrored islands are reported apart), zero-area UVs, UVs
 outside 0-1 (lightmaps), partial overlaps (stacked copies are allowed in UV0, not in a lightmap), gaps and edge
 margin below the padding, density off target or uneven between islands, hard edges not on seams (`baking=True`),
-more UV maps than Unity's 8. Command line:
+more than 8 UV maps (the most an engine like Unity keeps). Command line:
 `blender -b scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 16 [--layer 1 --lightmap]`.
 
-Facts with a shelf life (Blender operator names, parameters and defaults; Unity 2022.3 lightmap settings; add-on
+Facts with a shelf life (Blender operator names, parameters and defaults; engine lightmap settings; add-on
 availability) carry their source and version in the references. Re-check operator parameters in a new Blender with
 `bpy.ops.uv.<name>.get_rna_type().properties`.

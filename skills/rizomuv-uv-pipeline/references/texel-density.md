@@ -1,7 +1,7 @@
 # Texel density: choosing it, packing to it, checking it
 
 How to make RizomUV deliver exactly the texel density a surface should get. Worked out for a
-PC VRChat dark ride (9 Oct 2026), where every viewing position is known; the method carries to any world.
+PC VR dark ride (9 Oct 2026), where every viewing position is known; the method carries to any world.
 
 ## Contents
 
@@ -23,7 +23,7 @@ RizomUV delivers a chosen density exactly.
 1. Size the map from the class and the surface it must hold, with the packing coverage you expect (about 0.6 from
    RizomUV on props):
 
-       map_px = next_pow2(TD x sqrt(area_m2 / 0.65)), capped (2048 is a sane VRChat cap)
+       map_px = next_pow2(TD x sqrt(area_m2 / 0.65)), capped (2048 is a sane cap for PC VR; lower on mobile)
 
    `rizom_uv.texture_size(TD, area_m2)`.
 2. Pack at that density, not "fill the tile":
@@ -50,8 +50,8 @@ Padding: 8 px at 1024 keeps islands one pixel apart down to the 128 px mip; scal
 ## Lightmaps are a separate density
 
 Lightmaps are measured in texels per metre per scene, much lower than textures (interiors around 20, close-up
-surfaces 30, tunnels 12, exteriors 8 and facades 6 in the ride; the `vrchat-lighting-and-baking` skill owns scene
-lightmap resolution and Scale In Lightmap). Unity and Bakery give each renderer its own rectangle, so pack each
+surfaces 30, tunnels 12, exteriors 8 and facades 6 in the ride; the engine's lighting setup owns scene
+lightmap resolution and per-renderer scale; `vrchat-lighting-and-baking` for Unity / VRChat). Lightmappers (Unity's, Bakery) give each renderer its own rectangle, so pack each
 mesh's UV2 on its own, filling the tile, at the size that rectangle will have:
 
     footprint_px = next_pow2(sqrt(area_m2) x texels_per_m x scale_in_lightmap), clamped 64-1024

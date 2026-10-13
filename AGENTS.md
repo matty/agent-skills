@@ -172,3 +172,7 @@ folder (auto mode copies).
   installs can be partial and folders move. When two skills need the same convention (piece naming, a budget
   table), each states it; keep them in agreement when one changes. Skills work together by routing: an
   orchestrating skill tells an agent which skill to load, and that skill uses its own files.
+- **Technique skills stay engine-neutral.** A skill about a craft that is not tied to one platform (topology, UV
+  unwrapping, RizomUV) is written for any engine. What a specific engine does goes in that skill's
+  `references/engine-notes.md`, one section per engine, with sources. VRChat- and Unity-specific skills carry the
+  platform in their name.

@@ -63,7 +63,7 @@ What one call does:
 2. Adds RizomUV's automatic seams for the preset, cuts, then Unfold (5 iterations) and Optimize (25).
 3. Packs UV0 and grades it; on a failure climbs the retry ladder (section 5).
 4. Packs the lightmap UV from exactly the chosen islands.
-5. Writes the layers that fit: `UVMap` at index 0 (Unity UV0), `UVMap_Lightmap` at index 1 (Unity UV1), other
+5. Writes the layers that fit: `UVMap` at index 0 (the texture channel), `UVMap_Lightmap` at index 1 (the lightmap channel in most engines), other
    layers kept after them. A UV0 that does not fit writes nothing. Nothing but UV layers changes, unless you pass
    `modifiers="apply"` or call `br.checker_preview`.
 6. Prints one line per object (section 6) and closes RizomUV, even on an error.
@@ -146,7 +146,7 @@ Match texels per metre to what the headset shows at the nearest viewing distance
 per degree), quantised into classes (512 / 256 / 128 / 64 px/m). Shared trims and tiling materials keep one
 density everywhere; unique textures are sized `ru.texture_size(TD, area_m2)` (`next_pow2(TD x sqrt(area / 0.65))`)
 and packed at that density with `pack_spec(..., px_per_unit=TD)`. The lightmap UV defaults to a fixed 128 px pack;
-`uv2="footprint"` sizes it from the mesh's area at `lightmap_texels_per_m`, which is what Unity and Bakery will
+`uv2="footprint"` sizes it from the mesh's area at `lightmap_texels_per_m`, which is what the lightmapper will
 give the renderer. Packing to it and checking it: `references/texel-density.md`; why these numbers: the `uv-unwrapping` skill.
 
 ## 8. Batches and parallel work
@@ -170,7 +170,7 @@ Using the scripts:
 | Clean grade, overlaps in the exported mesh | modifiers ignored with `modifiers="ignore"` that do change the faces | `modifiers="apply"` |
 | A prop shatters into 40-100 islands | a custom `Auto` with stretch limiter `Quality` 0.9 or above | 0.75; the gate's `islands_per_100_faces` catches it |
 | Mosaic (`QuasiDevelopable`) has no effect in a custom `Auto` | `IslandPolyNBMin` unset, or `QuadLoopCutter` also on (it wins) | `IslandPolyNBMin: 1`; leave `QuadLoopCutter` out |
-| Lightmap baked from the wrong UVs in Unity | an older layer sat at index 0 or 1 | the scripts rebuild the order (`UVMap`, `UVMap_Lightmap`, then the rest); re-export |
+| Lightmap baked from the wrong UVs in the engine | an older layer sat at index 0 or 1 | the scripts rebuild the order (`UVMap`, `UVMap_Lightmap`, then the rest); re-export |
 | A linked duplicate ends up at the wrong density | two objects share one mesh at different scales | give it its own mesh (Make Single User) and unwrap it |
 | Parallel jobs get each other's meshes back | `CRizomUVLink.RunRizomUV` used for parallel work | `rizom_link.rizom_session()` (own port, own process) |
 

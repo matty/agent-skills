@@ -24,8 +24,8 @@ What is read
     (destructive: the modifiers are removed, and linked duplicates keep the old mesh); modifiers="ignore" is for
     modifiers that cannot change the faces. SAFE_MODIFIERS never block.
 What is written
-  - "UVMap" (texture, Unity UV0) at index 0 and "UVMap_Lightmap" (Unity UV1) at index 1. Other layers are kept,
-    after them and in their order (Unity sees them as UV2 and up); a mesh that would need more than 8 layers is
+  - "UVMap" (texture channel) at index 0 and "UVMap_Lightmap" (the lightmap channel in most engines) at index 1. Other layers are kept,
+    after them and in their order (an engine sees them as the third channel and up); a mesh that would need more than 8 layers is
     refused before anything changes.
   - A layer is written only when its pack fits; when UV0 does not fit, nothing is written. The report says why.
   - Linked duplicates share one mesh, so unwrap_objects() unwraps each mesh once and reports the texel density

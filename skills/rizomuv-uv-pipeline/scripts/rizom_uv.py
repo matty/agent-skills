@@ -264,7 +264,7 @@ def texture_size(px_per_m, area_m2, coverage=0.65, cap=2048, floor=64):
 
 
 def lightmap_footprint(area_m2, texels_per_m, scale_in_lightmap=1.0, lo=64, hi=1024):
-    """Power-of-two lightmap rectangle for one renderer (Unity/Bakery packs each renderer separately)."""
+    """Power-of-two lightmap rectangle for one renderer (lightmappers pack each renderer separately)."""
     need = math.sqrt(area_m2) * texels_per_m * scale_in_lightmap
     return int(min(hi, max(lo, 2 ** math.ceil(math.log2(max(need, 1.0))))))
 

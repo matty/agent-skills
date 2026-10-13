@@ -40,7 +40,7 @@ import numpy as np
 LIMITS = {"angular_p95": 1.15, "area_p95": 0.20, "texel_cv": 0.15, "texel_off_target": 0.20}
 UV_EPS = 1e-6          # UVs closer than this count as the same UV vertex
 RASTER_MAX = 2048      # coverage, overlap and padding are rasterised at min(map_px, RASTER_MAX)
-UNITY_MAX_UV = 8       # Unity meshes carry UV0-UV7
+MAX_UV_MAPS = 8        # Unity meshes carry UV0-UV7; most engines keep no more than 8
 
 
 # ----------------------------------------------------------------------------------------------- mesh data
@@ -317,8 +317,8 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
 
 def _issues(r, pad_px, px_per_m, lightmap, baking):
     out = []
-    if len(r["layers"]) > UNITY_MAX_UV:
-        out.append("%d UV layers: Unity keeps UV0-UV7" % len(r["layers"]))
+    if len(r["layers"]) > MAX_UV_MAPS:
+        out.append("%d UV layers: engines such as Unity keep only 8 (UV0-UV7)" % len(r["layers"]))
     if r["angular_p95"] > LIMITS["angular_p95"]:
         out.append("angular stretch p95 %.2f" % r["angular_p95"])
     if r["area_p95"] > LIMITS["area_p95"]:

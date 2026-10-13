@@ -73,7 +73,7 @@ hard-edge seams alone gave angular p95 74, and one extra seam down its back gave
 ```python
 me = ob.data
 if len(me.uv_layers) < 2:
-    me.uv_layers.new(name="UVMap_Lightmap")      # the second map exports as Unity's uv2
+    me.uv_layers.new(name="UVMap_Lightmap")      # the second map: the lightmap channel in most engines
 me.uv_layers.active_index = 1                     # every UV operator below writes to this one
 ```
 
@@ -82,12 +82,14 @@ me.uv_layers.active_index = 1                     # every UV operator below writ
 2. Unstack everything: no overlaps and no mirrored copies sharing texels. Re-unwrap Mirror and Array copies after
    applying the modifiers.
 3. Few large charts, cut at hard angles; even relative area (`uv.average_islands_scale()`), enlarged only where
-   lighting detail matters; straight, axis-aligned chart edges where Unity's Stitch Seams should hide the seam.
+   lighting detail matters; straight, axis-aligned chart edges where the lightmapper's seam stitching should hide
+   the seam.
 4. Pack for the footprint the mesh will actually get: `ua.pack([ob], map_px=footprint_px, pad_px=4, layer=1)` keeps
    charts 4 px apart at that size, 2 px at half of it.
 5. `ua.audit(ob, layer=1, map_px=footprint_px, pad_px=4, lightmap=True)`: no issues.
-6. In Unity, Generate Lightmap UVs off for this mesh. Check Scene view's UV Overlap draw mode after baking.
+6. In the engine, turn automatic lightmap UV generation off for this mesh, and check its lightmap overlap view
+   after baking (Unity: engine notes).
 
-The footprint (texels per metre x mesh size x Scale In Lightmap) and the scene settings are covered by the
-`vrchat-lighting-and-baking` skill; `rizomuv-uv-pipeline` can size and pack it automatically
+The footprint (texels per metre x mesh size x the renderer's lightmap scale) and the scene settings belong to the
+engine's lighting setup (`vrchat-lighting-and-baking` for Unity / VRChat); `rizomuv-uv-pipeline` can size and pack it automatically
 (`uv2="footprint"`).

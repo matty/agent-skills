@@ -1,7 +1,7 @@
 # Texel density for VR: choosing it
 
 How many texture pixels per metre a surface needs in a headset, and how to keep one density across a world. Worked
-out for a PC VRChat dark ride (Oct 2026), where every viewing position is known; the method carries to any world.
+out for a PC VR dark ride (Oct 2026), where every viewing position is known; the method carries to any world.
 Setting a density in Blender: `uv_audit.set_texel_density` (SKILL.md section 6). Hitting it exactly with RizomUV's
 packer: the `rizomuv-uv-pipeline` skill.
 
@@ -51,7 +51,8 @@ sees, rather than letting its density drop below about 0.8x its class.
 ## Lightmaps are a different density
 
 Lightmaps run at a few to a few tens of texels per metre, set per scene and weighted per renderer with Scale In
-Lightmap; the numbers and bake settings are the `vrchat-lighting-and-baking` skill's. Pack each mesh's UV2 for the
+Lightmap; the numbers and bake settings belong to the engine's lighting setup (`vrchat-lighting-and-baking` for
+Unity / VRChat). Pack each mesh's UV2 for the
 rectangle it will actually get (section 9 of SKILL.md).
 
 ## Checks
