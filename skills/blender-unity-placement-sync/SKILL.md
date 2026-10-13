@@ -10,8 +10,13 @@ instances, Unity places prefab instances. Exporting geometry does not move place
 merged FBX throws away whatever was done in Unity. This skill syncs **placements only**, both ways, and never
 silently overwrites a change.
 
-Prerequisite: pieces follow `blender-to-unity-vrchat` (`references/kit-library.md` and `references/unity-packaging.md`):
-one collection per piece in Blender, one `<Piece>.prefab` with the same name in Unity, prefab root at identity.
+What it relies on (`blender-to-unity-vrchat` covers how to set these up; this skill only needs them to hold):
+
+| Side | Requirement |
+|---|---|
+| Blender | Each piece or assembly is a collection, placed as collection instances (linked or local). The collection name is the asset name |
+| Unity | Each asset is a prefab with the **same file name** under `Assets/World/Kits/` or `Assets/World/Assemblies/` (other roots via config), its root at identity rotation and scale |
+| Export | FBX exported with -Z forward, Y up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform off, so a piece arrives in Unity at scale 1 and rotation 0 |
 
 ## Files
 
@@ -96,8 +101,8 @@ An unresolved conflict keeps its previous snapshot entry, so it is reported agai
 
 ## Coordinates
 
-JSON is in Unity space (left-handed, Y up, metres). Blender to Unity is `(-x, z, -y)`, matching the FBX exporter
-settings in `blender-to-unity-vrchat` (-Z forward, Y up, Use Space Transform on): a piece placed in Blender at
+JSON is in Unity space (left-handed, Y up, metres). Blender to Unity is `(-x, z, -y)`, matching the export
+settings above: a piece placed in Blender at
 `(2, 3, 0)`, rotated +90 deg about Z, appears in Unity at `(-2, 0, -3)`, rotated -90 deg about Y. The conversion
 assumes the prefab root has identity rotation. If pieces arrive mirrored or turned, check the FBX axis settings
 before touching the matrix in `export_placements.py`.
