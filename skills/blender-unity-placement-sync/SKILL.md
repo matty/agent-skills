@@ -64,6 +64,13 @@ Run all of it in one go: Unity keys in a dump are only valid until the hierarchy
 Blender must not have MASTER open and unsaved in a live session while the headless apply writes it (one writer per
 file). If MASTER is open in the live Blender, run `dump`/`apply` there through Blender MCP instead and save.
 
+Unity `Apply` saves what it changed, so it **refuses and changes nothing** when the target scene already has unsaved
+changes, or the target prefab is open in Prefab Mode with unsaved edits: saving would write the user's unrelated work
+too. When it refuses, tell the user and let them save or discard; never save their scene for them. Then re-run, or
+pass `save: false` (scenes only: apply, leave the scene unsaved for them to review and save) or `force: true` (they
+confirmed the pending changes are safe to save). Editor extensions such as Bakery can mark a scene dirty without changing it; that
+still refuses, by design.
+
 ## Merge rules
 
 Against the snapshot (`<scope>.synced.json`); positions within 1 mm, rotations within 0.01 deg and scale within 0.01%
@@ -97,8 +104,9 @@ An unresolved conflict keeps its previous snapshot entry, so it is reported agai
   under the root are ignored.
 - **Snapshot safety**: `merge` changes nothing. `commit` writes `<scope>.synced.json` only after fresh dumps of both
   sides match the plan, keeps the previous one as `<scope>.synced.prev.json`, and writes through a temp file.
-- **Undo**: Unity edits in a scene go through `Undo`, so `Ctrl+Z` reverses an apply. Blender headless applies save
-  the file. Keep MASTER under version control or back it up before the first sync.
+- **Undo**: Unity edits in a scene go through `Undo`, so `Ctrl+Z` reverses an apply, and an apply never saves
+  unsaved changes it did not make (see the sync loop). Blender headless applies save the file. Keep MASTER under
+  version control or back it up before the first sync.
 
 ## Coordinates
 

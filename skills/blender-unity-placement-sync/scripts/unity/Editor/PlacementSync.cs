@@ -12,6 +12,10 @@
 // From Unity MCP execute_code:
 //   PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "F:/World/placements/MASTER.unity.json", "MASTER");
 //   PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "F:/World/placements/MASTER.plan.unity.json");
+// Apply saves what it changed, so it refuses (and changes nothing) when the target scene already has unsaved changes,
+// or the target prefab is open in Prefab Mode with unsaved edits: saving would write someone else's work too. Pass
+// save: false to apply and leave the scene unsaved for review (scenes only; a prefab apply always writes the asset),
+// or force: true once those changes are known to be safe.
 // Or menu Tools > Placement Sync > Dump All / Apply All, driven by PlacementSync.json in the project root:
 //   {"scopes": [{"name": "MASTER", "target": "scene:MASTER", "dir": "F:/World/placements"}],
 //    "prefabRoots": ["Assets/World/Kits", "Assets/World/Assemblies"]}
@@ -69,9 +73,23 @@ namespace PlacementSync
             return summary;
         }
 
-        public static string Apply(string target, string planPath, bool save = true)
+        public static string Apply(string target, string planPath, bool save = true, bool force = false)
         {
             var plan = JsonUtility.FromJson<Plan>(File.ReadAllText(planPath));
+            if (!force)
+            {
+                var blocker = UnsavedWork(target, save);
+                if (blocker != null)
+                {
+                    var options = target.StartsWith("prefab:")
+                        ? "or force: true if they are safe to save"
+                        : "apply with save: false to leave the result unsaved, or force: true if they are safe to save";
+                    var refused = $"[placements] refused {plan.scope}: {blocker}. Nothing was changed. Save or discard those changes "
+                                + $"yourself and re-run, {options}.";
+                    Debug.LogError(refused);
+                    return refused;
+                }
+            }
             var errors = new List<string>();
             var counts = new Dictionary<string, int> { { "assign", 0 }, { "delete", 0 }, { "update", 0 }, { "create", 0 } };
             WithRoot(target, true, root =>
@@ -149,6 +167,29 @@ namespace PlacementSync
         }
 
         // ---- internals ----------------------------------------------------------------------------------------
+
+        // Why applying now would save changes that are not the sync's, or null. Checked before anything is touched.
+        static string UnsavedWork(string target, bool save)
+        {
+            if (target.StartsWith("prefab:"))
+            {
+                // Applies to a prefab always write the asset, whatever `save` says.
+                var path = target.Substring(7);
+                var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                return stage != null && stage.assetPath == path && stage.scene.isDirty
+                    ? $"{path} is open in Prefab Mode with unsaved changes"
+                    : null;
+            }
+            if (!save) return null;
+            var name = target.StartsWith("scene:") ? target.Substring(6) : target;
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded && scene.isDirty && scene.GetRootGameObjects().Any(g => g.name == name))
+                    return $"scene {scene.name} already has unsaved changes";
+            }
+            return null;
+        }
 
         static Config LoadConfig() => File.Exists(ConfigFile) ? JsonUtility.FromJson<Config>(File.ReadAllText(ConfigFile)) : null;
 
