@@ -47,6 +47,16 @@ The **Pipeline Manager** on the same object holds the world's blueprint ID; ever
 
 ## 3. Layers
 
+**First, in every new project:** Control Panel > Builder > **Setup Layers for VRChat**, then **Setup Collision
+Matrix** (each asks to confirm). They write `ProjectSettings/TagManager.asset` and the physics collision matrix to
+match VRChat's. Until both are done the Builder shows "VRChat scenes must have the same Unity layer configuration as
+VRChat..." and **the build is blocked**, even when every other validation passes. A project made by the Creator
+Companion can show VRChat's layer names and still fail this check, so run both rather than judging by eye. Do it
+before placing objects on layers: the layer setup moves custom layers down the list, and objects on them would need
+reassigning. To check from a script: `VRC.Editor.UpdateLayers.AreLayersSetup()` and
+`UpdateLayers.IsCollisionLayerMatrixSetup()` (both true); `SetupEditorLayers()` and `SetupCollisionLayerMatrix()` are
+what the buttons call.
+
 | Layers | Use |
 |---|---|
 | 0 Default, 11 Environment, 8 Interactive | Free for world geometry and interactables |
@@ -114,7 +124,9 @@ Publish Your World Online** (it needs their account at the "New User" trust rank
 The Builder tab needs a signed-in SDK. Signed out, the scene checks behind it can still run through Unity MCP by
 reflection on `VRCSdkControlPanel` / `VRCSdkControlPanelWorldBuilder` (`FindScenes`, `CheckProjectSetup`,
 `OnGUISceneCheck`), but the Unity-version check needs remote config and is skipped silently: confirm the editor
-version yourself. A local build without signing in is not something to rely on; measure the size at upload.
+version yourself. The layer and collision-matrix checks are not part of those calls: run
+`UpdateLayers.AreLayersSetup()` and `UpdateLayers.IsCollisionLayerMatrixSetup()` as well, since either one blocks the
+build. A local build without signing in is not something to rely on; measure the size at upload.
 
 ## 8. Cross-platform (PC, Android / Quest, iOS)
 
