@@ -68,7 +68,7 @@ Ask at intake, record as `world.scale` in the spec.
 | Fits | Several zones, a kit of dozens of pieces, cross-platform | One zone or a few rooms, about 30 pieces or fewer |
 | Stages 1-3 | Separate tasks, spec gate after 2 | One planning task, `T-PLAN-01` (mockups, spec, kit plan; `references/stages.md`), spec gate after it |
 | KIT files | One per family | One `KIT_World.blend` may hold every family (pieces and `M_<FAMILY>_*` materials still named by family) |
-| QA | One pass per task | One pass per stage, over all of that stage's tasks |
+| QA | One pass per task | One pass per stage, over all of that stage's tasks, after the last of them returns: one verdict per task in `world/reports/qa/stage-<n>/verdict.yaml`; each task waits in `qa` until then |
 | Gates | Spec, greybox | Spec, greybox (never skipped: they are the cheap moments to change course) |
 | Everything else | As written | As written: same names, same spec, same ledger, so a small world can grow into a full one |
 
