@@ -89,7 +89,9 @@ Full annotated table in `references/fbx-export.md`. The essentials:
 
 ```
 Path Mode: Strip for kit pieces that use shared Unity materials (Copy writes a <Piece>.fbm
-           texture copy per FBX); Copy + embed off only for a one-off asset that brings its own textures
+           texture copy per FBX); Copy + embed off only for a one-off asset that brings its own textures.
+           Strip still writes each texture's bare file name into the FBX (no folder, no file):
+           harmless when Unity remaps materials by name to existing ones (references/unity-packaging.md)
 Include:   Selected Objects; Object Types = Mesh (+ Armature only if rigged)
 Transform: Scale 1.0, Apply Scalings = "FBX All", -Z Forward, Y Up,
            Apply Unit = on, Use Space Transform = on, Bake Space Transform = on
@@ -101,7 +103,7 @@ Animation: off for static world geometry
 
 ## Batch export
 
-`scripts/batch_export_fbx.py` exports each selected object (or each collection) to its own FBX with the settings above, named after the object, into a target folder — run it from Blender's Text Editor, or paste it through the Blender MCP `execute_blender_code`. For a whole kit file headless, `blender -b --factory-startup KIT_<Name>.blend --python batch_export_fbx.py -- --kit --dir export/fbx [--set-status]` writes one FBX per piece collection to `export/fbx/<FAMILY>/<Piece>.fbx`.
+`scripts/batch_export_fbx.py` exports each selected object (or each collection) to its own FBX with the settings above, named after the object, into a target folder — run it from Blender's Text Editor, or paste it through the Blender MCP `execute_blender_code`. For a whole kit file headless, `blender -b --factory-startup KIT_<Name>.blend --python batch_export_fbx.py -- --kit --dir export/fbx [--set-status]` writes one FBX per piece collection to `export/fbx/<FAMILY>/<Piece>.fbx`. To check an export in Blender, re-import with `import_scene.fbx(..., bake_space_transform=True)`: the default import shows a 90 deg X rotation and swapped Y/Z sizes for a correct file.
 
 `scripts/mesh_audit.py` reports, per object: evaluated triangle count, material slots, UV channels, unapplied scale/rotation, n-gons and duplicate-mesh groups — the last one tells you which objects can share an instanced draw call.
 
