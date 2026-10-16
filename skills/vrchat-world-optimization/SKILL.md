@@ -27,6 +27,8 @@ Guessing wastes hours. Measure, fix the top cost, measure again.
 
 With the Unity MCP server connected: `manage_profiler` for captures, `read_console` for warnings, `manage_editor` for play mode, `unity_reflect` / `execute_code` to query renderers, materials and import settings in bulk rather than clicking through the Inspector.
 
+Measuring from a script in ClientSim: a temporary camera placed at a spec view must copy the ClientSim PlayerCamera's culling mask, or it also draws the local avatar body (layer 18) and inflates every number. Without a build (no module, no sign-in), estimate download size from the compressed texture data at each platform's import format, deflated, plus meshes, the scene and a shader allowance, and label it an estimate. Sizes are MB = 10^6 bytes, as VRChat states its limits; say so where MiB could be read.
+
 **CPU-bound vs GPU-bound decides what to fix.** CPU-bound → draw calls, Udon, physics, animators. GPU-bound → overdraw, shader cost, fill rate, realtime lights, mirrors, texture bandwidth.
 
 ### 2. Rank by cost, not by ease

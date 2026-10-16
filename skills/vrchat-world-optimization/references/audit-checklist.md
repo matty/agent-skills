@@ -1,6 +1,6 @@
 # Pre-upload audit checklist
 
-Run VRWorld Toolkit's World Debugger first — it catches most of this automatically — then walk this list.
+Run VRWorld Toolkit's World Debugger first if it is installed (it catches most of this automatically), then walk this list; without it, walk the list by hand through Unity MCP.
 
 ## Scene / SDK
 - [ ] One scene descriptor, spawn points above the floor, respawn height below the lowest walkable point.
@@ -14,7 +14,8 @@ Run VRWorld Toolkit's World Debugger first — it catches most of this automatic
 - [ ] Frame Debugger walked once end to end — no surprise passes (duplicate skyboxes, stray cameras, per-light passes).
 - [ ] Mirrors off by default, culling mask trimmed to the minimum layers, auto-disabled when players leave.
 - [ ] No always-on render cameras; any camera writing a RenderTexture is toggled and low resolution.
-- [ ] Occlusion culling baked, Occluder/Occludee Static flags set deliberately.
+- [ ] Occlusion culling baked, Occluder/Occludee Static flags set deliberately. A single room with nothing outside it gains nothing from it: record that decision instead.
+- [ ] Scene descriptor Dynamic Materials holds only materials the world swaps at runtime: the SDK template lists its own, which ship with every platform (and their textures carry no Android override).
 - [ ] Realtime light count is 0 or 1; everything else baked.
 - [ ] Materials used by many objects have **Enable GPU Instancing** ticked.
 
