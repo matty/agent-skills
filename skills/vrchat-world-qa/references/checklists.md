@@ -55,7 +55,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | Id | Check | How |
 |---|---|---|
 | B1 | Every greybox piece has a valid name, identity transforms, a bottom-left pivot and extents matching its Size (UV2 and materials may be missing at greybox) | `qa_measure` on each KIT file |
-| B2 | MASTER contains only collection instances, zone empties, a scale figure and lighting reference; no local meshes | `qa_measure` `stray_meshes` (only the scale figure allowed) |
+| B2 | MASTER contains only collection instances, zone empties, scale figures and lighting reference; no other local meshes | `qa_measure`: `stray_meshes` empty; review aids live in a `REF` collection and are listed as `ref_meshes` |
 | B3 | Every piece in MASTER is linked, not appended | `qa_measure`: `appended` and `shadowing_linked` empty |
 | B4 | Layout matches the plans: overlay a top orthographic render on `world/diagrams/plan_<zone>.svg` | `qa_measure --render top --overlay` |
 | B5 | Scale: 1.6 m and 1.9 m figures stand at doors, stairs and ceilings without clipping | `look` angles at each opening |
@@ -113,8 +113,8 @@ named in the check and say in the evidence that the deeper audit was unavailable
 |---|---|---|
 | E1 | One FBX per piece collection, named after it, in `export/fbx/<FAMILY>/` | List files |
 | E2 | Re-import one FBX per family into a blank Blender: scale 1, rotation 0, size matches the piece | Headless `import_scene.fbx(filepath=..., bake_space_transform=True)` and read rotation and dimensions. Without `bake_space_transform` on import, Blender puts the Y-up conversion on the object (X 90 deg, Y and Z swapped) even though the file is right; Unity's own check is N3 |
-| E3 | FBX triangle counts equal the audited LOD0 counts | Import, `qa_measure` |
-| E4 | Two UV channels in every lightmapped FBX; material slot names unchanged from the previous export | Import, inspect |
+| E3 | FBX triangle counts equal the audited LOD0 counts | `qa_measure --import-fbx <files>` in a blank factory-startup session (imports with `bake_space_transform`, one collection per file, measured as pieces) |
+| E4 | Two UV channels in every lightmapped FBX; material slot names unchanged from the previous export (on a first export: equal to the KIT's) | `qa_measure --import-fbx` (UV layer count, materials per object) |
 
 ## Stage 10 - Unity assembly
 

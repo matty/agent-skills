@@ -109,6 +109,28 @@ def measure_piece(coll, module, depsgraph):
     return rep
 
 
+def _in_ref(ob):
+    return any(c.name == "REF" or c.name.startswith("REF_") for c in ob.users_collection)
+
+
+def import_fbx(paths):
+    """Import FBX files for E2/E3 the way a check must: bake_space_transform=True (without it Blender puts the Y-up
+    conversion on the object as a 90 deg X rotation). Each file's objects go into a collection named after the file
+    (the piece name), so measure() treats them as pieces. Returns the collection names."""
+    names = []
+    for path in paths:
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.fbx(filepath=os.path.abspath(path), bake_space_transform=True)
+        coll = bpy.data.collections.new(os.path.splitext(os.path.basename(path))[0])
+        bpy.context.scene.collection.children.link(coll)
+        for ob in set(bpy.data.objects) - before:
+            for c in list(ob.users_collection):
+                c.objects.unlink(ob)
+            coll.objects.link(ob)
+        names.append(coll.name)
+    return names
+
+
 def measure(module=1.0, scene=None):
     scene = scene or bpy.context.scene
     dg = bpy.context.evaluated_depsgraph_get()
@@ -124,8 +146,9 @@ def measure(module=1.0, scene=None):
             places.append({
                 "object": ob.name, "asset": coll.name, "linked": coll.library is not None,
                 "id": ob.get("placement_id"), "pos": [round(v, 4) for v in loc], "rot_z": round(rz, 3),
-                "on_grid": (not grid_piece) or all(abs(v / module - round(v / module)) < 1e-3 for v in loc[:2]),
-                "right_angle": (not grid_piece) or abs((rz + 360.0) % 90.0) < 1e-2 or abs((rz + 360.0) % 90.0 - 90) < 1e-2,
+                # grid pieces only (Free props report None); X and Y only, heights are checked against the spec
+                "on_grid": (all(abs(v / module - round(v / module)) < 1e-3 for v in loc[:2]) if grid_piece else None),
+                "right_angle": None if not grid_piece else abs((rz + 360.0) % 90.0) < 1e-2 or abs((rz + 360.0) % 90.0 - 90) < 1e-2,
             })
     used_locally = {p["asset"] for p in places if not p["linked"]}
     owned = {o.name for c in local_kit for o in c.all_objects}
@@ -146,8 +169,11 @@ def measure(module=1.0, scene=None):
         # a kit-named local collection that is also placed here is a copy, not a link
         "appended": sorted(n for n in used_locally if NAME_RE.match(n)),
         "shadowing_linked": sorted(c.name for c in local_kit if c.name in linked_names),
+        # REF: scale figures and other review aids a MASTER may hold (never exported); everything else local is stray
+        "ref_meshes": sorted(o.name for o in scene.objects if o.type == "MESH" and o.library is None
+                             and o.name not in owned and _in_ref(o)),
         "stray_meshes": sorted(o.name for o in scene.objects
-                               if o.type == "MESH" and o.library is None and o.name not in owned),
+                               if o.type == "MESH" and o.library is None and o.name not in owned and not _in_ref(o)),
     }
 
 
@@ -222,9 +248,9 @@ def problems(rep, piece_tris=None):
             if None in st["materials"] and stage >= STATUS_ORDER.index("textured"):
                 out.append("%s/%s: empty material slot" % (n, on))
     for pl in rep["placements"]:
-        if not pl["on_grid"]:
+        if pl["on_grid"] is False:
             out.append("placement %s (%s) off grid at %s" % (pl["object"], pl["asset"], pl["pos"][:2]))
-        if not pl["right_angle"]:
+        if pl["right_angle"] is False:
             out.append("placement %s (%s) rotated %s deg" % (pl["object"], pl["asset"], pl["rot_z"]))
     out += ["%s is placed from a local copy (appended), not linked" % n for n in rep["appended"]]
     out += ["local collection %s shadows a linked one of the same name" % n for n in rep["shadowing_linked"]]
@@ -347,7 +373,12 @@ def _main():
     ap.add_argument("--render", choices=sorted(VIEWS))
     ap.add_argument("--center", type=float, nargs="+")
     ap.add_argument("--extent", type=float, nargs=2)
-    ap.add_argument("--px-per-m", type=float, default=20.0)
+    ap.add_argument("--px-per-m", type=float, default=None, help="render scale; default the overlay SVG's "
+                    "data-px-per-m, else 20")
+    ap.add_argument("--hide-collection", nargs="+", default=[], metavar="NAME",
+                    help="hide these collections in renders (e.g. REF for gate and G4 views)")
+    ap.add_argument("--import-fbx", nargs="+", metavar="FBX", help="import these FBX files first (E2/E3), each "
+                    "into a collection named after it, then measure them as pieces")
     ap.add_argument("--clip", type=float, help="ortho only: draw only geometry from this many metres in front of "
                     "the centre plane onward (an interior wall from inside the room)")
     ap.add_argument("--view", type=float, nargs=7, metavar=("PX", "PY", "PZ", "TX", "TY", "TZ", "LENS"),
@@ -362,6 +393,15 @@ def _main():
     for k in ("json", "png", "overlay", "overlay_out"):
         if getattr(a, k):
             setattr(a, k, os.path.abspath(getattr(a, k)))
+    if a.px_per_m is None:
+        a.px_per_m = 20.0
+        if a.overlay and a.overlay.lower().endswith(".svg"):
+            with open(a.overlay, encoding="utf-8") as f:
+                m = re.search(r'data-px-per-m="([0-9.]+)"', f.read(4000))
+            if m:
+                a.px_per_m = float(m.group(1))
+    if a.import_fbx:
+        print("[qa] imported " + ", ".join(import_fbx(a.import_fbx)))
     rep = measure(a.module)
     probs = problems(rep, json.loads(a.piece_tris) if a.piece_tris else None)
     for p in rep["pieces"]:
@@ -387,6 +427,12 @@ def _main():
         if a.json:
             with open(a.json, "w", encoding="utf-8") as f:
                 json.dump(rep, f, indent=2)
+    hidden = []
+    for name in a.hide_collection:
+        for ob in (bpy.data.collections[name].all_objects if name in bpy.data.collections else []):
+            if not ob.hide_render:
+                ob.hide_render = True
+                hidden.append(ob)
     if a.view:
         render_view(a.png, a.view[0:3], a.view[3:6], a.view[6])
         print("[qa] rendered " + a.png)
@@ -397,6 +443,8 @@ def _main():
             size = (max(16, int(round(a.extent[0] * a.px_per_m))), max(16, int(round(a.extent[1] * a.px_per_m))))
             print("[qa] overlay " + overlay_svg(a.png, a.overlay, a.overlay_out or a.png + ".overlay.svg",
                                                size=size))
+    for ob in hidden:
+        ob.hide_render = False
 
 
 if __name__ == "__main__":
