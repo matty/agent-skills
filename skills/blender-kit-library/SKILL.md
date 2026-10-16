@@ -94,7 +94,7 @@ A .blend file has exactly one writer at a time. Blender saves via a temp file an
 from a KIT never see a half-written file, but two writers to the same file silently lose one side's work.
 
 - Kit work runs headless, one process per KIT file:
-  `blender -b blender/kits/KIT_Arch_Exterior.blend --python task.py`, ending with
+  `blender -b --factory-startup blender/kits/KIT_Arch_Exterior.blend --python task.py`, ending with
   `bpy.ops.wm.save_mainfile()`.
 - MASTER is opened by one owner only (normally through Blender MCP). ASM files likewise get one owner per file.
 - Files that link a changed library reload it rather than being reopened.
