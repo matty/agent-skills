@@ -116,7 +116,12 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
   `cube_size = map_px / px_per_m` gives an exact density (2048 / 512 = 4.0; verified on 5.2.2). Apply scale first:
   an unapplied scale of 2 halves the density.
 - Vary it on purpose: hidden faces (undersides, backs against walls) smaller, faces seen up close larger, but keep
-  each island internally even.
+  each island internally even. Mark the faces you lowered with a boolean face attribute `uv_low_density`
+  (`me.attributes.new("uv_low_density", "BOOLEAN", "FACE")`) so `uv_audit` leaves them out of the density mean and
+  spread (it counts them instead); without the mark a deliberate drop reads as uneven density.
+- Stacked copies (mirrored or repeated parts sharing texture space on UV0) count as one island in the padding
+  check. To keep them stacked when packing, `pack(..., keep_stacks=True)`, after spreading unique islands apart.
+  Never stack on a lightmap layer.
 - Map size for a unique texture: `next_pow2(px_per_m x sqrt(area_m2 / coverage))` with coverage about 0.65, capped
   by the platform (`references/texel-density.md`).
 

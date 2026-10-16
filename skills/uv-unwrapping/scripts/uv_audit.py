@@ -21,8 +21,9 @@ What audit() measures, on the evaluated mesh (modifiers applied, as it exports) 
   - folded faces (flipped inside an otherwise unflipped island: always a fault), mirrored islands (the whole
     island flipped: a normal fact of mirrored geometry, not a fault), faces with zero UV area;
   - UVs outside 0-1, overlap between different islands (stacked copies counted apart from partial overlaps),
-    padding between islands (rasterised, within about a pixel) and margin to the tile edge, in pixels;
-  - texel density in px/m (mean, spread between islands, against a target);
+    padding between islands (rasterised, within about a pixel; exactly stacked copies count as one island) and margin to the tile edge, in pixels;
+  - texel density in px/m (mean, spread between islands, against a target), leaving out faces marked with the
+    boolean face attribute "uv_low_density" (never seen, lowered on purpose), which it counts instead;
   - hard edges (split normals) that are not UV seams: on a layer that takes a baked normal map they bake a line.
 audit() changes nothing. set_texel_density() and pack() change only the UV layer they work on, and make it the
 active one; seams_from_hard_edges() changes only edge seams.
@@ -273,10 +274,14 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
     isl_ratio = (np.bincount(isl_tri[good], weights=ratio[good] * w[good], minlength=n_isl)
                  / np.maximum(np.bincount(isl_tri[good], weights=w[good], minlength=n_isl), 1e-30))
     area_dev = np.abs(np.log2(np.maximum(ratio, 1e-30) / np.maximum(isl_ratio[isl_tri], 1e-30)))
-    # texel density per island, px per metre (world units)
+    # texel density per island, px per metre (world units). Faces marked with the boolean face attribute
+    # LOW_DENSITY_ATTR (never seen: undersides, backs against walls) were lowered on purpose: they are left out of
+    # the mean and the spread, and counted instead.
+    low = _low_density_faces(ob, npoly)[d["tpoly"]]
     td_isl = map_px * np.sqrt(np.maximum(isl_ratio, 0))
-    td_mean = map_px * math.sqrt(max(float(np.abs(tr["au"][ok]).sum()) / max(float(w.sum()), 1e-30), 0))
-    wi = np.bincount(isl_tri[good], weights=w[good], minlength=n_isl)
+    seen = ok & ~low
+    td_mean = map_px * math.sqrt(max(float(np.abs(tr["au"][seen]).sum()) / max(float(w[seen].sum()), 1e-30), 0))
+    wi = np.bincount(isl_tri[good & ~low], weights=w[good & ~low], minlength=n_isl)
     td_cv = (float(np.sqrt(np.average((td_isl - td_mean) ** 2, weights=wi)) / td_mean)
              if td_mean > 0 and wi.sum() > 0 else float("nan"))
     uv = d["uv"]
@@ -288,6 +293,7 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
            "zero_area_uv_faces": int(len(np.unique(d["tpoly"][zero_uv]))),
            "outside_0_1": round(outside, 4),
            "texel_px_per_m": round(td_mean, 1), "texel_cv": round(td_cv, 3),
+           "low_density_faces": int(len(np.unique(d["tpoly"][low]))),
            "texel_island_range": ([round(float(td_isl[wi > 0].min()), 1), round(float(td_isl[wi > 0].max()), 1)]
                                   if (wi > 0).any() else None),
            "hard_edges_not_seams": int(np.count_nonzero(hard & ~uv_split)),
@@ -307,12 +313,35 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
         rep.update({"coverage": round(float((grid >= 0).mean()), 4), "overlap_px": int(overlap_px),
                     "stacked_island_pairs": stacked, "overlapping_island_pairs": partial})
         if pad_px:
+            # Exactly stacked copies share their pixels on purpose: treat each stack as one island for the gap check,
+            # or the copies would read as islands touching each other.
+            alias = np.arange(max(n_isl, 1))
+            for (a, b), n in clash.items():
+                small = max(min(px[a], px[b]), 1)
+                if n / small > 0.9 and abs(int(px[a]) - int(px[b])) <= 0.1 * small:
+                    ra, rb = alias[a], alias[b]
+                    alias[alias == max(ra, rb)] = min(ra, rb)
+            grid = np.where(grid >= 0, alias[np.maximum(grid, 0)], -1)
             scale = res / float(map_px)
             gap = _min_gap(grid, pad_px * scale)
             rep["padding_ok"] = gap is None
             rep["min_gap_px"] = None if gap is None else round(gap / scale, 1)
     rep["issues"] = _issues(rep, pad_px, px_per_m, lightmap, baking)
     return rep
+
+
+LOW_DENSITY_ATTR = "uv_low_density"
+
+
+def _low_density_faces(ob, npoly):
+    """Per-face booleans from the face attribute LOW_DENSITY_ATTR (all False when the mesh has none, or when a
+    modifier changed the face count so the original attribute no longer lines up)."""
+    at = ob.data.attributes.get(LOW_DENSITY_ATTR)
+    if at is None or at.domain != "FACE" or at.data_type != "BOOLEAN" or len(at.data) != npoly:
+        return np.zeros(npoly, bool)
+    vals = np.zeros(npoly, bool)
+    at.data.foreach_get("value", vals)
+    return vals
 
 
 def _issues(r, pad_px, px_per_m, lightmap, baking):
@@ -441,10 +470,12 @@ def _set_active_layer(ob, layer):
     return lay
 
 
-def pack(objects, map_px=1024, pad_px=8, layer=None, scale=True, rotate=True, together=False, shape="CONCAVE"):
+def pack(objects, map_px=1024, pad_px=8, layer=None, scale=True, rotate=True, together=False, shape="CONCAVE",
+         keep_stacks=False):
     """Pack each object's layer into the 0-1 tile with pad_px pixels between islands and pad_px / 2 to the edge.
     scale=False keeps the island sizes (after set_texel_density). together=True packs all objects into one tile
-    (a shared atlas). Blender's FRACTION margin puts `margin` at the edge and twice it between islands (measured
+    (a shared atlas). keep_stacks=True packs islands stacked on purpose (mirrored or repeated parts on UV0) as one:
+    Blender merges every overlapping island for that, so spread unique islands apart first. Never on a lightmap. Blender's FRACTION margin puts `margin` at the edge and twice it between islands (measured
     on 5.2.2), so margin = pad_px / (2 * map_px)."""
     objects = [o for o in objects if o.type == "MESH"]
     groups = [objects] if together else [[o] for o in objects]
@@ -455,7 +486,7 @@ def pack(objects, map_px=1024, pad_px=8, layer=None, scale=True, rotate=True, to
         try:
             bpy.ops.uv.select_all(action="SELECT")
             bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=rotate, rotate_method="CARDINAL",
-                                    scale=scale, merge_overlap=False, margin_method="FRACTION",
+                                    scale=scale, merge_overlap=keep_stacks, margin_method="FRACTION",
                                     margin=pad_px / (2.0 * map_px), shape_method=shape)
         finally:
             _restore(prev)
