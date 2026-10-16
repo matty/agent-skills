@@ -49,6 +49,10 @@ qa:
   notes: []                      # any verdict: advisory results and observations worth acting on that do not block
 ```
 
+A pass over several tasks at once (the pipeline's `small` scale QA's a whole stage together) writes one block per
+task, as a YAML list (`- qa: {task: ...}` per task) in one `verdict.yaml`, so a failure sends back only the task
+that failed.
+
 | Verdict | Means |
 |---|---|
 | `pass` | Every check passed or is `n/a` with a reason |
