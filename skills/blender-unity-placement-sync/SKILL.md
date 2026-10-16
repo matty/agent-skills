@@ -61,6 +61,10 @@ Run all of it in one go: Unity keys in a dump are only valid until the hierarchy
            -> refuses, and leaves the snapshot alone, unless both sides now match the plan.
 ```
 
+`--libraries` globs are relative to the .blend file's folder (so `kits/*.blend` next to `blender/MASTER.blend`), unless
+absolute. Every `merge` rewrites the plans, `pending.json` and `report.txt`: a merge run after `commit` as a check
+replaces them with empty plans, which is harmless.
+
 Blender must not have MASTER open and unsaved in a live session while the headless apply writes it (one writer per
 file). If MASTER is open in the live Blender, run `dump`/`apply` there through Blender MCP instead and save.
 
