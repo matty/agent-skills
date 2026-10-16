@@ -60,6 +60,7 @@ result.
   are not), plus `joint_match` for vertices shared with a neighbouring piece.
 - `scripts/review_render.py`: off-screen Workbench renders from fixed cameras — **close-up wire**, studio, and a
   reflective matcap (`check_reflection_horizontal.exr`) — before/after in contact sheets. Look at the wire close up.
+  It works in a live Blender (viewport off-screen draw) and headless under `blender -b` (a Workbench scene render).
 - Check determinism (build twice, compare a vertex hash) for anything generated.
 - Report counts before/after, what was checked, and what was not (for example, a full level build).
 - For approval of several pieces at once, build every test hidden in a preview collection, then lay them out in a
@@ -74,7 +75,7 @@ result.
 | `scripts/grid_topology.py` | even/zone stations, chord-limited arc counts, `grid_faces`, `step_3to1`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights` |
 | `scripts/quad_remesh.py` | `quad_remesh()` driving the Quad Remesher engine, `weld_layout()` validation/weld, `mirror_half()` |
 | `scripts/topology_audit.py` | `audit(obj)`, `joint_match(a, b, select)`, `determinism_hash(obj)` |
-| `scripts/review_render.py` | `render(path, eye, target, ...)` off-screen, `contact_sheet(paths, out, cols)` |
+| `scripts/review_render.py` | `render(path, eye, target, ...)` off-screen or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)` |
 
 Load a script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions; none of
 them change the scene except where stated (renders add and remove a temporary camera).
