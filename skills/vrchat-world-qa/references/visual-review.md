@@ -53,7 +53,8 @@ agreement, and say in the verdict which mockup and view you compared.
 Dark renders cannot be judged by eye: an image viewer may auto-level them. Record each render's pixel mean and
 max, and judge seams and leaks on a gain-boosted copy (saved next to it, named `_xN`). To see a state the scene does
 not hold (a light on, a test capsule), add hidden temporary objects (`HideFlags.HideAndDontSave`) and destroy them,
-rather than toggling the real ones.
+rather than toggling the real ones. In Play mode create them without the DontSave flags (those survive leaving Play
+and reopening the scene), and afterwards check `Resources.FindObjectsOfTypeAll` that none is left.
 
 ## Recording
 

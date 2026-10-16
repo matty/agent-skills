@@ -155,10 +155,10 @@ Load `vrchat-world-optimization` and run its pre-upload audit end to end, then:
 | Id | Check | How |
 |---|---|---|
 | O1 | Every number in `budgets` measured and within it (triangles, SetPass, batches, materials, VRAM, download size per platform) | Stats panel, Profiler, build size report via Unity MCP |
-| O2 | Quest build under 100 MB (hard limit) when `quest` is in `platforms` | Build report |
+| O2 | Quest build under 100 MB (hard limit) when `quest` is in `platforms` | Build report; without a build, an estimate from compressed data at the Android formats, labelled as such |
 | O3 | Worst view in each zone measured, not the average | Stand at each zone's busiest point |
 | O4 | Regressions since the last audit explained | Compare with the previous report in `world/reports/` |
-| O5 | Every platform in `world.platforms` builds with no SDK validation errors or console errors, uses one blueprint ID, and passes a ClientSim walk and a 2-client Build & Test; publish fields drafted | Unity MCP, build logs |
+| O5 | Every platform in `world.platforms` builds with no SDK validation errors or console errors, uses one blueprint ID, and passes a ClientSim walk and a 2-client Build & Test; publish fields drafted | Unity MCP, build logs. A part the user excluded, or one blocked by a missing build module or sign-in, is "not run" with the reason: the check can pass with notes on what did run, never pass silently, and the user is told what is left before upload |
 
 ## Platform targets
 
