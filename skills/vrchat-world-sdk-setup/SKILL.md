@@ -25,7 +25,10 @@ With Unity MCP, confirm the version from `mcpforunity://instances` before anythi
 Control Panel (`VRChat SDK > Show Control Panel`) > Builder > **Add a VRCSceneDescriptor** creates a `VRCWorld`
 object. Exactly one per scene. Starting from the SDK's template scene (`VRCDefaultWorldScene`): it already has a `VRCWorld`, plus a
 100 x 100 m `Floor` plane at y 0, a `Main Camera`, a `Directional Light` and an `EventSystem`. Remove the floor if the
-world has its own (it z-fights a floor at the same height) and decide on the light in the lighting step.
+world has its own (it z-fights a floor at the same height) and decide on the light in the lighting step. The
+template's scene descriptor also lists the template's own materials under Dynamic Materials: they ship with the
+world and cost texture memory and download size although nothing renders them, so clear that list unless the world
+swaps materials at runtime.
 
 | Field | Set it to |
 |---|---|
