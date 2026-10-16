@@ -15,7 +15,7 @@ writes it; subagents return report blocks that the master merges.
 | `flags.generated_assets` | Every prop made with `generate_3d` or imported from a library: piece, source, task |
 | `flags.overrides` | Library overrides in ASM or MASTER, with the reason |
 | `flags.open_conflicts` | Unresolved placement-sync conflicts waiting on the user |
-| `log` | Append-only events: dispatches, verdicts, gate decisions, escalations, spec changes |
+| `log` | Append-only events: dispatches, verdicts, gate decisions, escalations, spec changes. Every `at` is read from the system clock in UTC (`date -u +%Y-%m-%dT%H:%M:%SZ`, or `Get-Date -AsUTC -Format o`), never estimated: QA compares file modification times against it |
 
 ## Task lifecycle
 
@@ -28,7 +28,7 @@ blocked: a dependency failed or a gate was refused      skipped: not needed (say
 | Moment | Master does |
 |---|---|
 | Dispatch | Write the brief, set `running`, `attempts += 1`, log it |
-| Builder returns | Save its report to `report`, set `qa`, dispatch the QA agent |
+| Builder returns | The master saves the builder's report block to `report`, sets `qa`, and dispatches the QA agent. If the master edited any of the task's outputs after it returned (for example a spec section the master owns), it lists those edits in the QA brief |
 | QA `pass` / `pass-with-notes` | Set `done`; copy notes into the log; advance dependants |
 | QA `fail`, attempts < 3 | Set `failed`, then re-dispatch with the original brief plus the QA `fixes` |
 | QA `fail`, attempt 3 | Set `escalated`, stop that branch, tell the user what failed and what QA asked for |

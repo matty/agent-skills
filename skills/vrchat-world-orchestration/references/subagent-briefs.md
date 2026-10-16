@@ -64,7 +64,8 @@ Load `vrchat-world-qa`. You did not build this and must not change it.
 Stage: <n>. Checklist: <letter> plus G1-G5.
 Builder's brief: world/briefs/<task>.md   Builder's report: world/reports/<task>.yaml
 Spec excerpt: <same as the builder's>
-Writable files of the builder (for G2): <list>
+Writable files of the builder (for G2): <list>. Dispatched at: <UTC time from the ledger log>
+Master edits since the builder returned (not the builder's doing): <file and what changed, or none>
 Views and diagrams to compare (G4): <view ids, svg paths>
 Save evidence under world/reports/qa/<task>/ and end with the verdict block from vrchat-world-qa.
 ```
