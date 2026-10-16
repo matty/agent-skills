@@ -277,7 +277,7 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
     # texel density per island, px per metre (world units). Faces marked with the boolean face attribute
     # LOW_DENSITY_ATTR (never seen: undersides, backs against walls) were lowered on purpose: they are left out of
     # the mean and the spread, and counted instead.
-    low = _low_density_faces(ob, npoly)[d["tpoly"]]
+    low = _low_density_faces(ob, npoly, d["layer"])[d["tpoly"]]
     td_isl = map_px * np.sqrt(np.maximum(isl_ratio, 0))
     seen = ok & ~low
     td_mean = map_px * math.sqrt(max(float(np.abs(tr["au"][seen]).sum()) / max(float(w[seen].sum()), 1e-30), 0))
@@ -333,10 +333,14 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
 LOW_DENSITY_ATTR = "uv_low_density"
 
 
-def _low_density_faces(ob, npoly):
-    """Per-face booleans from the face attribute LOW_DENSITY_ATTR (all False when the mesh has none, or when a
-    modifier changed the face count so the original attribute no longer lines up)."""
-    at = ob.data.attributes.get(LOW_DENSITY_ATTR)
+def _low_density_faces(ob, npoly, layer_name=None):
+    """Per-face booleans from the face attribute LOW_DENSITY_ATTR + "_" + the UV layer's name (lowered on that layer
+    only, e.g. uv_low_density_UV2), else LOW_DENSITY_ATTR (lowered on every layer). All False when the mesh has
+    neither, or when a modifier changed the face count so the original attribute no longer lines up."""
+    at = None
+    if layer_name:
+        at = ob.data.attributes.get("%s_%s" % (LOW_DENSITY_ATTR, layer_name))
+    at = at or ob.data.attributes.get(LOW_DENSITY_ATTR)
     if at is None or at.domain != "FACE" or at.data_type != "BOOLEAN" or len(at.data) != npoly:
         return np.zeros(npoly, bool)
     vals = np.zeros(npoly, bool)

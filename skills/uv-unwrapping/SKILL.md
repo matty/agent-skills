@@ -118,7 +118,8 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 - Vary it on purpose: hidden faces (undersides, backs against walls) smaller, faces seen up close larger, but keep
   each island internally even. Mark the faces you lowered with a boolean face attribute `uv_low_density`
   (`me.attributes.new("uv_low_density", "BOOLEAN", "FACE")`) so `uv_audit` leaves them out of the density mean and
-  spread (it counts them instead); without the mark a deliberate drop reads as uneven density.
+  spread (it counts them instead); without the mark a deliberate drop reads as uneven density. Name it
+  `uv_low_density_<layer>` (for example `uv_low_density_UV2`) when the faces are lowered on one UV layer only.
 - Stacked copies (mirrored or repeated parts sharing texture space on UV0) count as one island in the padding
   check. To keep them stacked when packing, `pack(..., keep_stacks=True)`, after spreading unique islands apart.
   Never stack on a lightmap layer.
