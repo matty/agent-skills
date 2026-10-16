@@ -34,8 +34,9 @@ other families on it.
 
 ## Blender fallback
 
-Procedural node materials per family, baked to images at `map_px` (Cycles bake: diffuse colour only, normal,
-roughness, AO), then packed. Tiling materials: bake on a 1 x 1 m plane with tiling UVs, then check that 3 x 3 repeats
+Procedural node materials per family, baked to images at `map_px` (Cycles bake: route each signal, colour,
+metallic, roughness, through an Emission shader and bake EMIT, which gives the exact values with no lighting; or
+the DIFFUSE colour-only and ROUGHNESS bake types), then packed per the channel plan below. Tiling materials: bake on a 1 x 1 m plane with tiling UVs, then check that 3 x 3 repeats
 show no seam. Save the node setup in `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
 
 ## Channel plan for Unity's Built-in Render Pipeline
@@ -53,6 +54,14 @@ they read, not for a glTF-style ORM map, which Standard wires up wrong:
 Source for the Standard slots: https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterMetallic.html
 (checked 2026-10-16). Quest: check which of these maps the chosen VRChat mobile shader reads before baking them
 (`vrchat-world-sdk-setup`, `vrchat-texture-and-vram`).
+
+## Unique detail on a tiling family
+
+A tiling material repeats everything in its tile, so a one-off mark (a seam around a jib door, a plaque, a stain on
+one wall) cannot go into the tiling map: it would appear on every bay. Plan it before UVs, in the spec or the brief:
+give that face its own UV0 region outside the tiled area and a second material or a trim strip for it, or use a
+decal (a separate quad with its own small texture). Never ask the UV task for an island that both "tiles with the
+wall" and "carries its own detail": the two conflict.
 
 ## Rules that save rework
 
