@@ -26,7 +26,9 @@ is needed.
 The overlay (`--overlay ... --overlay-out x.svg`) crops a generated SVG to its drawn area (its `data-frame`) and
 lays it at 50% over the render, so misplaced pieces stand out. Open it in a browser, or screenshot it headless for
 the evidence folder with any Chromium browser: `msedge --headless=new --screenshot=<out>.png
---window-size=<w>,<h> file:///<abs path>.svg` (`chrome` takes the same flags). `qa_measure.py` has no rasteriser.
+--force-device-scale-factor=5 --window-size=<w>,<h> file:///<abs path>.svg`, with `<w>,<h>` the overlay SVG's own
+width and height (it is small; the scale factor enlarges it). `chrome` takes the same flags. `qa_measure.py` has no
+rasteriser.
 
 ## What to judge
 

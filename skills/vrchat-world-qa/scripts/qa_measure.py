@@ -22,7 +22,8 @@ Per piece collection (name <FAMILY>_<Type>_<Size>_<Variant>): name check, LOD0 t
 materials, UV layer count, n-gons, edges shared by more than two faces, loose vertices, non-identity object
 transforms, bounds and extents in grid modules against the Size token, and the `kit_status` custom property.
 Per placement (collection instance): asset, linked or local, position and Z rotation, on-grid and 90-degree checks.
-Per file: linked libraries, kit-named collections that are local copies (appended, not linked), stray meshes.
+Per file: linked libraries, the kit_status and LOD0 triangles of every linked piece (MASTER, ASM), kit-named
+collections that are local copies (appended, not linked), stray meshes. Per mesh also coincident faces.
 Deeper checks belong to the specialist skills: UV distortion, padding and texel density (uv-unwrapping),
 topology flow (blender-mesh-topology), export settings (blender-to-unity).
 """
@@ -57,11 +58,17 @@ def _mesh_stats(ob, depsgraph):
         over = sum(1 for e in bm.edges if len(e.link_faces) > 2)
         boundary = sum(1 for e in bm.edges if len(e.link_faces) == 1)
         loose = sum(1 for v in bm.verts if not v.link_edges)
+        # Coincident faces: two faces on the same set of positions (rounded to 0.1 mm), e.g. a leaf on its reveal.
+        seen, coincident = set(), 0
+        for f in bm.faces:
+            key = tuple(sorted(tuple(round(c, 4) for c in v.co) for v in f.verts))
+            coincident += key in seen
+            seen.add(key)
         bm.free()
     finally:
         ev.to_mesh_clear()
     return {"tris": tris, "ngons": ngons, "edges_over_2_faces": over, "boundary_edges": boundary,
-            "loose_verts": loose, "uv_layers": len(ob.data.uv_layers),
+            "loose_verts": loose, "coincident_faces": coincident, "uv_layers": len(ob.data.uv_layers),
             "materials": [s.material.name if s.material else None for s in ob.material_slots]}
 
 
@@ -126,6 +133,13 @@ def measure(module=1.0, scene=None):
         "module": module,
         "libraries": [lib.filepath for lib in bpy.data.libraries],
         "pieces": [measure_piece(c, module, dg) for c in sorted(local_kit, key=lambda c: c.name)],
+        # In MASTER or an ASM file: what each linked piece currently is, as loaded from its KIT file.
+        "linked_pieces": [{"piece": c.name, "library": c.library.filepath, "kit_status": c.get("kit_status"),
+                           "tris": sum(sum(len(p.vertices) - 2 for p in o.data.polygons)
+                                       for o in c.all_objects if o.type == "MESH" and not o.name.endswith("_COL")
+                                       and ("_LOD" not in o.name or o.name.endswith("_LOD0")))}
+                          for c in sorted(bpy.data.collections, key=lambda c: c.name)
+                          if c.library is not None and NAME_RE.match(c.name)],
         "placements": places,
         # a kit-named local collection that is also placed here is a copy, not a link
         "appended": sorted(n for n in used_locally if NAME_RE.match(n)),
@@ -158,6 +172,8 @@ def problems(rep, piece_tris=None):
                 out.append("%s/%s: %d n-gons" % (n, on, st["ngons"]))
             if st["edges_over_2_faces"]:
                 out.append("%s/%s: %d edges shared by 3+ faces" % (n, on, st["edges_over_2_faces"]))
+            if st.get("coincident_faces"):
+                out.append("%s/%s: %d coincident faces" % (n, on, st["coincident_faces"]))
             if st["loose_verts"]:
                 out.append("%s/%s: %d loose vertices" % (n, on, st["loose_verts"]))
             if None in st["materials"] and stage >= STATUS_ORDER.index("textured"):
@@ -306,8 +322,10 @@ def _main():
     probs = problems(rep, json.loads(a.piece_tris) if a.piece_tris else None)
     for p in rep["pieces"]:
         print("%-32s %6d tris  status=%s" % (p["piece"], p["lod0_tris"], p["kit_status"]))
-    print("[qa] %d piece(s), %d placement(s), %d librar(ies)" % (len(rep["pieces"]), len(rep["placements"]),
-                                                                  len(rep["libraries"])))
+    for p in rep["linked_pieces"]:
+        print("%-32s %6d tris  status=%s  (linked)" % (p["piece"], p["tris"], p["kit_status"]))
+    print("[qa] %d piece(s), %d linked piece(s), %d placement(s), %d librar(ies)"
+          % (len(rep["pieces"]), len(rep["linked_pieces"]), len(rep["placements"]), len(rep["libraries"])))
     for p in probs:
         print("[qa] PROBLEM " + p)
     if a.json:

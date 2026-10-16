@@ -68,7 +68,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 |---|---|---|
 | M1 | Names, transforms, pivots and extents clean (UV2 comes at stage 6) | `qa_measure` |
 | M2 | LOD0 triangles within `budgets.piece_tris.<FAMILY>` (or the piece's own `tris`) | `qa_measure --piece-tris` |
-| M3 | Topology: no n-gons on lightmapped faces, no edges shared by 3+ faces, no loose geometry, no interior faces | `qa_measure`; interior faces by looking in X-ray |
+| M3 | Topology: no n-gons on lightmapped faces, no edges shared by 3+ faces, no loose geometry, no interior or coincident faces | `qa_measure` (n-gons, edges shared by 3+ faces, loose vertices, `coincident_faces`); interior faces: the topology skill's audit (each part one closed island, no edges shared by 3+ faces) proves it numerically; X-ray look as a fallback |
 | M4 | Shading: no pinching or faceting at the review distance | Topology audit renders, or Blender MCP `look` close-up in solid/matcap |
 | M5 | Joints: pieces that meet share boundary vertices (no T-junction cracks when snapped) | Topology audit joint matching; fallback: snap two pieces and `look` at the seam in wireframe |
 | M6 | Silhouette and proportions match the greybox piece it replaces (same footprint, same `Size`) | `qa_measure` extents, look |
