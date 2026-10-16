@@ -33,8 +33,8 @@ Bytes per pixel by format, plus **+33%** if mipmaps are on (they should be):
 | BC5 | 1.0 | normal maps (2-channel, best quality) |
 | BC4 | 0.5 | single-channel masks (roughness, AO, height) |
 | BC6H | 1.0 | HDR (skyboxes, reflection probes) |
-| ASTC 4×4 | 1.0 | Quest, highest quality |
-| ASTC 6×6 | ~0.36 | **Quest default for albedo** |
+| ASTC 4×4 | 1.0 | Quest, highest quality: normal maps, and packed masks (metallic + smoothness in alpha) whose gradients band at 6×6 |
+| ASTC 6×6 | ~0.36 | **Quest default for albedo**; fine for packed masks with flat or noisy values |
 | ASTC 8×8 | 0.25 | Quest, background/low-detail |
 
 Worked examples (with mips):
