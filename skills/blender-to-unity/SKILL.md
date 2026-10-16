@@ -100,7 +100,7 @@ Animation: off for static world geometry
 
 ## Batch export
 
-`scripts/batch_export_fbx.py` exports each selected object (or each collection) to its own FBX with the settings above, named after the object, into a target folder — run it from Blender's Text Editor, or paste it through the Blender MCP `execute_blender_code`.
+`scripts/batch_export_fbx.py` exports each selected object (or each collection) to its own FBX with the settings above, named after the object, into a target folder — run it from Blender's Text Editor, or paste it through the Blender MCP `execute_blender_code`. For a whole kit file headless, `blender -b --factory-startup KIT_<Name>.blend --python batch_export_fbx.py -- --kit --dir export/fbx [--set-status]` writes one FBX per piece collection to `export/fbx/<FAMILY>/<Piece>.fbx`.
 
 `scripts/mesh_audit.py` reports, per object: evaluated triangle count, material slots, UV channels, unapplied scale/rotation, n-gons and duplicate-mesh groups — the last one tells you which objects can share an instanced draw call.
 
