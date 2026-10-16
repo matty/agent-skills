@@ -39,14 +39,14 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | S4 | Plans and elevations regenerate from the spec and match the committed SVGs | Regenerate with the pipeline's SVG script, diff |
 | S5 | Budgets present and no looser than the platform target (Quest numbers when `quest` is in `platforms`) | Compare with the platform targets at the end of this file |
 | S6 | Dimensions are human-scale: doors >= 2.1 m high and >= 1 m wide, ceilings >= 2.6 m, stairs rise <= 0.2 m per step, corridors >= 1.5 m wide (VR players are taller than their avatars suggest and need space to turn) | Read spec, check plans |
-| S7 | Task graph (Mermaid) has no cycles and every task has an owner role and a QA step | Spec validator with the ledger |
+| S7 | Task graph has no cycles, every task has an owner role, and every `writes` path is the project-layout path for its stage (QA is implicit for every build task) | Spec validator with the ledger, or with a copy of the ledger with the drafted tasks merged in; it warns on paths outside the layout. Compare paths with the pipeline's stage write table |
 
 ## Stage 3 - Kit plan
 
 | Id | Check | How |
 |---|---|---|
 | P1 | Each family has a KIT file path, a material list of 1-3 materials and a texture approach (trim / tiling / atlas / unique) | Spec |
-| P2 | Pieces snap: widths and heights are whole modules; corner and end pieces exist for every wall family | Spec, plans |
+| P2 | Pieces snap: widths and heights are whole modules; corner and end pieces exist for every wall family, or the piece `desc` says why none is needed and the plan bears it out (for example walls that overlap in the corners and never end in open space) | Spec, plans |
 | P3 | Repeated elements are one piece used many times, not near-duplicates (`_A`/`_B` must differ visibly) | Spec, elevations |
 | P4 | Texel density and map size set per family, consistent across families seen side by side | Spec `families.*.texel_density` |
 

@@ -16,6 +16,11 @@ Use those, never a viewpoint chosen after seeing the result, so the comparison c
 | Mockup image | Blender MCP `look` from the view's camera position | Material preview for stages 7+, solid for greybox |
 | Blender vs Unity (stage 10) | Blender `look` from the view; Unity MCP `manage_camera` screenshot from the same transform (Blender `(x, y, z)` is Unity `(-x, z, -y)`) | Same field of view; compare placement, not lighting |
 
+Before anything is built (planning stages), there is nothing to render: check the SVGs against the spec instead.
+Read each piece's rectangle from the SVG text (`data-px-per-m` and `data-frame` give the scale and origin), recompute
+every footprint from the spec's position, rotation and size, and save the comparison as a table. No SVG rasteriser
+is needed.
+
 The overlay (`--overlay ... --overlay-out x.svg`) crops a generated SVG to its drawn area (its `data-frame`) and
 lays it at 50% over the render, so misplaced pieces stand out. Open it in a browser, or screenshot it headless for
 the evidence folder.
