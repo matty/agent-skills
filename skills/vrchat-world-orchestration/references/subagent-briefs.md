@@ -169,7 +169,7 @@ only through the sync's apply step. Checks: N4, N5. Conflicts go to the master, 
 
 **Stage 11, T-LIGHT (lighting artist).** Goal: baked lighting within `budgets.lightmap`, avatars lit everywhere.
 Load: `vrchat-lighting-and-baking`. Writes: the world scene's lighting objects, lighting settings, lightmap assets.
-Checks: L1-L5.
+Checks: L1-L6.
 
 **Stage 12, T-UDON-shop_doors (Udon developer).** Goal: the interaction as described in the spec, synced as
 specified, no `Update()`. Load: `vrchat-udon`. Writes: `Assets/World/Scripts/`, the objects it adds

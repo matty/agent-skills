@@ -171,7 +171,7 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 
 - `T-LIGHT`: lighting per `lighting` in the spec, probes or VRC Light Volumes, reflection probes, bake. Brief: load
   `vrchat-lighting-and-baking`.
-- QA: L1-L5.
+- QA: L1-L6.
 
 ## 12 - Interactivity (Udon developer)
 
