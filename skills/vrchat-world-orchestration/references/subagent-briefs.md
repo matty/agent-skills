@@ -35,6 +35,9 @@ Anything else is out of bounds, including files you think need fixing. Report th
 
 ## Acceptance checks (QA will run these; run them yourself first)
 - <check id and plain words, with numbers from the spec>
+- G1-G5, the general checks, in plain words: every output the brief lists exists where it says; nothing outside
+  the files you may write changed; names follow the conventions; the result matches the spec and diagrams; your
+  report's claims match what you measured.
 
 ## Fallbacks
 - <what to do if a skill or tool is missing>
