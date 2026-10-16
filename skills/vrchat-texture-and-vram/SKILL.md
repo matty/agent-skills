@@ -34,8 +34,14 @@ Bytes per pixel by format, plus **+33%** if mipmaps are on (they should be):
 | BC4 | 0.5 | single-channel masks (roughness, AO, height) |
 | BC6H | 1.0 | HDR (skyboxes, reflection probes) |
 | ASTC 4×4 | 1.0 | Quest, highest quality: normal maps, and packed masks (metallic + smoothness in alpha) whose gradients band at 6×6 |
-| ASTC 6×6 | ~0.36 | **Quest default for albedo**; fine for packed masks with flat or noisy values |
+| ASTC 5×5 | 0.64 | Quest, between the two |
+| ASTC 6×6 | ~0.44 | **Quest default for albedo**; fine for packed masks with flat or noisy values |
 | ASTC 8×8 | 0.25 | Quest, background/low-detail |
+
+ASTC stores 16 bytes per block whatever the block size, so bytes per pixel = 16 / (block width x block height)
+(measured 2026-10-16 in Unity 2022.3: 1024² at 6×6 with mips is 0.60 MB). To measure texture memory in the editor,
+read the storage size (`TextureUtil.GetStorageMemorySizeLong` by reflection, or the import inspector): the
+Profiler's runtime size counts a loaded texture's CPU copy too and reads about twice the GPU size.
 
 Worked examples (with mips):
 
@@ -46,7 +52,7 @@ Worked examples (with mips):
 | 2048² BC7 | ~5.6 MB |
 | 2048² DXT1 | ~2.8 MB |
 | 1024² BC7 | ~1.4 MB |
-| 1024² ASTC 6×6 | ~0.5 MB |
+| 1024² ASTC 6×6 | ~0.6 MB |
 
 One uncompressed 4K texture can outweigh an entire well-built Quest world. Halving a texture's dimensions quarters its memory — resolution is a bigger lever than format.
 
