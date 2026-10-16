@@ -124,8 +124,8 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | N2 | No extracted per-FBX materials where `_Shared` ones exist; submesh count equals material slots | Unity MCP |
 | N3 | Import settings: Read/Write off, Generate Lightmap UVs off, no cameras or lights, Animation Type None; each model root at rotation 0,0,0 and scale 1 (X -90 or 270 means the FBX was exported with Bake Space Transform off, which a Blender re-import in E2 does not show) | Unity MCP `execute_code` reading `ModelImporter` |
 | N4 | Placement sync committed for every scope; the last merge reports 0 conflicts and 0 blocked | Placement report |
-| N5 | Spot check: three placements compared Blender `look` vs Unity screenshot from the same position | `references/visual-review.md` |
-| N6 | Static flags as planned; instanced pieces are not Batching Static and their materials have GPU instancing on | Unity MCP |
+| N5 | Spot check: three placements compared Blender vs Unity from the same position, numerically (ids, positions after `(-x, z, -y)`) and visually | `qa_measure` on MASTER for the Blender side (`--view` without the Blender MCP); `references/visual-review.md` |
+| N6 | Static flags as planned (the plan is in the T-UNITY-SETUP brief and report); instanced pieces are not Batching Static and their PC materials have GPU instancing on (mobile shaders without an instancing variant are exempt) | Unity MCP |
 | N7 | VRChat scene setup: one scene descriptor, spawns on floors, respawn height below the lowest floor, nothing on reserved or player layers; cross-platform worlds have Android texture overrides at 1024 or below and a mobile shader plan | Unity MCP; `vrchat-world-sdk-setup` checklist if installed |
 
 ## Stage 11 - Lighting and bake
