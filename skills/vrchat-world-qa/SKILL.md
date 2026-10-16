@@ -25,7 +25,7 @@ checks; fixes go back to the builder.
 5. **Write the verdict** (below) and stop. Do not fix anything, even trivially; a QA agent that edits has become a
    second builder and nobody checked its edit.
 
-Headless rule: open KIT and ASM files read-only (`blender -b <file> --python <check>.py` without saving). If the
+Headless rule: open KIT and ASM files read-only (`blender -b --factory-startup <file> --python <check>.py` without saving). If the
 live Blender holds the file, use Blender MCP and do not save.
 
 ## Verdict block

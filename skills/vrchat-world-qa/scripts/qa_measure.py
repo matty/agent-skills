@@ -3,10 +3,10 @@
 Host: Blender 4.1+ (bpy), no add-ons. Changes nothing in the file and never saves it.
 
 Command line (open the file read-only; one JSON report, one summary line per piece):
-    blender -b KIT_Arch_Exterior.blend --python qa_measure.py -- --module 1.0 --json report.json
-    blender -b MASTER.blend --python qa_measure.py -- --module 1.0 --json report.json
+    blender -b --factory-startup KIT_Arch_Exterior.blend --python qa_measure.py -- --module 1.0 --json report.json
+    blender -b --factory-startup MASTER.blend --python qa_measure.py -- --module 1.0 --json report.json
             --render top --center 15 13 --extent 30 27 --px-per-m 20 --png plan_render.png
-    blender -b MASTER.blend --python qa_measure.py -- --render front --center 8 20 3 --extent 12 6 --px-per-m 40
+    blender -b --factory-startup MASTER.blend --python qa_measure.py -- --render front --center 8 20 3 --extent 12 6 --px-per-m 40
             --png elev.png --overlay world/diagrams/elevation_square_north_row.svg --overlay-out elev_overlay.svg
 
 From a live Blender (Blender MCP execute_blender_code), without saving:
