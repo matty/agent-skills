@@ -50,6 +50,11 @@ EEVEE / Cycles render. Say in the verdict that there was no mockup.
 Mockups are generated images: they are not exact. Judge intent (rhythm, proportion, mood, palette), not pixel
 agreement, and say in the verdict which mockup and view you compared.
 
+Dark renders cannot be judged by eye: an image viewer may auto-level them. Record each render's pixel mean and
+max, and judge seams and leaks on a gain-boosted copy (saved next to it, named `_xN`). To see a state the scene does
+not hold (a light on, a test capsule), add hidden temporary objects (`HideFlags.HideAndDontSave`) and destroy them,
+rather than toggling the real ones.
+
 ## Recording
 
 Save each render under `world/reports/qa/<task>/` named `<view>_<stage>.png`, plus the overlay or sheet, and cite the

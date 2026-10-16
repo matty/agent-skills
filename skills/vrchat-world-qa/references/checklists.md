@@ -132,12 +132,12 @@ named in the check and say in the evidence that the deeper audit was unavailable
 
 | Id | Check | How |
 |---|---|---|
-| L1 | Bake completes with no UV overlap warnings in the console | Unity MCP `read_console` |
+| L1 | Bake completes with no UV overlap warnings | `Lightmapping.HasUVOverlaps(renderer)` per renderer through Unity MCP `execute_code`, and the Editor log (`%LOCALAPPDATA%/Unity/Editor/Editor.log`: "objects in the Scene with overlapping UV's"); `read_console` misses them once the console is cleared |
 | L2 | Lightmap count and size within `budgets.lightmap` | Lightmap settings |
 | L3 | No visible seams, splotches or light leaks at kit joints | Look at joints and corners |
-| L4 | Avatars lit correctly: probe or Light Volume coverage in every walkable area (test with a capsule) | Look |
+| L4 | Avatars lit correctly: probe or Light Volume coverage in every walkable area (test with a capsule) | Read-only: temporary capsules with `HideFlags.HideAndDontSave`, rendered and destroyed (the scene stays clean), plus `LightProbes.GetInterpolatedProbe` at test points for numbers |
 | L5 | Realtime lights within the platform limit (Quest: none on static geometry) | Scene query |
-| L6 | Every lightmapped renderer gets enough of its lightmap for its UV2 padding to stay at least 2 texels (padding px at the map size x its share of the map); small props below that are probe-lit instead (Contribute GI with Receive GI: Light Probes) | Unity MCP: each renderer's `lightmapScaleOffset` and Scale In Lightmap against its UV2 padding |
+| L6 | Every lightmapped renderer keeps its UV2 padding at 2 texels or more: padding texels = authored gap in UV units x the renderer's footprint px (footprint = `lightmapScaleOffset` x lightmap size); small props below that are probe-lit instead (not Contribute GI, or Contribute GI with Receive GI: Light Probes) | Unity MCP: each renderer's `lightmapScaleOffset` against its UV2 gap |
 
 ## Stage 12 - Interactivity
 
