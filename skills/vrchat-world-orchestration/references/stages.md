@@ -164,6 +164,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
   `vrchat-texture-and-vram` and `vrchat-world-sdk-setup` (cross-platform). Done here, not at the end, so every later
   stage is measured on the platform that is hardest to fit.
 - Every Unity task lists `@unity` in `writes`: one Unity editor, one writer at a time.
+- Subagents may not be able to read MCP resources (`mcpforunity://editor/state`). Brief them to read editor state
+  through `execute_code` instead: `EditorApplication.isCompiling`, `isPlaying`, and the active scene's `isDirty`.
 - QA: N1-N7.
 - From here on, layout edits happen on either side and go through placement sync, never by re-exporting MASTER.
 
