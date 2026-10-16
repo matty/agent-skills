@@ -80,7 +80,7 @@ the KIT file, then re-link and re-place everywhere, and note it in the ledger.
 | Unit | 1 Blender unit = 1 m |
 | Grid module | Set once per world in the spec (typically 0.5 m or 1 m; trim and detail may use a 0.25 m sub-grid) |
 | Grid piece pivot | **Bottom-left corner** of the footprint: the piece extends into +X, +Y and +Z from its origin |
-| Free piece pivot | Floor centre (props), hinge (doors), base of trunk (trees) |
+| Free piece pivot | Floor centre (props), hinge (doors), base of trunk (trees), back-face centre (wall-mounted: switches, sconces, frames), top centre (ceiling-mounted: lamps). Front faces -Y at rot 0 |
 | Piece transform in the KIT file | Origin at world origin, rotation and scale applied, `collection.instance_offset = (0, 0, 0)` |
 | Placement rotation | Multiples of 90 deg about Z for grid pieces, so they stay on the grid |
 | Dimensions | A `2x3` wall at a 1 m module is exactly 2 m wide (X) and 3 m high (Z). Model walls running along X, so their thickness is in +Y. Thickness is not a grid dimension: keep it constant per family and record it in the spec |
