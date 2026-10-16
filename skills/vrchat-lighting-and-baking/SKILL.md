@@ -41,6 +41,23 @@ Getting only one half right is the classic failure: a beautiful baked room where
 
 **Light probes** remain the fallback (and what non-supporting shaders use). If you use them: dense where lighting changes, sparse in uniform areas, always covering every walkable/reachable volume including the ceiling height an avatar's head reaches. A missing probe volume = black avatars.
 
+## A light players can switch
+
+A baked light cannot be turned off at runtime, and the Quest shaders ignore extra realtime lights. Pick the method
+before the bake, since it changes what gets baked:
+
+| Method | PC | Quest | Cost |
+|---|---|---|---|
+| Lighting states: bake each state into its own copy of the affected static meshes, and toggle the copies with Udon (or an animator bool) | Yes | Yes | One extra lightmap set and mesh copy per state; keep every copy enabled at load so Unity can batch them, then switch |
+| Realtime point or spot light toggled by Udon, no shadows | Yes (Standard renders it in a forward-add pass) | No: `VRChat/Mobile/Standard Lite` does not support realtime lighting, so surfaces on it stay unlit | One extra draw pass per lit object on PC |
+| Emissive swap only (the fixture glows, the room does not change) | Yes | Yes | None; reads as a lamp, not as room light |
+
+For a world that must work on Quest, use lighting states. A realtime light on top of a baked bake is a PC-only
+nicety, so say so in the world's notes. Sources: VRChat wiki, swapping baked lightmaps
+(https://wiki.vrchat.com/wiki/How_to_swap_out_Baked_Lightmaps); VRChat Creators, Quest content limitations, Standard
+Lite and realtime lighting (https://creators.vrchat.com/platforms/android/quest-content-limitations/), both checked
+2026-10-16.
+
 ## Reflection probes
 
 Baked, box projection for interiors, resolution 64–128 (256 only for a hero probe). Box-project the room probe so reflections track walls. Blend probes sparingly — overlapping probes cost per-pixel work on every reflective surface.
