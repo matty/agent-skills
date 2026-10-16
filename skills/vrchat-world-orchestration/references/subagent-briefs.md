@@ -29,7 +29,7 @@ Anything else is out of bounds, including files you think need fixing. Report th
 1. ...
 
 ## Tools and hosts
-- Blender CLI: <path>. Run headless: blender -b <file> --python <script>.py, and save at the end.
+- Blender CLI: <path>. Run headless: blender -b --factory-startup <file> --python <script>.py, and save at the end.
 - <Blender MCP / Unity MCP / Substance MCP if this task owns them>
 
 ## Acceptance checks (QA will run these; run them yourself first)

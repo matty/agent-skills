@@ -17,7 +17,7 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/kit_library.py", encoding
 The audit follows each piece's kit_status: UV2 is required from "uv" on, filled material slots from "textured" on.
 
 From the command line (prints one line per piece; --json writes the full report; exit code 1 on problems):
-    blender -b KIT_Arch_Exterior.blend --python kit_library.py -- --audit --module 1.0 [--json report.json]
+    blender -b --factory-startup KIT_Arch_Exterior.blend --python kit_library.py -- --audit --module 1.0 [--json report.json]
 
 Paths starting with // are relative to the open .blend, as everywhere in Blender.
 """

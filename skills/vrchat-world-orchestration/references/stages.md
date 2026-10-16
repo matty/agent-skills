@@ -86,7 +86,7 @@ QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.
 
 - `T-GREY-<FAMILY>`, one per KIT file, in parallel: create each piece as a collection in its KIT file with simple
   box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut where the spec says,
-  `kit_status = grey`. Headless: `blender -b <KIT> --python <task>.py`, saving at the end.
+  `kit_status = grey`. Headless: `blender -b --factory-startup <KIT> --python <task>.py`, saving at the end.
 - `T-GREY-ASM-<name>` (after the kits it uses): build each assembly from linked pieces.
 - `T-GREY-MASTER` (after all of the above; integrator; live Blender with `@blender-live` in `writes`, or headless
   when the Blender MCP is not connected, see rule 3 in `SKILL.md`): link and place assemblies and pieces from the
