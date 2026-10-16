@@ -60,7 +60,7 @@ qa:
 | Id | Check | How |
 |---|---|---|
 | G1 | Outputs listed in the brief exist and are where it said | List files |
-| G2 | Nothing outside the brief's writable files changed | `git status` in a git project; otherwise modification times against the task's dispatch time in the ledger log |
+| G2 | Nothing outside the brief's writable files changed (edits the QA brief lists as the master's do not count) | `git status` in a git project; otherwise modification times newer than the dispatch time in the QA brief (UTC) or, failing that, the builder brief's own modification time |
 | G3 | Names follow the convention: `<FAMILY>_<Type>_<Size>_<Variant>`, `ASM_<Name>_<Variant>`, `M_<FAMILY>_<Name>` | `qa_measure` (`name_ok`), spec validator |
 | G4 | Matches the approved mockup / plan / elevation (for planning stages: the diagrams match the spec and the spec matches the brief) | `references/visual-review.md` |
 | G5 | The builder's report block is complete and its claims match what you measured | Compare |
