@@ -74,7 +74,7 @@ result.
 | --- | --- |
 | `scripts/grid_topology.py` | even/zone stations, chord-limited arc counts, `grid_faces`, `step_3to1`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights` |
 | `scripts/quad_remesh.py` | `quad_remesh()` driving the Quad Remesher engine, `weld_layout()` validation/weld, `mirror_half()` |
-| `scripts/topology_audit.py` | `audit(obj)`, `joint_match(a, b, select)`, `determinism_hash(obj)` |
+| `scripts/topology_audit.py` | `audit(obj)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)` (matrices place two origin-pivoted kit pieces side by side), `determinism_hash(obj)` |
 | `scripts/review_render.py` | `render(path, eye, target, ...)` off-screen or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)` |
 
 Load a script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions; none of

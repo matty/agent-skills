@@ -11,6 +11,7 @@ Works while Blender's window is minimised (it draws through gpu.types.GPUOffScre
 viewport in the current screen; its shading/overlay settings are changed only for the render and restored.
 Headless (blender -b --factory-startup ... --python ...), where there is no viewport, it falls back to a Workbench
 scene render: the same camera, light and matcap, with wire drawn by temporary Wireframe-modifier copies.
+A matcap shows curved bands across flat faces in a perspective view: that is the matcap, not smooth shading.
 """
 
 import contextlib

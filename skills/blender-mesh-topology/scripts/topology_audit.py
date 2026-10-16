@@ -89,11 +89,20 @@ def audit_many(objects):
     return out
 
 
-def joint_match(a, b, select, digits=5):
-    """Do two objects share their vertices on a joint? select(co) picks joint vertices (object space of each, so place
-    both masters in the same frame). Returns (only in a, only in b, shared) as sets of rounded positions."""
-    pa = {tuple(round(c, digits) for c in v.co) for v in a.data.vertices if select(v.co)}
-    pb = {tuple(round(c, digits) for c in v.co) for v in b.data.vertices if select(v.co)}
+def joint_match(a, b, select, digits=5, matrix_a=None, matrix_b=None):
+    """Do two objects share their vertices on a joint? Positions are compared in one frame: each object's vertices go
+    through matrix_a / matrix_b if given (otherwise as they sit in object space). Kit pieces all have their pivot at
+    the origin, so to check a 2 m wall's x=2 end against the next wall's x=0 end pass
+    matrix_b=Matrix.Translation((2, 0, 0)). select(co) picks joint vertices, given the transformed position.
+    Returns (only in a, only in b, shared) as sets of rounded positions."""
+    def pts(ob, m):
+        out = set()
+        for v in ob.data.vertices:
+            co = m @ v.co if m is not None else v.co
+            if select(co):
+                out.add(tuple(round(c, digits) for c in co))
+        return out
+    pa, pb = pts(a, matrix_a), pts(b, matrix_b)
     return pa - pb, pb - pa, pa & pb
 
 
