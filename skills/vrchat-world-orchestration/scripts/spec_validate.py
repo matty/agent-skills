@@ -286,10 +286,11 @@ def check_spec(spec, f, root=None):
     return pieces, asms
 
 
-LIGHTMAP_COVERAGE = 0.7     # share of a renderer's UV2 square that charts fill, after padding (typical)
-LIGHTMAP_PACK = 0.65        # share of a lightmap that per-renderer rectangles fill before Unity spills to a second
+LIGHTMAP_COVERAGE = 0.85    # share of a renderer's UV2 square its charts fill: measured 2026-10-16 (walls 2x3x0.2 m
+                            # got 243 px at 60 texels/m, 113 px at 28; formula with 0.85 gives 243 and 114)
+LIGHTMAP_PACK = 0.75        # share of a lightmap that per-renderer rectangles fill before Unity spills to a second
                             # map: measured 2026-10-16 at about 0.78 (16 renderers in one 512 map, Unity 2022.3,
-                            # no rotation), kept lower for margin
+                            # no rotation)
 
 
 def lightmap_footprints(spec, pieces, module, families):

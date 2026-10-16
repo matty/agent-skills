@@ -120,7 +120,7 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 - `T-UV-<FAMILY>`: UV0 by the family's texturing approach (tiling to `texel_density`, trim onto the trim sheet
   layout, unique packed to `map_px`), UV2 for every lightmapped mesh. `kit_status = uv`.
 - UV2 padding comes from each piece's own lightmap footprint, not from the lightmap's size: Unity gives every renderer
-  its own square of the map, about `texels_per_m x sqrt(surface area / 0.7)` px (the validator's
+  its own square of the map, about `texels_per_m x sqrt(surface area / 0.85)` px (the validator's
   `lightmap_footprints`). Pad for 2 texels at that size (`uv_audit --map <footprint px> --pad 2`, or more), and put
   each piece's footprint in the UV brief. Padding for the whole map size (8 px "at 512") silently assumes every piece
   gets the whole map.
