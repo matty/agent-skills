@@ -95,6 +95,7 @@ namespace PlacementSync
             WithRoot(target, true, root =>
             {
                 bool inScene = root.gameObject.scene.IsValid() && !EditorSceneManager.IsPreviewScene(root.gameObject.scene);
+                var touched = new List<UnityEngine.Object>();
                 var byKey = Placements(root).ToDictionary(t => KeyOf(root, t));
                 foreach (var a in plan.assign ?? new Assign[0])
                 {
@@ -102,6 +103,7 @@ namespace PlacementSync
                     var pid = GetOrAdd(t.gameObject, inScene);
                     if (inScene) Undo.RecordObject(pid, "Placement Sync");
                     pid.id = a.id;
+                    touched.Add(pid);
                     counts["assign"]++;
                 }
 
@@ -135,13 +137,28 @@ namespace PlacementSync
                         }
                         if (inScene) Undo.RecordObject(t, "Placement Sync");
                         SetRelative(root, t, it);
+                        touched.Add(t);
+                        var tid = t.GetComponent<PlacementId>();
+                        if (tid != null) touched.Add(tid);
                         counts[kind]++;
                     }
                 }
                 if (inScene)
                 {
-                    EditorSceneManager.MarkSceneDirty(root.gameObject.scene);
-                    if (save) EditorSceneManager.SaveScene(root.gameObject.scene);
+                    // Edits to prefab instances become overrides only when recorded; left to the end of the frame they
+                    // land after the save and the scene shows unsaved changes again. Record and flush them first.
+                    foreach (var o in touched)
+                        if (o != null && PrefabUtility.IsPartOfPrefabInstance(o))
+                            PrefabUtility.RecordPrefabInstancePropertyModifications(o);
+                    Undo.FlushUndoRecordObjects();
+                    var scene = root.gameObject.scene;
+                    EditorSceneManager.MarkSceneDirty(scene);
+                    if (save)
+                    {
+                        EditorSceneManager.SaveScene(scene);
+                        if (scene.isDirty)
+                            errors.Add($"saved {scene.path}, but Unity still reports unsaved changes in it: check and save it");
+                    }
                 }
             });
             var summary = $"[placements] applied {plan.scope}: " + string.Join(", ", counts.Select(kv => $"{kv.Value} {kv.Key}"));

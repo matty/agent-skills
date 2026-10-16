@@ -132,3 +132,5 @@ before touching the matrix in `export_placements.py`.
 
 Last full pass: 2026-10-14, Blender 5.2.2 and Unity 2022.3.22f1 (a VRChat world project), including a re-parent
 into a folder in Unity (not an edit) and a duplicate made with Ctrl+D after a script reload.
+2026-10-16: a first sync of 18 placements into a new scene, and a create-then-update test confirming Apply leaves
+the scene saved and clean (it records prefab-instance overrides before saving).
