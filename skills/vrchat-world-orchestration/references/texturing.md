@@ -36,8 +36,10 @@ other families on it.
 
 Procedural node materials per family, baked to images at `map_px` (Cycles bake: route each signal, colour,
 metallic, roughness, through an Emission shader and bake EMIT, which gives the exact values with no lighting; or
-the DIFFUSE colour-only and ROUGHNESS bake types), then packed per the channel plan below. Tiling materials: bake on a 1 x 1 m plane with tiling UVs, then check that 3 x 3 repeats
-show no seam. Save the node setup in `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
+the DIFFUSE colour-only and ROUGHNESS bake types), then packed per the channel plan below. Tiling materials: bake
+one tile of the family's UV0 layout (on a `map_px` map at `texel_density` px/m one tile covers `map_px /
+texel_density` metres: 2 x 2 m at 512 px/m on 1024), with patterns that repeat a whole number of times per tile,
+then check that 3 x 3 repeats show no seam. Save the node setup in `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
 
 ## Channel plan for Unity's Built-in Render Pipeline
 
@@ -67,5 +69,7 @@ wall" and "carries its own detail": the two conflict.
 
 - Texel density comes from the spec; never "make it look sharp" by raising map size past `map_px`.
 - One normal-map convention throughout (OpenGL, as Blender uses; Unity reads it).
-- Linear data (normal, roughness, metallic, AO) saved without colour management; base colour in sRGB.
+- Colour space is decided by the importer, not the file: Blender's PNG writer tags every PNG sRGB and Unity
+  ignores the tag. Unity: sRGB on for base colour, off for every linear map (normal, metallic-smoothness, AO), with
+  Alpha Source: Input Texture Alpha for the smoothness. Blender: load linear maps as Non-Color.
 - Keep source files (`.sbs`, `.spp`, `.blend` node setups) next to the exports; X6 checks for them.
