@@ -162,7 +162,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
   `<FAMILY>/_Shared/` and remap by name, make a prefab variant per FBX.
 - `T-UNITY-SYNC-<scope>`: placement sync for each ASM scope, then MASTER. Brief: load
   `blender-unity-placement-sync`; first time, install its Unity scripts.
-- `T-UNITY-SETUP`: VRChat scene setup (scene descriptor, spawns, respawn height, reference camera, layers,
+- `T-UNITY-SETUP`: VRChat project and scene setup (first: the SDK's Setup Layers for VRChat and Setup Collision
+  Matrix, which a build otherwise fails on; then scene descriptor, spawns, respawn height, reference camera, layers,
   colliders for walkable areas), static flags, GPU instancing on the materials of repeated pieces. Brief: load
   `vrchat-world-sdk-setup`, `unity-batching-and-instancing`.
 - `T-UNITY-PLATFORM` (cross-platform worlds): per-platform texture import overrides (1024 or below on Android),
