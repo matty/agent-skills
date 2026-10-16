@@ -88,7 +88,8 @@ Never let a detailed visual mesh be the collider.
 Full annotated table in `references/fbx-export.md`. The essentials:
 
 ```
-Path Mode: Copy (+ embed off)
+Path Mode: Strip for kit pieces that use shared Unity materials (Copy writes a <Piece>.fbm
+           texture copy per FBX); Copy + embed off only for a one-off asset that brings its own textures
 Include:   Selected Objects; Object Types = Mesh (+ Armature only if rigged)
 Transform: Scale 1.0, Apply Scalings = "FBX All", -Z Forward, Y Up,
            Apply Unit = on, Use Space Transform = on, Bake Space Transform = on

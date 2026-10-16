@@ -34,7 +34,7 @@ APPLY_MODIFIERS = True
 # ---------------------------------------------------------------------------
 
 
-def _export(filepath, objects):
+def _export(filepath, objects, path_mode="COPY"):
     bpy.ops.object.select_all(action="DESELECT")
     for ob in objects:
         ob.select_set(True)
@@ -58,7 +58,7 @@ def _export(filepath, objects):
         use_custom_props=False,
         add_leaf_bones=False,
         bake_anim=False,
-        path_mode="COPY",
+        path_mode=path_mode,
         embed_textures=False,
     )
     # Tolerate keyword changes between Blender versions.
@@ -93,7 +93,9 @@ def export_kit(out_dir, set_status=False):
         folder = os.path.join(out_dir, m.group(1))
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, coll.name + ".fbx")
-        _export(path, obs)
+        # Kit pieces use the family's shared Unity material (remapped by name), so the FBX carries no textures:
+        # COPY would write a <Piece>.fbm folder with a duplicate of every texture next to each FBX.
+        _export(path, obs, path_mode="STRIP")
         written.append(path)
         if set_status:
             coll["kit_status"] = "exported"
