@@ -39,6 +39,7 @@ from mathutils import Matrix, Vector
 
 NAME_RE = re.compile(r"^([A-Z]{2,5})_[A-Za-z0-9]+_(\d+(?:x\d+){0,2}|Free)_[A-Z]\d?$")
 EPS = 1e-4
+STATUS_ORDER = ("grey", "modelled", "uv", "textured", "exported")   # collection custom property kit_status
 
 
 def _identity(mw):
@@ -150,14 +151,16 @@ def problems(rep, piece_tris=None):
         fam = n.split("_")[0]
         if piece_tris and fam in piece_tris and p["lod0_tris"] > piece_tris[fam]:
             out.append("%s: %d LOD0 tris > budget %d" % (n, p["lod0_tris"], piece_tris[fam]))
+        # Greybox (kit_status "grey") may still have n-gons; empty material slots are allowed until "textured".
+        stage = STATUS_ORDER.index(p["kit_status"]) if p.get("kit_status") in STATUS_ORDER else len(STATUS_ORDER)
         for on, st in p["objects"].items():
-            if st["ngons"]:
+            if st["ngons"] and stage >= STATUS_ORDER.index("modelled"):
                 out.append("%s/%s: %d n-gons" % (n, on, st["ngons"]))
             if st["edges_over_2_faces"]:
                 out.append("%s/%s: %d edges shared by 3+ faces" % (n, on, st["edges_over_2_faces"]))
             if st["loose_verts"]:
                 out.append("%s/%s: %d loose vertices" % (n, on, st["loose_verts"]))
-            if None in st["materials"]:
+            if None in st["materials"] and stage >= STATUS_ORDER.index("textured"):
                 out.append("%s/%s: empty material slot" % (n, on))
     for pl in rep["placements"]:
         if not pl["on_grid"]:
@@ -294,6 +297,11 @@ def _main():
     ap.add_argument("--overlay")
     ap.add_argument("--overlay-out")
     a = ap.parse_args(argv)
+    # Blender resolves a relative output path against something other than the shell's working folder (it wrote
+    # to C:/world/... once); make every output path absolute here, where the working folder is still known.
+    for k in ("json", "png", "overlay", "overlay_out"):
+        if getattr(a, k):
+            setattr(a, k, os.path.abspath(getattr(a, k)))
     rep = measure(a.module)
     probs = problems(rep, json.loads(a.piece_tris) if a.piece_tris else None)
     for p in rep["pieces"]:
