@@ -18,7 +18,7 @@ The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets
 | 1 | `world/mockups/` |
 | 2-3 (or `T-PLAN-01`) | `world/spec.yaml`, `world/diagrams/`, `world/briefs/draft-tasks.yaml` |
 | 4-6 | `blender/kits/KIT_<FamilyName>.blend` (one task per file); ASM tasks `blender/asm/ASM_<Name>.blend`; MASTER `blender/MASTER.blend` |
-| 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/`, and the family's KIT file (materials) |
+| 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/` (also with the Blender fallback, which keeps its node-setup `.blend` there), and the family's KIT file (materials) |
 | 8 | `blender/asm/ASM_<Name>.blend`, `blender/MASTER.blend` |
 | 9 | `export/fbx/<FAMILY>/`, and the KIT file (`kit_status` only) |
 | 10 import, sync | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Assemblies/`, `Assets/World/PlacementSync/` (sync scripts, once), `Assets/World/Scenes/`, `world/placements/`, `@unity`; sync applies also `blender/MASTER.blend` or the ASM file |
