@@ -47,14 +47,14 @@ Sync ASM scopes before MASTER, so assembly prefabs exist when MASTER places them
 Run all of it in one go: Unity keys in a dump are only valid until the hierarchy changes.
 
 ```
-1. dump    blender -b MASTER.blend --python export_placements.py -- dump --dir placements --scope MASTER
+1. dump    blender -b --factory-startup MASTER.blend --python export_placements.py -- dump --dir placements --scope MASTER
                     --libraries "kits/*.blend" "asm/*.blend"
            Unity MCP execute_code:
            return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "<abs>/placements/MASTER.unity.json", "MASTER");
 2. merge   python placement_merge.py merge --dir placements --scope MASTER
            -> read the report. Exit 2 = conflicts or blocked items: show them to the user, decide, re-run with
               --take-id ID=blender|unity (or --take for all). Nothing has changed anywhere yet.
-3. apply   blender -b MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER --libraries ...
+3. apply   blender -b --factory-startup MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER --libraries ...
            execute_code: return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "<abs>/placements/MASTER.plan.unity.json");
 4. dump    both sides again (step 1)
 5. commit  python placement_merge.py commit --dir placements --scope MASTER

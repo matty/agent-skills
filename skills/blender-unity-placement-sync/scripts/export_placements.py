@@ -8,9 +8,9 @@ it between collections never lose it. Transforms are written in Unity space (lef
 the world origin, which is the scope root.
 
 Command line (the usual way; one writer per .blend, so not while someone has the file open and unsaved):
-    blender -b MASTER.blend --python export_placements.py -- dump  --dir placements --scope MASTER
+    blender -b --factory-startup MASTER.blend --python export_placements.py -- dump  --dir placements --scope MASTER
                                                          [--libraries "kits/*.blend" "asm/*.blend"]
-    blender -b MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER
+    blender -b --factory-startup MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER
                                                          [--libraries ...] [--no-save]
 
 From a live Blender (Blender MCP execute_blender_code):
