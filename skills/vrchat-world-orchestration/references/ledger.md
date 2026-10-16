@@ -27,7 +27,7 @@ blocked: a dependency failed or a gate was refused      skipped: not needed (say
 
 | Moment | Master does |
 |---|---|
-| Dispatch | Write the brief, set `running`, `attempts += 1`, log it |
+| Dispatch | Write the brief, set `running`, `attempts += 1`, log it. For a Unity task in a project without git, first copy `ProjectSettings/*.asset` to `world/reports/qa/<task>/pre/` so QA can tell a real settings change from a re-save |
 | Builder returns | The master saves the builder's report block to `report`, sets `qa`, and dispatches the QA agent. If the master edited any of the task's outputs after it returned (for example a spec section the master owns), it lists those edits in the QA brief |
 | QA `pass` / `pass-with-notes` | Set `done`; copy notes into the log; advance dependants |
 | QA `fail`, attempts < 3 | Set `failed`, then re-dispatch with the original brief plus the QA `fixes` |
