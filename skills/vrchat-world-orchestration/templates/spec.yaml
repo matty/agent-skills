@@ -18,6 +18,8 @@ tools:                              # detected at intake, confirmed by the user
   substance_designer: true
   substance_painter: true
   rizomuv: true
+  unity_packages: [com.vrchat.worlds]   # detected at intake; the plan uses only these (light volumes, bakery, ...)
+  build_modules: [windows, android]    # Unity build support installed for the platforms
 
 grid:
   module: 1.0                       # metres; every grid piece is a whole number of modules

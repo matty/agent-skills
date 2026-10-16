@@ -10,7 +10,7 @@ Validate with `scripts/spec_validate.py`, draw with `scripts/spec_to_svg.py`. Co
 |---|---|---|
 | `version` | `1` | 0 |
 | `world` | `name`, `platforms` (`pc`, `quest`), `scale` (`full`/`small`), `performance_tier`, `allow_generated_assets`, `mockups`, `style` | 0 |
-| `tools` | `blender`, `unity_project`, `substance_designer`, `substance_painter`, `rizomuv` | 0 |
+| `tools` | `blender`, `unity_project`, `substance_designer`, `substance_painter`, `rizomuv`, `unity_packages`, `build_modules` | 0 |
 | `grid` | `module` (m), `sub_module`, `storey_height` | 2 |
 | `families` | Per family code: `file`, `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m), `map_px`, `thickness` | 2-3 |
 | `budgets` | `world_tris`, `view_tris`, `materials`, `setpass`, `batches`, `texture_vram_mb`, `download_mb` per platform, `piece_tris` per family, `lightmap` (`max_px`, `count`) | 2 |

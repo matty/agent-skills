@@ -85,6 +85,7 @@ Detect first, then ask the user to confirm or change, in one message:
 | Substance Designer / Painter | Use if present, else the Blender fallback | Substance MCP `sd_ping`, install folders |
 | Blender CLI path | - | `bpy.app.binary_path` through Blender MCP; else `blender` on PATH, `Program Files\Blender Foundation\*`, portable unzips such as `~/.blender/blender-*`, Steam's `common\Blender`; else ask the user. The Blender MCP being down does not block the build: kit work is headless |
 | Unity project path | - | Unity MCP `mcpforunity://instances` |
+| Unity packages the plan may lean on (UdonSharp, VRC Light Volumes, Bakery, LTCGI, Android / iOS build support) | Plan only with what is installed; anything else is a user install, asked at intake | `Packages/vpm-manifest.json` and `Packages/manifest.json` in the project; `BuildPipeline.IsBuildTargetSupported` through Unity MCP for the platform modules |
 | Image tool for mockups | Skip stage 1 unless the user confirms a tool | A tool that makes whole-scene concept art to a file; texture, sprite and engine-asset generators (Unity MCP `generate_image`) do not count (`references/mockups.md`) |
 
 Also ask for the brief itself if it is thin: the place, mood, scale (how many zones, roughly how big), reference
