@@ -28,7 +28,8 @@ object. Exactly one per scene. Starting from the SDK's template scene (`VRCDefau
 world has its own (it z-fights a floor at the same height) and decide on the light in the lighting step. The
 template's scene descriptor also lists the template's own materials under Dynamic Materials: they ship with the
 world and cost texture memory and download size although nothing renders them, so clear that list unless the world
-swaps materials at runtime.
+swaps materials at runtime. Its `unityVersion` field still names the template's old editor version; that is
+cosmetic.
 
 | Field | Set it to |
 |---|---|
