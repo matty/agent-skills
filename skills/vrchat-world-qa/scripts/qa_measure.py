@@ -22,7 +22,8 @@ Per piece collection (name <FAMILY>_<Type>_<Size>_<Variant>): name check, LOD0 t
 materials, UV layer count, n-gons, edges shared by more than two faces, loose vertices, non-identity object
 transforms, bounds and extents in grid modules against the Size token, and the `kit_status` custom property.
 Per placement (collection instance): asset, linked or local, position and Z rotation, on-grid and 90-degree checks.
-Per file: linked libraries, the kit_status and LOD0 triangles of every linked piece (MASTER, ASM), kit-named
+Per file: every image a material uses (path, packed, size, channels, colour space; X2/X3); --tile-seam gives a
+wrap-edge seam metric for tiling textures (X4). Per file also: linked libraries, the kit_status and LOD0 triangles of every linked piece (MASTER, ASM), kit-named
 collections that are local copies (appended, not linked), stray meshes. Per mesh also coincident faces.
 Deeper checks belong to the specialist skills: UV distortion, padding and texel density (uv-unwrapping),
 topology flow (blender-mesh-topology), export settings (blender-to-unity).
@@ -133,6 +134,7 @@ def measure(module=1.0, scene=None):
         "module": module,
         "libraries": [lib.filepath for lib in bpy.data.libraries],
         "pieces": [measure_piece(c, module, dg) for c in sorted(local_kit, key=lambda c: c.name)],
+        "images": measure_images(),
         # In MASTER or an ASM file: what each linked piece currently is, as loaded from its KIT file.
         "linked_pieces": [{"piece": c.name, "library": c.library.filepath, "kit_status": c.get("kit_status"),
                            "tris": sum(sum(len(p.vertices) - 2 for p in o.data.polygons)
@@ -147,6 +149,47 @@ def measure(module=1.0, scene=None):
         "stray_meshes": sorted(o.name for o in scene.objects
                                if o.type == "MESH" and o.library is None and o.name not in owned),
     }
+
+
+def measure_images():
+    """Every image a material in this file uses: path (relative or not), packed, size, channels, colour space, and
+    which materials use it. For X2/X3 (sizes, channel packing, colour space as loaded)."""
+    users = {}
+    for mat in bpy.data.materials:
+        if mat.node_tree is None:
+            continue
+        for n in mat.node_tree.nodes:
+            if n.type == "TEX_IMAGE" and n.image is not None:
+                users.setdefault(n.image.name, set()).add(mat.name)
+    out = []
+    for name, mats in sorted(users.items()):
+        im = bpy.data.images[name]
+        out.append({"image": name, "filepath": im.filepath, "relative": im.filepath.startswith("//"),
+                    "packed": im.packed_file is not None, "size": list(im.size), "channels": im.channels,
+                    "colorspace": im.colorspace_settings.name, "alpha_mode": im.alpha_mode,
+                    "materials": sorted(mats)})
+    return out
+
+
+def tile_seam(path):
+    """Seam metric for a tiling texture (X4): the mean colour step across the wrap edges against the mean step
+    between neighbouring pixels inside the tile, per axis. Ratios near or below 1 mean no visible seam."""
+    import numpy as np
+    im = bpy.data.images.load(os.path.abspath(path), check_existing=False)
+    try:
+        w, h = im.size
+        px = np.empty(w * h * 4, np.float32)
+        im.pixels.foreach_get(px)
+        a = px.reshape(h, w, 4)[:, :, :3]
+        inner_x = float(np.abs(np.diff(a, axis=1)).mean())
+        inner_y = float(np.abs(np.diff(a, axis=0)).mean())
+        edge_x = float(np.abs(a[:, 0] - a[:, -1]).mean())
+        edge_y = float(np.abs(a[0] - a[-1]).mean())
+        return {"image": path, "size": [w, h], "edge_x": round(edge_x, 5), "inner_x": round(inner_x, 5),
+                "ratio_x": round(edge_x / max(inner_x, 1e-9), 2), "edge_y": round(edge_y, 5),
+                "inner_y": round(inner_y, 5), "ratio_y": round(edge_y / max(inner_y, 1e-9), 2)}
+    finally:
+        bpy.data.images.remove(im)
 
 
 def problems(rep, piece_tris=None):
@@ -309,6 +352,7 @@ def _main():
                     "the centre plane onward (an interior wall from inside the room)")
     ap.add_argument("--view", type=float, nargs=7, metavar=("PX", "PY", "PZ", "TX", "TY", "TZ", "LENS"),
                     help="perspective render from a spec view: pos, target and lens")
+    ap.add_argument("--tile-seam", nargs="+", metavar="PNG", help="seam metric for tiling textures (X4)")
     ap.add_argument("--png")
     ap.add_argument("--overlay")
     ap.add_argument("--overlay-out")
@@ -332,6 +376,17 @@ def _main():
         rep["problems"] = probs
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(rep, f, indent=2)
+    for im in rep["images"]:
+        print("[qa] image %-40s %sx%s ch%d %-10s %s%s" % (im["image"], im["size"][0], im["size"][1], im["channels"],
+              im["colorspace"], "relative" if im["relative"] else "ABSOLUTE", " packed" if im["packed"] else ""))
+    if a.tile_seam:
+        rep["tile_seam"] = [tile_seam(p) for p in a.tile_seam]
+        for t in rep["tile_seam"]:
+            print("[qa] seam %s: x %.2f, y %.2f (edge step / inner step)" % (os.path.basename(t["image"]),
+                  t["ratio_x"], t["ratio_y"]))
+        if a.json:
+            with open(a.json, "w", encoding="utf-8") as f:
+                json.dump(rep, f, indent=2)
     if a.view:
         render_view(a.png, a.view[0:3], a.view[3:6], a.view[6])
         print("[qa] rendered " + a.png)

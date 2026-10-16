@@ -91,9 +91,9 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | Id | Check | How |
 |---|---|---|
 | X1 | Materials per family as planned (1-3), names `M_<FAMILY>_*` match the Unity materials | Blender material list vs spec |
-| X2 | Texture sizes no larger than the spec's `map_px` and the platform max (1024 on Quest) | File dimensions |
-| X3 | Channel packing as planned (e.g. metallic/AO/roughness in one map), normal maps in the right convention (OpenGL in Blender, Unity accepts it) | Inspect files |
-| X4 | Tiling materials tile without visible seams at 3 repeats | Look at a test plane |
+| X2 | Texture sizes no larger than the spec's `map_px` and the platform max (1024 on Quest) | `qa_measure` `images` (size per image) |
+| X3 | Channel packing as planned (e.g. metallic/AO/roughness in one map), normal maps in the right convention (OpenGL in Blender, Unity accepts it) | `qa_measure` `images` (channels, colour space as loaded, relative, packed); read the channel values with Blender's image API (`pixels.foreach_get`) |
+| X4 | Tiling materials tile without visible seams at 3 repeats | `qa_measure --tile-seam <png>...`: wrap-edge step over inner step per axis, at or below about 1 passes; above it, look at a 3 x 3 composite (a feature crossing the edge can raise it legitimately) |
 | X5 | Colour and value match the mockups under neutral light | `look`, compare with mockup swatches |
 | X6 | Source files saved (`.sbs`, `.spp` or `.blend` node setup) next to exports so a change can be remade | List files |
 
