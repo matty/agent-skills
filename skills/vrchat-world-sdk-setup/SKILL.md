@@ -93,6 +93,13 @@ object.
 ClientSim simulates only the local player: networking, remote players and serialization results need Build & Test
 with several clients.
 
+Scripted ClientSim checks (an agent through Unity MCP `execute_code`): enter Play mode, call
+`UdonBehaviour.Interact()` on the target to press it, and simulate a received update with `SetProgramVariable` then
+`SendCustomEvent("_onDeserialization")`. Exiting Play mode leaves the scene flagged dirty with nothing changed:
+reopen it from disk (`EditorSceneManager.OpenScene`) rather than saving. The template's `EventSystem` plus
+ClientSim's own gives a harmless "only one active Event System" warning in Play; remove the template one if the
+world has no UI.
+
 ## 7. Publish fields (prepare them for the user)
 
 In the Builder's world panel: **Name**, **Description**, **Maximum Capacity**, **Recommended Capacity**, **Content
