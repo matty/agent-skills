@@ -32,6 +32,7 @@ blocked: a dependency failed or a gate was refused      skipped: not needed (say
 | QA `pass` / `pass-with-notes` | Set `done`; copy notes into the log; advance dependants |
 | QA `fail`, attempts < 3 | Set `failed`, then re-dispatch with the original brief plus the QA `fixes` |
 | QA `fail`, attempt 3 | Set `escalated`, stop that branch, tell the user what failed and what QA asked for |
+| Gate `changes-requested` | Set the gate's `notes` to the user's words. The tasks that produce what changes go back to `todo` with `attempts: 0` (attempts count QA failures against one intent, and the intent changed); log the old attempt count. Re-dispatch them with the requested changes in the brief, QA again, then ask at the gate again |
 | Session dies mid-task | On resume, check the task's writable files: complete goes to QA, incomplete goes back to `todo` with the same attempt count |
 
 Write the ledger **before** dispatching and **after** each return, so a crash never loses a decision.
