@@ -4,7 +4,9 @@ For each stage: what goes in, what comes out, how to split it into tasks, and wh
 refer to `vrchat-world-qa` (stage 1 = C, 2 = S, 3 = P, 4 = B, 5 = M, 6 = U, 7 = X, 8 = A, 9 = E, 10 = N, 11 = L,
 12 = I, 13 = O); every task also gets the general checks G1-G5.
 
-Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-PROP-2`, `T-UNITY-MASTER`.
+Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-PROP-2`, `T-UNITY-MASTER`. In
+`small` scale with one `KIT_World.blend`, kit tasks take `WORLD` in place of the family: `T-GREY-WORLD`,
+`T-MOD-WORLD`, `T-UV-WORLD`, `T-TEX-WORLD`, `T-EXP-WORLD`.
 
 ## Where each stage writes
 
