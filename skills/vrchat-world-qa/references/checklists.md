@@ -143,7 +143,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 
 | Id | Check | How |
 |---|---|---|
-| I1 | Each system in `interactivity` exists and works in Play mode (ClientSim) | Unity MCP play, console; `vrchat-world-sdk-setup` for ClientSim use |
+| I1 | Each system in `interactivity` exists and works in Play mode (ClientSim) | Unity MCP play, `UdonBehaviour.Interact()` through `execute_code`, console; reopen the scene from disk after Play (never save); `vrchat-world-sdk-setup` for ClientSim use |
 | I2 | No `Update()` loops where events would do; sync mode and payloads as `vrchat-udon` | Read scripts |
 | I3 | Late joiner sees the right state | Build & Test with 2+ clients (ClientSim simulates only the local player), else reasoning from sync code |
 | I4 | No console errors or warnings from Udon on start or interaction | `read_console` |
