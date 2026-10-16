@@ -16,6 +16,7 @@ Use those, never a viewpoint chosen after seeing the result, so the comparison c
 | Interiors (plan or inside wall) | Same as above plus `--clip <m>` | Draws only geometry from `<m>` metres in front of the centre plane onward: a plan centred at floor level with `--clip 2` drops the ceiling; an inside elevation with `--clip` less than the room depth drops the wall behind you |
 | A spec view (gates, G4, B5) | `qa_measure.py --view <px py pz tx ty tz lens> --png <view>.png`, or Blender MCP `look` from the same position | Headless perspective render, objects in random colours with outlines; with mockups, compare stages 7+ in material preview through `look` |
 | Mockup image | Blender MCP `look` from the view's camera position | Material preview for stages 7+, solid for greybox |
+| A UV layer with a checker | Workbench, `color_type = 'TEXTURE'` | Workbench samples the mesh's **active render** UV layer, not a UV Map node: set `uv_layers[...].active_render = True` on the layer to check (and restore it), or a UV2 checker silently shows UV0 |
 | Blender vs Unity (stage 10) | Blender `look` from the view; Unity MCP `manage_camera` screenshot from the same transform (Blender `(x, y, z)` is Unity `(-x, z, -y)`) | Same field of view; compare placement, not lighting |
 
 Before anything is built (planning stages), there is nothing to render: check the SVGs against the spec instead.

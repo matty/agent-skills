@@ -82,7 +82,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | U1 | UV0 distortion: angular p95 <= 1.15, no folded faces | UV audit |
 | U2 | UV0 texel density within 10% of the family's `texel_density` (tiling and trim) or packed to it (unique) | UV audit |
 | U3 | Trim pieces land on the right strip of the trim sheet | Look with the trim texture applied; UV audit for island positions |
-| U4 | UV2 exists, no overlap, inside 0-1, padding >= the pixel padding for the lightmap size | `qa_measure` (UV layer count); UV audit on the second layer for the rest |
+| U4 | UV2 exists, no overlap, inside 0-1, gaps >= the padding in pixels at the lightmap size the spec gives (`budgets.lightmap.max_px`) | `qa_measure` (UV layer count); UV audit on the second layer for the rest. Whether each piece gets enough of the lightmap for that padding to hold (2 texels at its smallest footprint) is checked at stage 11 (L-checks), once lightmap scales are set: note small pieces here |
 | U5 | Hard edges are seams on layers that take a baked normal map | UV audit |
 | U6 | *advisory* Coverage of unique UV0 >= 65%, of UV2 >= 60% | UV audit |
 
