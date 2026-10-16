@@ -110,6 +110,11 @@ Warnings**, **Tags**, **World Debugging**, **Thumbnail**. Clear every SDK valida
 fixes where they make sense), check the console is free of errors, then hand over: the user presses **Build &
 Publish Your World Online** (it needs their account at the "New User" trust rank or higher).
 
+The Builder tab needs a signed-in SDK. Signed out, the scene checks behind it can still run through Unity MCP by
+reflection on `VRCSdkControlPanel` / `VRCSdkControlPanelWorldBuilder` (`FindScenes`, `CheckProjectSetup`,
+`OnGUISceneCheck`), but the Unity-version check needs remote config and is skipped silently: confirm the editor
+version yourself. A local build without signing in is not something to rely on; measure the size at upload.
+
 ## 8. Cross-platform (PC, Android / Quest, iOS)
 
 Full steps and the mobile rules: `references/cross-platform.md`. In short:
