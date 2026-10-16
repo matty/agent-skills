@@ -12,7 +12,7 @@ Host: Blender with its bundled numpy; tested on 5.2.2, needs 4.1+ (Mesh.corner_n
     ua.pack(objs, map_px=1024, pad_px=8)                             # fill the tile, 8 px between islands
 
 From the command line (prints one line per object; --json writes the full reports):
-    blender -b scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 8 [--layer 1 --lightmap]
+    blender -b --factory-startup scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 8 [--layer 1 --lightmap]
                                                   [--td 512] [--baking] [--json report.json]
 
 What audit() measures, on the evaluated mesh (modifiers applied, as it exports) in world space:

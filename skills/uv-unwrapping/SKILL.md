@@ -229,7 +229,7 @@ uneven density, folded faces (always a fault; whole mirrored islands are reporte
 outside 0-1 (lightmaps), partial overlaps (stacked copies are allowed in UV0, not in a lightmap), gaps and edge
 margin below the padding, density off target or uneven between islands, hard edges not on seams (`baking=True`),
 more than 8 UV maps (the most an engine like Unity keeps). Command line:
-`blender -b scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 16 [--layer 1 --lightmap]`.
+`blender -b --factory-startup scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 16 [--layer 1 --lightmap]`.
 
 Facts with a shelf life (Blender operator names, parameters and defaults; engine lightmap settings; add-on
 availability) carry their source and version in the references. Re-check operator parameters in a new Blender with
