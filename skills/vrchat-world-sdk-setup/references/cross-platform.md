@@ -13,7 +13,10 @@ One world, one blueprint ID, one upload per platform. Sources and check date: en
    - textures 1024 or below on Android, through per-platform import overrides rather than separate files
      (`vrchat-texture-and-vram`). Crunch shrinks the download only, not memory.
 3. **Shaders.** Shaders are not restricted in Android worlds, but be very careful with custom ones. The recommended
-   basic world shader is `Mobile/VRChat/Lightmapped` with baked lighting. Swap materials per platform where the PC
+   basic world shader is `VRChat/Mobile/Lightmapped` (that is its `Shader.Find` name) with baked lighting. It reads only
+   the albedo (`_MainTex`) and the lightmap: no metallic-smoothness map and no light probes, so dynamic or toggled
+   lighting does not show on it. `VRChat/Mobile/Standard Lite` reads albedo, the metallic map (R metallic, A
+   smoothness), the lightmap and probes, and has no GPU-instancing variant. Swap materials per platform where the PC
    shader is heavy.
 4. **Platform-specific objects.** Things that should exist on one platform only (a PC-only mirror quality, post
    processing volumes, heavy props) are switched per build target. VRChat recommends the EasyQuestSwitch tool from
