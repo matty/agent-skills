@@ -17,7 +17,7 @@ family named `M_<FAMILY>_<Name>`, at the family's `map_px`, matching the mockup 
    guess node definitions or properties; look them up (`sd_search_library`, `sd_list_node_definitions`,
    `sd_list_node_properties`).
 2. One package per family in `blender/substance/<FAMILY>/`, one graph per material, outputs base colour, normal
-   (OpenGL), and a packed ORM-style map, or whatever the spec's channel plan says.
+   (OpenGL), and a metallic-smoothness map, per the channel plan below, or whatever the spec's channel plan says.
 3. Trim sheet: fix the strip layout first (heights in pixels, which strip is which trim), write it to
    `blender/substance/TRIM/layout.md`, and give it to the UV task.
 4. Export maps as PNG at `map_px` into `blender/textures/<FAMILY>/` (`T_<FAMILY>_<Name>_<Map>.png`). If the MCP cannot
@@ -37,6 +37,22 @@ other families on it.
 Procedural node materials per family, baked to images at `map_px` (Cycles bake: diffuse colour only, normal,
 roughness, AO), then packed. Tiling materials: bake on a 1 x 1 m plane with tiling UVs, then check that 3 x 3 repeats
 show no seam. Save the node setup in `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
+
+## Channel plan for Unity's Built-in Render Pipeline
+
+VRChat worlds use the Built-in pipeline's Standard shader (PC) and VRChat's mobile shaders (Quest). Pack for what
+they read, not for a glTF-style ORM map, which Standard wires up wrong:
+
+| Map | Channels | Colour space | Unity slot |
+|---|---|---|---|
+| `T_<FAMILY>_<Name>_BaseColor.png` | RGB colour, A unused (or opacity for cutout) | sRGB | Albedo |
+| `T_<FAMILY>_<Name>_MetallicSmoothness.png` | R metallic, A smoothness (1 - roughness); G and B unused | linear | Metallic, Smoothness Source: Metallic Alpha |
+| `T_<FAMILY>_<Name>_Normal.png` (only if the material needs one) | OpenGL (Y+), as Blender bakes it | linear, import as Normal map | Normal Map |
+| Occlusion | Usually skipped in a baked world: the lightmap carries it. If used, its own map; Standard reads G | linear | Occlusion |
+
+Source for the Standard slots: https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterMetallic.html
+(checked 2026-10-16). Quest: check which of these maps the chosen VRChat mobile shader reads before baking them
+(`vrchat-world-sdk-setup`, `vrchat-texture-and-vram`).
 
 ## Rules that save rework
 

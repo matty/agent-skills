@@ -153,7 +153,7 @@ overlays against `plan_<zone>.svg` and `elevation_<id>.svg`.
 Checks: U1-U6. Fallback: Smart UV Project + texel scaling, flagged for extra QA.
 
 **Stage 7, T-TEX-EXT (texture artist).** Goal: `M_EXT_Brick`, `M_EXT_Stone` with base colour, normal and packed
-ORM maps at 1024, matching the swatch mockups. Load: none (paste `texturing.md`); Substance MCP if available.
+metallic-smoothness maps at 1024 (channel plan in `texturing.md`), matching the swatch mockups. Load: none (paste `texturing.md`); Substance MCP if available.
 Writes: `blender/textures/EXT/`, `blender/substance/EXT/`, the materials in the KIT file. Checks: X1-X6.
 
 **Stage 8, T-DRESS-square (integrator).** Goal: props and trims placed from the spec, plus dressing within budget.
