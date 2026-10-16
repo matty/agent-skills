@@ -98,7 +98,9 @@ from a KIT never see a half-written file, but two writers to the same file silen
   `bpy.ops.wm.save_mainfile()`. Set `bpy.context.preferences.filepaths.save_version = 0` first: with factory
   settings every save also writes a `.blend1` backup beside the file, which is a file the task was not briefed to write.
 - MASTER is opened by one owner only (normally through Blender MCP). ASM files likewise get one owner per file.
-- Files that link a changed library reload it rather than being reopened.
+- Files that link a changed library reload it rather than being reopened. A headless run (`blender -b`) opens the
+  file fresh and already loads every library from disk, so in that case the reload changes nothing: check the result
+  against the previous placement snapshot or render, not against the same session before the reload.
 
 ## Checking a kit
 
