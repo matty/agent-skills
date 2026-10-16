@@ -95,7 +95,8 @@ from a KIT never see a half-written file, but two writers to the same file silen
 
 - Kit work runs headless, one process per KIT file:
   `blender -b --factory-startup blender/kits/KIT_Arch_Exterior.blend --python task.py`, ending with
-  `bpy.ops.wm.save_mainfile()`.
+  `bpy.ops.wm.save_mainfile()`. Set `bpy.context.preferences.filepaths.save_version = 0` first: with factory
+  settings every save also writes a `.blend1` backup beside the file, which is a file the task was not briefed to write.
 - MASTER is opened by one owner only (normally through Blender MCP). ASM files likewise get one owner per file.
 - Files that link a changed library reload it rather than being reopened.
 
