@@ -14,6 +14,8 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/kit_library.py", encoding
     ns["reload_libraries"]()                                  # after KIT files changed on disk
     rep = ns["audit_kit"](module=1.0); ns["problems"](rep)    # in a KIT file; read-only
 
+The audit follows each piece's kit_status: UV2 is required from "uv" on, filled material slots from "textured" on.
+
 From the command line (prints one line per piece; --json writes the full report; exit code 1 on problems):
     blender -b KIT_Arch_Exterior.blend --python kit_library.py -- --audit --module 1.0 [--json report.json]
 
@@ -31,6 +33,7 @@ from mathutils import Matrix, Vector
 NAME_RE = re.compile(r"^([A-Z]{2,5})_[A-Za-z0-9]+_(\d+(?:x\d+){0,2}|Free)_[A-Z]\d?$")
 ASM_RE = re.compile(r"^ASM_[A-Za-z0-9]+_[A-Z]\d?$")
 EPS = 1e-4
+STATUS_ORDER = ("grey", "modelled", "uv", "textured", "exported")   # collection custom property kit_status
 
 
 def _abs(path):
@@ -134,12 +137,18 @@ def audit_piece(coll, module=1.0, materials=None):
         if not _is_identity(ob.matrix_world):
             issues.append("%s: transform is not identity (origin must be the piece pivot, rotation/scale applied)"
                           % ob.name)
+    # Pipeline stages add UV2 (kit_status "uv") and family materials ("textured"); before that, a greybox or freshly
+    # modelled piece is not expected to have them. Pieces without kit_status get every check.
+    status = coll.get("kit_status")
+    rep["kit_status"] = status
+    stage = STATUS_ORDER.index(status) if status in STATUS_ORDER else len(STATUS_ORDER)
     for ob in render:
-        if len(ob.data.uv_layers) < 2:
+        if stage >= STATUS_ORDER.index("uv") and len(ob.data.uv_layers) < 2:
             issues.append("%s: no UV2 (lightmap) layer" % ob.name)
         for slot in ob.material_slots:
             if slot.material is None:
-                issues.append("%s: empty material slot" % ob.name)
+                if stage >= STATUS_ORDER.index("textured"):
+                    issues.append("%s: empty material slot" % ob.name)
             elif not slot.material.name.startswith(prefixes):
                 issues.append("%s: material %s outside %s" % (ob.name, slot.material.name, "/".join(prefixes)))
 
