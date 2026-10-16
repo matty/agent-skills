@@ -146,7 +146,7 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 - Brief: load `blender-to-unity`. Without it, use these settings: Limit to Selected, Object Types Mesh, Scale
   1.0, Apply Scalings FBX All, -Z Forward, Y Up, Apply Unit on, Use Space Transform on, Bake Space Transform on,
   Smoothing Face, Apply Modifiers on, Triangulate on, Tangent Space only with normal maps, no animation, Path Mode
-  Copy, embed off. Apply rotation and scale first.
+  Strip (kit pieces use the family's shared Unity material), embed off. Apply rotation and scale first.
 - QA: E1-E4.
 
 ## 10 - Unity assembly (Unity integrator, Unity MCP)
