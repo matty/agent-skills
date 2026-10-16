@@ -123,6 +123,8 @@ Keep it consistent between neighbouring objects, or the odd one out looks blurry
 - Stacked copies (mirrored or repeated parts sharing texture space on UV0) count as one island in the padding
   check. To keep them stacked when packing, `pack(..., keep_stacks=True)`, after spreading unique islands apart.
   Never stack on a lightmap layer.
+- Objects sharing one texture (an atlas): audit them together with `--shared` (or `audit_shared(objects)`), which
+  checks overlap and gaps between the objects as well; the per-object audit cannot see them.
 - Map size for a unique texture: `next_pow2(px_per_m x sqrt(area_m2 / coverage))` with coverage about 0.65, capped
   by the platform (`references/texel-density.md`).
 

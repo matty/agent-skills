@@ -13,6 +13,7 @@ Host: Blender with its bundled numpy; tested on 5.2.2, needs 4.1+ (Mesh.corner_n
 
 From the command line (prints one line per object; --json writes the full reports):
     blender -b --factory-startup scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --pad 8 [--layer 1 --lightmap]
+                                                  [--shared]   # the matched objects share one atlas
                                                   [--td 512] [--baking] [--json report.json]
 
 What audit() measures, on the evaluated mesh (modifiers applied, as it exports) in world space:
@@ -294,6 +295,9 @@ def audit(ob, layer=None, map_px=1024, pad_px=None, px_per_m=None, lightmap=Fals
            "outside_0_1": round(outside, 4),
            "texel_px_per_m": round(td_mean, 1), "texel_cv": round(td_cv, 3),
            "low_density_faces": int(len(np.unique(d["tpoly"][low]))),
+           "low_density_px_per_m": (round(map_px * math.sqrt(float(np.abs(tr["au"][ok & low]).sum())
+                                                              / max(float(w[ok & low].sum()), 1e-30)), 1)
+                                    if (ok & low).any() else None),
            "texel_island_range": ([round(float(td_isl[wi > 0].min()), 1), round(float(td_isl[wi > 0].max()), 1)]
                                   if (wi > 0).any() else None),
            "hard_edges_not_seams": int(np.count_nonzero(hard & ~uv_split)),
@@ -372,6 +376,9 @@ def _issues(r, pad_px, px_per_m, lightmap, baking):
         out.append("%.1f px from the tile edge (< %g)" % (r["margin_px"], pad_px / 2.0))
     if r["texel_cv"] == r["texel_cv"] and r["texel_cv"] > LIMITS["texel_cv"]:
         out.append("texel density varies between islands (cv %.2f)" % r["texel_cv"])
+    if r.get("low_density_px_per_m") and r["texel_px_per_m"] and r["low_density_px_per_m"] > 0.9 * r["texel_px_per_m"]:
+        out.append("%d faces marked low-density are not lowered (%.0f px/m vs %.0f)"
+                   % (r["low_density_faces"], r["low_density_px_per_m"], r["texel_px_per_m"]))
     if px_per_m and abs(r["texel_px_per_m"] / float(px_per_m) - 1) > LIMITS["texel_off_target"]:
         out.append("texel density %.0f px/m, target %g" % (r["texel_px_per_m"], px_per_m))
     if baking and r["hard_edges_not_seams"]:
@@ -400,6 +407,57 @@ def audit_objects(objects, report_path=None, **kw):
         with open(report_path, "w", encoding="utf-8") as fh:
             json.dump(reps, fh, indent=1)
     return reps
+
+
+def audit_shared(objects, layer=None, map_px=1024, pad_px=None, evaluated=True):
+    """Several objects on one texture (a shared atlas): overlap and gaps between their islands, which the per-object
+    audit cannot see. Stacked copies count as one island, as in audit(). Returns a report dict with "issues"."""
+    objects = [o for o in objects if o.type == "MESH"]
+    uvs, tris, isl, owner, base = [], [], [], [], 0
+    nisl = 0
+    for k, ob in enumerate(objects):
+        d = _arrays(ob, layer, evaluated)
+        if d is None:
+            continue
+        pa, pb, uv_split, _hard, _key = _edges(d)
+        isl_poly = _islands(len(d["ls"]), pa, pb, ~uv_split)
+        ok = _triangles(d)["ok"]
+        keep = np.nonzero(ok)[0]
+        uvs.append(d["uv"])
+        tris.append(d["tri"][keep] + base)
+        isl.append(isl_poly[d["tpoly"][keep]] + nisl)
+        owner += [k] * (int(isl_poly.max()) + 1 if len(isl_poly) else 0)
+        nisl += int(isl_poly.max()) + 1 if len(isl_poly) else 0
+        base += len(d["uv"])
+    rep = {"objects": [o.name for o in objects], "layer": layer, "issues": []}
+    if not tris:
+        rep["issues"].append("no UV data")
+        return rep
+    d = {"uv": np.concatenate(uvs), "tri": np.concatenate(tris)}
+    isl_tri = np.concatenate(isl)
+    res = int(min(map_px, RASTER_MAX))
+    grid, clash, px = _raster(d, isl_tri, res, np.arange(len(d["tri"])))
+    alias = np.arange(max(nisl, 1))
+    across = 0
+    for (a, b), n in clash.items():
+        small = max(min(px[a], px[b]), 1)
+        if n / small > 0.9 and abs(int(px[a]) - int(px[b])) <= 0.1 * small:
+            ra, rb = alias[a], alias[b]
+            alias[alias == max(ra, rb)] = min(ra, rb)
+        elif owner[a] != owner[b]:
+            across += 1
+    rep["coverage"] = round(float((grid >= 0).mean()), 4)
+    rep["overlapping_pairs_between_objects"] = across
+    if across:
+        rep["issues"].append("%d island pairs of different objects overlap" % across)
+    if pad_px:
+        grid = np.where(grid >= 0, alias[np.maximum(grid, 0)], -1)
+        scale = res / float(map_px)
+        gap = _min_gap(grid, pad_px * scale)
+        rep["min_gap_px"] = None if gap is None else round(gap / scale, 1)
+        if gap is not None:
+            rep["issues"].append("islands %.1f px apart (< %g) across the shared layout" % (gap / scale, pad_px))
+    return rep
 
 
 def audit_selected(**kw):
@@ -547,12 +605,20 @@ def _main(argv):
     ap.add_argument("--lightmap", action="store_true", help="lightmap rules: inside 0-1, no stacked islands")
     ap.add_argument("--baking", action="store_true", help="normal-map bake: hard edges must be UV seams")
     ap.add_argument("--json", default=None, help="write the full reports here")
+    ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
+                    "check overlap and gaps between them")
     a = ap.parse_args(argv)
     layer = int(a.layer) if a.layer is not None and a.layer.isdigit() else a.layer
     obs = [o for o in bpy.data.objects if o.type == "MESH" and fnmatch.fnmatch(o.name, a.objects)]
     reps = audit_objects(obs, report_path=a.json, layer=layer, map_px=a.map, pad_px=a.pad, px_per_m=a.td,
                          lightmap=a.lightmap, baking=a.baking)
-    return 1 if any(r["issues"] for r in reps) else 0
+    bad = any(r["issues"] for r in reps)
+    if a.shared:
+        sh = audit_shared(obs, layer=layer, map_px=a.map, pad_px=a.pad)
+        print("  %-6s shared layout of %d objects: cov %s  %s" % ("OK" if not sh["issues"] else "CHECK",
+              len(sh["objects"]), sh.get("coverage"), "; ".join(sh["issues"]) or "no issues"))
+        bad = bad or bool(sh["issues"])
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
