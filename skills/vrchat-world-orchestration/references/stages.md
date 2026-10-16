@@ -6,6 +6,28 @@ refer to `vrchat-world-qa` (stage 1 = C, 2 = S, 3 = P, 4 = B, 5 = M, 6 = U, 7 = 
 
 Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-PROP-2`, `T-UNITY-MASTER`.
 
+## Where each stage writes
+
+Put these exact paths in each task's `writes` (relative to `<world>/`, or to the Unity project for `Assets/`).
+The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets/`, `ProjectSettings/` and the `@` editors.
+
+| Stage | Writes |
+|---|---|
+| 1 | `world/mockups/` |
+| 2-3 (or `T-PLAN-01`) | `world/spec.yaml`, `world/diagrams/`, `world/briefs/draft-tasks.yaml` |
+| 4-6 | `blender/kits/KIT_<FamilyName>.blend` (one task per file); ASM tasks `blender/asm/ASM_<Name>.blend`; MASTER `blender/MASTER.blend` |
+| 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/`, and the family's KIT file (materials) |
+| 8 | `blender/asm/ASM_<Name>.blend`, `blender/MASTER.blend` |
+| 9 | `export/fbx/<FAMILY>/`, and the KIT file (`kit_status` only) |
+| 10 import, sync | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Assemblies/`, `Assets/World/PlacementSync/` (sync scripts, once), `Assets/World/Scenes/`, `world/placements/`, `@unity`; sync applies also `blender/MASTER.blend` or the ASM file |
+| 10 setup, platform | `Assets/World/Scenes/`, `Assets/World/Kits/<FAMILY>/` (static flags, instancing, import overrides), `ProjectSettings/` (layers, quality, build targets), `@unity` |
+| 11 | `Assets/World/Scenes/` (lighting objects, lightmaps), `ProjectSettings/` (lighting), `@unity` |
+| 12 | `Assets/World/Scripts/`, `Assets/World/Scenes/`, `@unity` |
+| 13 | `world/reports/optimisation.md`, `Assets/World/Kits/<FAMILY>/` (import settings), `ProjectSettings/`, `@unity` |
+
+QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.yaml` and the briefs in
+`world/briefs/` (the planner's `draft-tasks.yaml` is the one exception).
+
 ## 0 - Intake (master)
 
 - In: the user's request.
@@ -48,13 +70,24 @@ Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-P
 - QA: P1-P4, S1, S3.
 - Prefer one piece used many times over near-duplicates. Every variant must earn its draw call.
 
+## 1-3 in small mode - one planning task (planner)
+
+- `T-PLAN-01` replaces `T-MOCK-01`, `T-SPEC-01` and `T-KIT-PLAN` when `world.scale` is `small`.
+- Do: stage 1 if `world.mockups` is true, then stage 2 and stage 3 as written above, in one pass: the spec comes
+  out with its pieces, families and assemblies already complete.
+- Out: everything stages 1-3 produce: `world/mockups/` (if any), `world/spec.yaml`, `world/diagrams/`,
+  `world/briefs/draft-tasks.yaml`.
+- QA: one pass, S1-S7 plus P1-P4, plus C1-C4 when there are mockups.
+- Then the **spec gate**, with `gates.spec.after: [T-PLAN-01]`.
+
 ## 4 - Greybox (kit modellers in parallel, then the integrator)
 
 - `T-GREY-<FAMILY>`, one per KIT file, in parallel: create each piece as a collection in its KIT file with simple
   box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut where the spec says,
   `kit_status = grey`. Headless: `blender -b <KIT> --python <task>.py`, saving at the end.
 - `T-GREY-ASM-<name>` (after the kits it uses): build each assembly from linked pieces.
-- `T-GREY-MASTER` (after all of the above; integrator, live Blender, writes `@blender-live`): link and place assemblies and pieces from the
+- `T-GREY-MASTER` (after all of the above; integrator; live Blender with `@blender-live` in `writes`, or headless
+  when the Blender MCP is not connected, see rule 3 in `SKILL.md`): link and place assemblies and pieces from the
   spec's placements. Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF`
   collection).
 - QA: B1-B7, for each KIT task and for MASTER.
@@ -74,7 +107,9 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
   `collision` (`_COL` shell for `mesh`). `kit_status = modelled`.
 - Brief: load `blender-mesh-topology` for topology work.
 - Budget: `budgets.piece_tris.<FAMILY>`, or the piece's `tris`.
-- QA: M1-M8. Reload libraries in MASTER afterwards (integrator) and spot-check the greybox views again.
+- QA: M1-M8.
+- `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): reload libraries in
+  MASTER and spot-check the greybox views again.
 
 ## 6 - UVs (UV artists, parallel per KIT file)
 
@@ -87,8 +122,11 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 
 - `T-TEX-<FAMILY>`: the family's materials (`M_<FAMILY>_<Name>`), trim sheet or tiling sets or atlas, unique prop
   textures. `kit_status = textured`. Process: `references/texturing.md`.
-- Trim sheets and atlases come **before** UVs of the families that use them. When a family uses `trim`, schedule a
+- Trim sheets come **before** UVs of the families that use them. When a family uses `trim`, schedule a
   `T-TEX-TRIM-LAYOUT` task first that fixes the strip layout, and make that family's UV task depend on it.
+- An `atlas` family runs the other way round: its UV task packs every piece into the shared atlas, then
+  `T-TEX-<FAMILY>` paints it, so the texture task depends on the UV task. Only an atlas laid out from existing
+  textures (UVs placed onto a finished sheet) needs a layout task first, like a trim sheet.
 - QA: X1-X6.
 
 ## 8 - Assemblies and dressing (integrator)

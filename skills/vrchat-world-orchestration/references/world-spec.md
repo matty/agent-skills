@@ -90,7 +90,7 @@ piece after stage 4 is a spec change with a task to re-link and re-place everywh
 |---|---|
 | Unit | 1 Blender unit = 1 m |
 | Grid pivot | Bottom-left corner: the piece extends into +X, +Y, +Z from its origin |
-| Free pivot | Floor centre (props), hinge (doors), trunk base (trees) |
+| Free pivot | Floor centre (props), hinge (doors), trunk base (trees), back-face centre (wall-mounted: switches, sconces, frames), top centre (ceiling-mounted: lamps). Front faces -Y at rot 0 |
 | In the KIT file | Objects at identity transform, `collection.instance_offset` zero |
 | Walls | Run along X; thickness in +Y, constant per family (`families.<F>.thickness`) |
 | Placement | Grid pieces on whole modules (trim on `sub_module`), rotated in 90-degree steps |

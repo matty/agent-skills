@@ -132,11 +132,17 @@ Load: none (paste `world-spec.md`). Inputs: brief, intake answers, mockups. Writ
 **Stage 3, T-KIT-PLAN (planner).** Goal: complete `pieces`, `families`, `assemblies`, with corners, ends and trims.
 Writes: `world/spec.yaml`. Checks: P1-P4, S1, S3.
 
+**Stages 1-3 in small mode, T-PLAN-01 (planner).** The three briefs above merged: mockups if `world.mockups` is true,
+then a validating spec with pieces, families and assemblies complete, diagrams generated, stage 4-13 tasks drafted.
+Load: none (paste `world-spec.md`, and `mockups.md` when there are mockups). Writes: `world/spec.yaml`,
+`world/diagrams/`, `world/briefs/draft-tasks.yaml`, plus `world/mockups/` when there are mockups. Checks: S1-S7,
+P1-P4, plus C1-C4 with mockups.
+
 **Stage 4, T-GREY-EXT (kit modeller).** Goal: every EXT piece as a collection of box geometry at its exact extents,
 pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-kit-library`. Writes:
 `blender/kits/KIT_Arch_Exterior.blend`. Checks: B1. Fallback: the kit rules in `world-spec.md`.
 
-**Stage 4, T-GREY-MASTER (integrator, live Blender).** Goal: MASTER laid out from `zones[].placements` with linked
+**Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: MASTER laid out from `zones[].placements` with linked
 pieces and assemblies, relative paths, scale figures per zone. Writes: `blender/MASTER.blend`. Checks: B2-B7, with
 overlays against `plan_<zone>.svg` and `elevation_<id>.svg`.
 

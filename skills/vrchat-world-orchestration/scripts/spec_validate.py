@@ -7,7 +7,9 @@ without touching the system Python:  python -m venv .venv && .venv/Scripts/pip i
     python spec_validate.py world/spec.yaml --ledger world/ledger.yaml [--mermaid world/diagrams/tasks.mmd]
     python spec_validate.py world/spec.yaml --root <project>      # also check that referenced files exist
 
-Prints one line per finding, ERROR or WARN, then a summary. Exit code 1 if there is any ERROR.
+Prints one line per finding, ERROR, WARN or NOTE, then a summary. Exit code 1 if there is any ERROR.
+A spec with none of grid/families/budgets/pieces/zones is an intake-only spec (stage 0): only version, world and
+tools are checked.
 What it checks: required fields and types; piece, assembly, family and material names; piece sizes against the
 grid; that every piece in an elevation, placement or assembly exists and every piece is used; zones, rooms and
 openings (inside their bounds, human scale for VR); budgets against the platform targets; views; and for the
@@ -60,9 +62,16 @@ class Findings:
     def warn(self, msg):
         self.items.append(("WARN", msg))
 
+    def note(self, msg):
+        self.items.append(("NOTE", msg))
+
     @property
     def errors(self):
         return sum(1 for k, _ in self.items if k == "ERROR")
+
+    @property
+    def warnings(self):
+        return sum(1 for k, _ in self.items if k == "WARN")
 
 
 def piece_extent(name, module, families):
@@ -86,10 +95,20 @@ def inside(inner, outer, tol=1e-6):
             and outer[1] - tol <= inner[1] <= inner[3] <= outer[3] + tol)
 
 
+PLANNING_SECTIONS = ("grid", "families", "budgets", "pieces", "zones")
+
+
 def check_spec(spec, f, root=None):
-    for key in ("version", "world", "grid", "families", "budgets", "pieces", "zones"):
+    for key in ("version", "world"):
         if key not in spec:
             f.error("missing top-level '%s'" % key)
+    # Stage 0 writes only world and tools; the planning task fills the rest. Check what intake owns and stop,
+    # rather than reporting every planning section as missing.
+    intake_only = not any(key in spec for key in PLANNING_SECTIONS)
+    if not intake_only:
+        for key in PLANNING_SECTIONS:
+            if key not in spec:
+                f.error("missing top-level '%s'" % key)
     world = spec.get("world") or {}
     platforms = world.get("platforms") or []
     if not platforms or any(p not in PLATFORM_LIMITS for p in platforms):
@@ -98,6 +117,15 @@ def check_spec(spec, f, root=None):
         f.error("world.scale must be full or small")
     if world.get("allow_generated_assets") not in (True, False):
         f.error("world.allow_generated_assets must be true or false (ask the user at intake)")
+    tools = spec.get("tools") or {}
+    if not tools.get("blender"):
+        f.error("tools.blender (the Blender CLI path) is missing; find it at intake or ask the user")
+    if not tools.get("unity_project"):
+        f.warn("tools.unity_project is not set; stages 10-13 need it")
+    if intake_only:
+        f.note("intake-only spec (no %s yet): checked version, world and tools; the planning task fills the rest"
+               % "/".join(PLANNING_SECTIONS))
+        return
     module = (spec.get("grid") or {}).get("module")
     if not isinstance(module, (int, float)) or module <= 0:
         f.error("grid.module must be a positive number of metres")
@@ -153,20 +181,24 @@ def check_spec(spec, f, root=None):
     for a in asms.values():
         used.update(a.get("uses") or [])
     budgets = spec.get("budgets") or {}
+    for key in ("world_tris", "view_tris", "materials", "setpass", "batches", "texture_vram_mb"):
+        if key not in budgets:
+            f.error("budgets.%s missing" % key)
     for p in platforms:
         lim = PLATFORM_LIMITS[p]
         for key in ("world_tris", "view_tris", "materials", "setpass", "batches", "texture_vram_mb"):
-            if key not in budgets:
-                f.error("budgets.%s missing" % key)
-            elif budgets[key] > lim[key]:
+            if key in budgets and budgets[key] > lim[key]:
                 f.error("budgets.%s = %s is looser than the %s target %s" % (key, budgets[key], p, lim[key]))
         lm = (budgets.get("lightmap") or {}).get("max_px", 0)
         if lm > lim["lightmap_px"]:
             f.error("budgets.lightmap.max_px %s exceeds the %s target %d" % (lm, p, lim["lightmap_px"]))
     if "quest" in platforms:
         dl = (budgets.get("download_mb") or {}).get("quest")
-        if dl is None or dl > QUEST_DOWNLOAD_MB:
-            f.error("budgets.download_mb.quest must be <= %d (hard limit)" % QUEST_DOWNLOAD_MB)
+        if dl is None:
+            f.error("budgets.download_mb.quest missing (quest is in world.platforms; hard limit %d MB)"
+                    % QUEST_DOWNLOAD_MB)
+        elif dl > QUEST_DOWNLOAD_MB:
+            f.error("budgets.download_mb.quest = %s is over the %d MB hard limit" % (dl, QUEST_DOWNLOAD_MB))
     piece_tris = budgets.get("piece_tris") or {}
     for code in families:
         if code not in piece_tris:
@@ -262,6 +294,30 @@ def _reachable(graph, start):
     return seen
 
 
+# Where a task may write: the project layout's top folders, the Unity project's Assets and ProjectSettings, and the
+# live editors.
+WRITE_ROOTS = ("world/", "blender/", "export/", "assets/", "projectsettings/", "@")
+
+
+def _norm(path):
+    p = path.replace("\\", "/").strip().lower()
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _shared_writes(wa, wb):
+    """Paths two tasks both write: the same path, or a folder (trailing /) that holds the other's path."""
+    shared = set()
+    for a in wa:
+        for b in wb:
+            na, nb = _norm(a), _norm(b)
+            if (na == nb or (na.endswith("/") and nb.startswith(na))
+                    or (nb.endswith("/") and na.startswith(nb))):
+                shared.add(a if len(na) <= len(nb) else b)
+    return shared
+
+
 def check_ledger(ledger, f):
     tasks = ledger.get("tasks") or []
     gates = ledger.get("gates") or {}
@@ -286,17 +342,28 @@ def check_ledger(ledger, f):
             if d.startswith("gate:"):
                 if d[5:] not in gates:
                     f.error("task %s depends on unknown gate %s" % (tid, d))
+                else:
+                    # A gate opens only after its `after` tasks, so depending on it orders the task after them.
+                    deps[tid].extend(a for a in (gates[d[5:]] or {}).get("after") or [] if a in ids)
             elif d not in ids:
                 f.error("task %s depends on unknown task %s" % (tid, d))
             else:
                 deps[tid].append(d)
+    for g, gv in gates.items():
+        for d in (gv or {}).get("after") or []:
+            if d not in ids:
+                f.note("gate %s waits on %s, which is not in the ledger yet" % (g, d))
     for tid in ids:
         if tid in _reachable(deps, tid):
             f.error("dependency cycle through task %s" % tid)
+    for tid, t in ids.items():
+        for w in t.get("writes") or []:
+            if not _norm(w).startswith(WRITE_ROOTS):
+                f.warn("task %s writes %s, outside the project layout (%s)" % (tid, w, ", ".join(WRITE_ROOTS)))
     order = sorted(ids)
     for i, a in enumerate(order):
         for b in order[i + 1:]:
-            shared = set(ids[a].get("writes") or []) & set(ids[b].get("writes") or [])
+            shared = _shared_writes(ids[a].get("writes") or [], ids[b].get("writes") or [])
             if shared and a not in _reachable(deps, b) and b not in _reachable(deps, a):
                 f.error("tasks %s and %s can run at once and both write %s (one writer per file: add a dependency)"
                         % (a, b, ", ".join(sorted(shared))))
@@ -344,7 +411,7 @@ def main():
             print("wrote %s" % a.mermaid)
     for kind, msg in f.items:
         print("%-5s %s" % (kind, msg))
-    print("%d error(s), %d warning(s)" % (f.errors, len(f.items) - f.errors))
+    print("%d error(s), %d warning(s)" % (f.errors, f.warnings))
     sys.exit(1 if f.errors else 0)
 
 

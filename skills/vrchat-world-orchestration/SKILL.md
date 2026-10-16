@@ -21,7 +21,9 @@ everything you know about the build lives in files so any session can resume it.
    write the same file never run at once (the validator enforces it on the ledger). The live editors are writers
    too: list `@blender-live` (Blender MCP) and `@unity` (Unity MCP, the one open Unity project) in `writes` for any
    task that drives them, so the validator serialises those tasks as well. Kit work runs headless (`blender -b`),
-   one process per KIT file, and needs neither.
+   one process per KIT file, and needs neither. MASTER and ASM tasks use the live Blender when the Blender MCP is
+   connected; without it they run headless too and drop `@blender-live` (the `.blend` in `writes` still
+   serialises them). Never run headless on a file that is open in the live Blender.
 4. **Link, never append.** `MASTER.blend` holds layout only: linked instances of pieces from `KIT_*.blend` and
    assemblies from `ASM_*.blend`. Geometry is edited in its KIT file and nowhere else.
 5. **Nothing is done until QA passes it.** After each build task, a separate QA subagent loads `vrchat-world-qa` and
@@ -64,7 +66,7 @@ Ask at intake, record as `world.scale` in the spec.
 | | `full` (default) | `small` |
 |---|---|---|
 | Fits | Several zones, a kit of dozens of pieces, cross-platform | One zone or a few rooms, about 30 pieces or fewer |
-| Stages 1-3 | Separate tasks, spec gate after 2 | One planning task (mockups, spec, kit plan), spec gate after it |
+| Stages 1-3 | Separate tasks, spec gate after 2 | One planning task, `T-PLAN-01` (mockups, spec, kit plan; `references/stages.md`), spec gate after it |
 | KIT files | One per family | One `KIT_World.blend` may hold every family (pieces and `M_<FAMILY>_*` materials still named by family) |
 | QA | One pass per task | One pass per stage, over all of that stage's tasks |
 | Gates | Spec, greybox | Spec, greybox (never skipped: they are the cheap moments to change course) |
@@ -81,9 +83,9 @@ Detect first, then ask the user to confirm or change, in one message:
 | Performance tier | Quest-safe | - |
 | Generated or library assets for props (`generate_3d`, asset libraries) | **No** | - |
 | Substance Designer / Painter | Use if present, else the Blender fallback | Substance MCP `sd_ping`, install folders |
-| Blender CLI path | - | `bpy.app.binary_path` through Blender MCP, common install folders |
+| Blender CLI path | - | `bpy.app.binary_path` through Blender MCP; else `blender` on PATH, `Program Files\Blender Foundation\*`, portable unzips such as `~/.blender/blender-*`, Steam's `common\Blender`; else ask the user. The Blender MCP being down does not block the build: kit work is headless |
 | Unity project path | - | Unity MCP `mcpforunity://instances` |
-| Image tool for mockups | Use if the host has one, else skip stage 1 | The tools you have |
+| Image tool for mockups | Skip stage 1 unless the user confirms a tool | A tool that makes whole-scene concept art to a file; texture, sprite and engine-asset generators (Unity MCP `generate_image`) do not count (`references/mockups.md`) |
 
 Also ask for the brief itself if it is thin: the place, mood, scale (how many zones, roughly how big), reference
 images, and must-have interactions. Then create the project layout below, copy `templates/spec.yaml` and
