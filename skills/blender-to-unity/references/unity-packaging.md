@@ -65,4 +65,6 @@ Lightmap UVs off (UV2 is authored), Import Cameras/Lights off, Animation Type No
 1. Every `<Piece>.fbx` has a `<Piece>.prefab` beside it, and no prefab is left without its FBX.
 2. No `Materials/` folders extracted next to FBX files that should use `_Shared` materials.
 3. One placed instance per family at the origin: position 0, rotation 0, scale 1, correct size against a 1.6 m capsule.
+   A grid piece's Blender bottom-left pivot is its +X/+Z corner in Unity, so its mesh runs into -X and -Z (a 2 x 3 m
+   wall spans x -2..0, z -0.2..0). That is the `(-x, z, -y)` axis mapping, not an error: placements convert the same way.
 4. Submesh count per mesh equals the number of material slots you expected.
