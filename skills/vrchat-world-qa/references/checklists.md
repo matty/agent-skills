@@ -112,7 +112,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | Id | Check | How |
 |---|---|---|
 | E1 | One FBX per piece collection, named after it, in `export/fbx/<FAMILY>/` | List files |
-| E2 | Re-import one FBX per family into a blank Blender: scale 1, rotation 0, size matches the piece | Export checks; fallback: headless `import_scene.fbx` and read the dimensions |
+| E2 | Re-import one FBX per family into a blank Blender: scale 1, rotation 0, size matches the piece | Headless `import_scene.fbx(filepath=..., bake_space_transform=True)` and read rotation and dimensions. Without `bake_space_transform` on import, Blender puts the Y-up conversion on the object (X 90 deg, Y and Z swapped) even though the file is right; Unity's own check is N3 |
 | E3 | FBX triangle counts equal the audited LOD0 counts | Import, `qa_measure` |
 | E4 | Two UV channels in every lightmapped FBX; material slot names unchanged from the previous export | Import, inspect |
 
