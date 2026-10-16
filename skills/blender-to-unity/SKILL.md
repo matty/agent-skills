@@ -90,8 +90,10 @@ Full annotated table in `references/fbx-export.md`. The essentials:
 ```
 Path Mode: Strip for kit pieces that use shared Unity materials (Copy writes a <Piece>.fbm
            texture copy per FBX); Copy + embed off only for a one-off asset that brings its own textures.
-           Strip still writes each texture's bare file name into the FBX (no folder, no file):
-           harmless when Unity remaps materials by name to existing ones (references/unity-packaging.md)
+           Strip copies no file, but the FBX still names each texture: an absolute path in FileName
+           (the export folder + the file name, which does not exist) and the bare name in RelativeFilename,
+           and the header holds the source .blend path. Harmless when Unity remaps materials by name to
+           existing ones (references/unity-packaging.md); it does record the machine's folder layout
 Include:   Selected Objects; Object Types = Mesh (+ Armature only if rigged)
 Transform: Scale 1.0, Apply Scalings = "FBX All", -Z Forward, Y Up,
            Apply Unit = on, Use Space Transform = on, Bake Space Transform = on
