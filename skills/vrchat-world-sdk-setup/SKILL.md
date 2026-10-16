@@ -23,7 +23,9 @@ With Unity MCP, confirm the version from `mcpforunity://instances` before anythi
 ## 2. Scene descriptor
 
 Control Panel (`VRChat SDK > Show Control Panel`) > Builder > **Add a VRCSceneDescriptor** creates a `VRCWorld`
-object. Exactly one per scene.
+object. Exactly one per scene. Starting from the SDK's template scene (`VRCDefaultWorldScene`): it already has a `VRCWorld`, plus a
+100 x 100 m `Floor` plane at y 0, a `Main Camera`, a `Directional Light` and an `EventSystem`. Remove the floor if the
+world has its own (it z-fights a floor at the same height) and decide on the light in the lighting step.
 
 | Field | Set it to |
 |---|---|
@@ -31,7 +33,7 @@ object. Exactly one per scene.
 | Spawn Radius | About 1-2 m in a busy spawn so players do not stack; 0 for exact placement |
 | Spawn Order | First, Sequential, Random, or Demo (spawn is the centre of the player's room-scale space) |
 | Spawn Orientation | Default (align player with spawn point) unless room-scale alignment matters |
-| Reference Camera | A disabled camera whose clip planes the player camera copies: near 0.01-0.05 m, far just beyond the world's size. PC-only post-processing goes on it |
+| Reference Camera | A disabled camera whose clip planes the player camera copies: near 0.01-0.05 m, far just beyond the world's size. PC-only post-processing goes on it. The template scene's `Main Camera` can serve: disable the Camera component, remove its AudioListener, clear the MainCamera tag |
 | Respawn Height -Y | A little below the lowest walkable surface. Too high and players respawn while walking downhill |
 | Object Behaviour At Respawn | Respawn (pickups return home) or Destroy |
 | Forbid User Portals | On for worlds where dropped portals would break the experience |
