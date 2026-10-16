@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from spec_validate import load, piece_extent  # noqa: E402
 
 MARGIN = 40
+OVERHEAD_M = 2.0     # placements this far above the zone floor are drawn as dashed outlines on plans
 COL = {"grid": "#e3e3e3", "grid5": "#c4c4c4", "zone": "#263238", "room": "#fff3e0", "room_edge": "#e65100",
        "door": "#2e7d32", "piece": "#90caf9", "piece_edge": "#0d47a1", "asm": "#ce93d8", "asm_edge": "#4a148c",
        "free": "#ef6c00", "view": "#c62828", "text": "#212121"}
@@ -111,6 +112,7 @@ def plan(spec, zones, path, px, title, draw_grid=True):
                 svg.text(pts[0], pts[1] - 5, "%s %gx%g" % (o.get("type", ""), o.get("width", 0), o.get("height", 0)),
                          8, colour=COL["door"])
 
+        overhead = set()
         for pl in z.get("placements") or []:
             ref, pos, rot = pl["ref"], pl.get("pos", [0, 0, 0]), math.radians(pl.get("rot", 0))
             if ref in asms and isinstance(asms[ref].get("size"), list):
@@ -127,12 +129,20 @@ def plan(spec, zones, path, px, title, draw_grid=True):
             corners = [(0, 0), (ext[0], 0), (ext[0], ext[1]), (0, ext[1])]
             pts = " ".join("%.1f,%.1f" % (X(pos[0] + cx * c - cy * s), Y(pos[1] + cx * s + cy * c))
                            for cx, cy in corners)
+            if len(pos) > 2 and pos[2] - z.get("floor_z", 0) >= OVERHEAD_M:
+                # Ceilings and other overhead pieces: outline only, so they do not hide what stands below.
+                svg.add('<polygon points="%s" fill="none" stroke="%s" stroke-dasharray="4 3"/>' % (pts, edge))
+                overhead.add(ref)
+                continue
             svg.add('<polygon points="%s" fill="%s" fill-opacity="0.6" stroke="%s"/>' % (pts, fill, edge))
             svg.add('<circle cx="%.1f" cy="%.1f" r="2.5" fill="%s"/>' % (X(pos[0]), Y(pos[1]), edge))
             mx = pos[0] + (ext[0] / 2) * c - (ext[1] / 2) * s
             my = pos[1] + (ext[0] / 2) * s + (ext[1] / 2) * c
             thin = min(abs(ext[0]), abs(ext[1])) * px < 14
             svg.text(X(mx), Y(my) + (14 if thin else 3), ref, 8, "middle", colour=edge)
+        if overhead:
+            svg.text(X(b[0]) + 4, Y(b[1]) - 6, "dashed: overhead, %g m or more above the floor (%s)"
+                     % (OVERHEAD_M, ", ".join(sorted(overhead))), 8, colour=COL["piece_edge"])
 
     for v in spec.get("views") or []:
         p, t = v["pos"], v["target"]
@@ -153,6 +163,35 @@ def plan(spec, zones, path, px, title, draw_grid=True):
     svg.text(w - MARGIN - bar * px / 2, 30, "%g m" % bar, 9, "middle")
     svg.text(w - MARGIN - bar * px - 18, 22, "N \u2191", 11, "middle", weight="bold")
     svg.save(path)
+
+
+def _facade_openings(spec, e, width, tol=0.5):
+    """Room openings that lie in this facade, as (u0, u1, height, label): u is metres from the facade's left edge as
+    seen from the front. An opening belongs to the facade when its wall line is within `tol` m of the facade plane."""
+    ox, oy = (e.get("origin") or [0, 0])[:2]
+    facing = e.get("facing", "south")
+    # u (left to right as seen from the front) per facing; `along` is the world axis the facade runs along.
+    to_u = {"south": lambda x, y: x - ox, "north": lambda x, y: ox - x,
+            "west": lambda x, y: oy - y, "east": lambda x, y: y - oy}.get(facing)
+    if to_u is None:
+        return []
+    along_x = facing in ("south", "north")
+    out = []
+    for z in spec.get("zones") or []:
+        if z.get("id") != e.get("zone"):
+            continue
+        for r in z.get("rooms") or []:
+            for o in r.get("openings") or []:
+                ax, ay = o["at"]
+                wdt = o.get("width", 1)
+                if abs((ay - oy) if along_x else (ax - ox)) > tol:
+                    continue
+                u0, u1 = sorted((to_u(ax, ay), to_u(ax + wdt, ay) if along_x else to_u(ax, ay + wdt)))
+                if u1 <= 0 or u0 >= width:
+                    continue
+                out.append((max(u0, 0), min(u1, width), o.get("height", 2.1),
+                            "%s %gx%g" % (o.get("type", ""), wdt, o.get("height", 0))))
+    return out
 
 
 def elevation(spec, e, path, px):
@@ -188,8 +227,13 @@ def elevation(spec, e, path, px):
                 svg.text(cx + 3, cy, label, 8, "middle", colour=COL["piece_edge"], rotate=-90)
             else:
                 svg.text(cx, cy, label, 9, "middle", colour=COL["piece_edge"])
+    for u0, u1, oh, label in _facade_openings(spec, e, width):
+        svg.add('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#ffffff" fill-opacity="0.85" stroke="%s" '
+                'stroke-width="2" stroke-dasharray="5 3"/>'
+                % (MARGIN + u0 * px, ground - oh * px, (u1 - u0) * px, oh * px, COL["door"]))
+        svg.text(MARGIN + (u0 + u1) / 2 * px, ground - oh * px - 4, label, 9, "middle", colour=COL["door"])
     svg.add('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="2"/>'
-            % (MARGIN - 10, ground, w - MARGIN + 10, ground, COL["zone"]))
+            % (MARGIN - 10, ground, MARGIN + width * px + 10, ground, COL["zone"]))
     for i in range(int(round(width / module)) + 1):
         svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"/>'
                 % (MARGIN + i * module * px, ground, MARGIN + i * module * px, ground + 5, COL["zone"]))
