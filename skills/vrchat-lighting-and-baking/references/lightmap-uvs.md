@@ -24,7 +24,19 @@ job (and `rizomuv-uv-pipeline` automates it); without either, the minimum that b
    fraction of a texel on a small object and bleeds.
 4. Export with both UV layers; in Unity leave *Generate Lightmap UVs* **off** for these meshes.
 
-Footprint in pixels = sqrt(surface area in m2) x lightmap texels per metre x Scale In Lightmap.
+Footprint in pixels = sqrt(surface area in m2) x lightmap texels per metre x Scale In Lightmap, divided by about
+sqrt(0.7-0.85) when the charts do not fill their square (measured 2026-10-16 in Unity 2022.3: a 2 x 3 x 0.2 m wall at
+60 texels/m got 243 px, a 2 x 2 x 0.1 m slab 200 px).
+
+How many renderers fit one lightmap: Unity packs each renderer's UV2 rectangle whole, without rotating it, and spills
+into a second map once the rectangles fill about 0.75-0.8 of it (same test: 16 renderers filled one 512 map at 113 px
+each, and spilled at 121 px). So the padding rule is also a capacity rule: if every piece needs 128 px to keep its
+UV2 gaps at 2 texels, a 512 map holds about 12 of them. Check the sum of footprints squared against 0.65 x the map
+area before choosing the lightmap size, not after the bake.
+
+Unity 2022.3 notes: the lightmapper is `LightingSettings.lightmapper`; lightmap padding clamps to at least 2; and
+`Lightmapping.buildProgress` stays at 0 while the GPU lightmapper compiles its kernels on the first bake (about 45 s),
+so watch the Editor log rather than the progress value.
 
 ## Letting Unity generate them
 
