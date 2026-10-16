@@ -56,7 +56,8 @@ budgets:                            # no looser than vrchat-world-optimization b
   texture_vram_mb: 150
   download_mb: {pc: 200, quest: 100}
   piece_tris: {EXT: 800, TRIM: 200, PROP: 1500}
-  lightmap: {max_px: 1024, count: 4}
+  lightmap: {max_px: 1024, count: 4, texels_per_m: 20}   # texels_per_m = Unity's Lightmap Resolution; the validator
+                                                         # checks the placed pieces fit and sizes each piece's footprint
 
 pieces:
   - {name: EXT_Wall_2x3_A, desc: "Plain brick bay", collision: box}

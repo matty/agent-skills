@@ -52,7 +52,8 @@ QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.
 ## 2 - Spec and diagrams (planner)
 
 - In: brief, mockups, intake answers.
-- Do: fill `spec.yaml` (`references/world-spec.md`): grid, families, budgets, pieces as far as known, zones with
+- Do: fill `spec.yaml` (`references/world-spec.md`): grid, families, budgets (with `lightmap.texels_per_m`, and
+  `lightmap: false` on props too small to lightmap; the validator then checks the placed pieces fit), pieces as far as known, zones with
   rooms and openings, coarse placements, elevations for every kit-built facade, views matching each mockup. Run
   `spec_validate.py` until clean, then `spec_to_svg.py`. Draft the full task graph for stages 3-13 into the ledger
   and write `tasks.mmd`.
@@ -118,6 +119,11 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 
 - `T-UV-<FAMILY>`: UV0 by the family's texturing approach (tiling to `texel_density`, trim onto the trim sheet
   layout, unique packed to `map_px`), UV2 for every lightmapped mesh. `kit_status = uv`.
+- UV2 padding comes from each piece's own lightmap footprint, not from the lightmap's size: Unity gives every renderer
+  its own square of the map, about `texels_per_m x sqrt(surface area / 0.7)` px (the validator's
+  `lightmap_footprints`). Pad for 2 texels at that size (`uv_audit --map <footprint px> --pad 2`, or more), and put
+  each piece's footprint in the UV brief. Padding for the whole map size (8 px "at 512") silently assumes every piece
+  gets the whole map.
 - Brief: load `uv-unwrapping`; also `rizomuv-uv-pipeline` when RizomUV is installed.
 - QA: U1-U6.
 
@@ -171,8 +177,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 
 ## 11 - Lighting and bake (lighting artist)
 
-- `T-LIGHT`: lighting per `lighting` in the spec, probes or VRC Light Volumes, reflection probes, bake. Brief: load
-  `vrchat-lighting-and-baking`.
+- `T-LIGHT`: lighting per `lighting` in the spec, probes or VRC Light Volumes, reflection probes, bake, with Lightmap
+  Resolution = `budgets.lightmap.texels_per_m`. Brief: load `vrchat-lighting-and-baking`.
 - QA: L1-L6.
 
 ## 12 - Interactivity (Udon developer)

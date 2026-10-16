@@ -13,8 +13,8 @@ Validate with `scripts/spec_validate.py`, draw with `scripts/spec_to_svg.py`. Co
 | `tools` | `blender`, `unity_project`, `substance_designer`, `substance_painter`, `rizomuv`, `unity_packages`, `build_modules` | 0 |
 | `grid` | `module` (m), `sub_module`, `storey_height` | 2 |
 | `families` | Per family code: `file`, `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m), `map_px`, `thickness` | 2-3 |
-| `budgets` | `world_tris`, `view_tris`, `materials`, `setpass`, `batches`, `texture_vram_mb`, `download_mb` per platform, `piece_tris` per family, `lightmap` (`max_px`, `count`) | 2 |
-| `pieces` | `name`, `desc`, `collision` (`box`/`mesh`/`none`), optional `tris`, `lods` | 2-3 |
+| `budgets` | `world_tris`, `view_tris`, `materials`, `setpass`, `batches`, `texture_vram_mb`, `download_mb` per platform, `piece_tris` per family, `lightmap` (`max_px`, `count`, `texels_per_m`, optional `min_footprint_px`) | 2 |
+| `pieces` | `name`, `desc`, `collision` (`box`/`mesh`/`none`), optional `tris`, `lods`, `lightmap` (`false` = probe-lit, for small props) | 2-3 |
 | `assemblies` | `name`, `file`, `size` [x, y, z] m, `uses` [pieces] | 3 |
 | `zones` | `id`, `name`, `kind`, `bounds` [x0, y0, x1, y1], `floor_z`, `placements`, `rooms` | 2 |
 | `elevations` | `id`, `zone`, `facing`, `origin`, `courses` | 2 |

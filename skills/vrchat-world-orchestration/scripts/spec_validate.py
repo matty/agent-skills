@@ -18,6 +18,7 @@ ledger, unique task ids, known dependencies, no cycles, and no two tasks that co
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -281,7 +282,60 @@ def check_spec(spec, f, root=None):
             f.warn("view %s: %s does not exist yet" % (v.get("id"), v["matches"]))
     if world.get("mockups") and not spec.get("views"):
         f.warn("mockups are on but no views are defined to compare them against")
+    check_lightmap(spec, pieces, module, families, f)
     return pieces, asms
+
+
+LIGHTMAP_COVERAGE = 0.7     # share of a renderer's UV2 square that charts fill, after padding (typical)
+LIGHTMAP_PACK = 0.65        # share of a lightmap that per-renderer rectangles fill before Unity spills to a second
+                            # map: measured 2026-10-16 at about 0.78 (16 renderers in one 512 map, Unity 2022.3,
+                            # no rotation), kept lower for margin
+
+
+def lightmap_footprints(spec, pieces, module, families):
+    """{piece: footprint side in lightmap pixels} for each lightmapped grid piece, from budgets.lightmap.texels_per_m:
+    Unity gives each renderer a square of about texels_per_m x sqrt(surface area / coverage) pixels."""
+    tpm = ((spec.get("budgets") or {}).get("lightmap") or {}).get("texels_per_m")
+    out = {}
+    if not tpm:
+        return out
+    for name, pc in pieces.items():
+        if pc.get("lightmap") is False:
+            continue                                   # probe-lit
+        ext = piece_extent(name, module, families) or pc.get("size")
+        if not ext:
+            continue
+        x, y, z = ext
+        area = 2 * (x * y + y * z + x * z)
+        out[name] = tpm * math.sqrt(area / LIGHTMAP_COVERAGE)
+    return out
+
+
+def check_lightmap(spec, pieces, module, families, f):
+    """Do the placed lightmapped pieces fit budgets.lightmap at its texels_per_m, each with room for its UV2 padding?"""
+    lm = (spec.get("budgets") or {}).get("lightmap") or {}
+    tpm = lm.get("texels_per_m")
+    if not tpm:
+        f.warn("budgets.lightmap.texels_per_m missing: without it nobody can check that the placed pieces fit the "
+               "lightmap budget, or size each piece's UV2 padding (stage 6) for the footprint it will get")
+        return
+    side = lightmap_footprints(spec, pieces, module, families)
+    counts = {}
+    for z in spec.get("zones") or []:
+        for pl in z.get("placements") or []:
+            if pl.get("ref") in side:
+                counts[pl["ref"]] = counts.get(pl["ref"], 0) + 1
+    need = sum(side[n] ** 2 * c for n, c in counts.items())
+    have = (lm.get("max_px") or 0) ** 2 * (lm.get("count") or 1) * LIGHTMAP_PACK
+    if have and need > have:
+        f.error("lightmaps: the placed lightmapped pieces need about %d px^2 at %g texels/m, the budget gives %d "
+                "(%s x %s px): lower texels_per_m, raise the budget, or make small pieces probe-lit (lightmap: false)"
+                % (need, tpm, have, lm.get("count", 1), lm.get("max_px")))
+    small = lm.get("min_footprint_px", 64)
+    for n in sorted(counts):
+        if side[n] < small:
+            f.warn("piece %s gets about %d lightmap px at %g texels/m (< %d): make it probe-lit (lightmap: false) or "
+                   "plan its UV2 padding for it" % (n, side[n], tpm, small))
 
 
 def _reachable(graph, start):
