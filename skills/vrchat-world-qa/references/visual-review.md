@@ -42,6 +42,11 @@ rasteriser.
 | Materials (stage 7+) | Colour, value or roughness clearly differs from the mockup under neutral light |
 | Scale | A 1.6 m figure looks wrong against doors, railings, furniture |
 
+Without mockups (`world.mockups: false`, views with `matches: null`), judge stages 7+ against the spec's
+`world.style` and the piece `desc`s, from the spec views rendered with textures: headless, a Workbench render with
+`scene.display.shading.color_type = 'TEXTURE'` (it samples each mesh's active render UV layer: UV0) or a low-sample
+EEVEE / Cycles render. Say in the verdict that there was no mockup.
+
 Mockups are generated images: they are not exact. Judge intent (rhythm, proportion, mood, palette), not pixel
 agreement, and say in the verdict which mockup and view you compared.
 
