@@ -77,6 +77,9 @@ Exceeding the budget **clogs** the pipe: continuous behaviours silently drop eve
 
 - **Continuous** — frequently changing values where intermediate states do not matter (a moving platform's position). VRChat interpolates and compresses.
 - **Manual** — discrete state that must arrive exactly (score, game phase, which chair is taken). Call `RequestSerialization()` when the state actually changes, never per frame.
+  The mode lives on the scene's `UdonBehaviour` as well as in the class attribute: adding an UdonSharp behaviour from a
+  script (`UdonSharpUndo.AddComponent`) was seen to create the UdonBehaviour as Continuous under a Manual class
+  (SDK 3.10.5, 2026-10-16). After adding one by script, read `UdonBehaviour.SyncMethod` and set it to match.
 - **None** — the default for anything purely local. Most behaviours should be here.
 
 **Practices:**
