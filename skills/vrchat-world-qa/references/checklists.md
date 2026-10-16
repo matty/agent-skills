@@ -137,6 +137,7 @@ named in the check and say in the evidence that the deeper audit was unavailable
 | L3 | No visible seams, splotches or light leaks at kit joints | Look at joints and corners |
 | L4 | Avatars lit correctly: probe or Light Volume coverage in every walkable area (test with a capsule) | Look |
 | L5 | Realtime lights within the platform limit (Quest: none on static geometry) | Scene query |
+| L6 | Every lightmapped renderer gets enough of its lightmap for its UV2 padding to stay at least 2 texels (padding px at the map size x its share of the map); small props below that are probe-lit instead (Contribute GI with Receive GI: Light Probes) | Unity MCP: each renderer's `lightmapScaleOffset` and Scale In Lightmap against its UV2 padding |
 
 ## Stage 12 - Interactivity
 
