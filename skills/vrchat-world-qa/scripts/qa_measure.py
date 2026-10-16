@@ -8,6 +8,10 @@ Command line (open the file read-only; one JSON report, one summary line per pie
             --render top --center 15 13 --extent 30 27 --px-per-m 20 --png plan_render.png
     blender -b --factory-startup MASTER.blend --python qa_measure.py -- --render front --center 8 20 3 --extent 12 6 --px-per-m 40
             --png elev.png --overlay world/diagrams/elevation_square_north_row.svg --overlay-out elev_overlay.svg
+    blender -b --factory-startup MASTER.blend --python qa_measure.py -- --render back --center 3 1.2 1.5 --extent 4 3
+            --clip 3 --png inside_south.png       # an interior wall from inside: --clip hides the wall behind you
+    blender -b --factory-startup MASTER.blend --python qa_measure.py -- --view 2 1.8 1.7 3 4.4 0.9 24 --png view.png
+            # perspective from a spec view: pos, target, lens (the views the gates and G4 compare against)
 
 From a live Blender (Blender MCP execute_blender_code), without saving:
     ns = {}; exec(open(r"<skill>/scripts/qa_measure.py", encoding="utf-8").read(), ns)
@@ -173,37 +177,68 @@ VIEWS = {
 }
 
 
-def render_ortho(path, view, center, extent, px_per_m=20.0, distance=200.0):
+def render_ortho(path, view, center, extent, px_per_m=20.0, distance=200.0, clip=None):
     """Orthographic Workbench render of everything visible. view: top/front/back/right/left ("front" looks along +Y,
-    so it shows a facade facing south). extent: (width, height) in metres of the framed area. Restores the scene."""
-    scene = bpy.context.scene
+    so it shows a facade facing south). extent: (width, height) in metres of the framed area. clip: if given, only
+    geometry from `clip` metres in front of the centre plane onward is drawn (an interior wall seen from inside the
+    room, without the opposite wall in the way). Restores the scene."""
     fwd, up = (Vector(v) for v in VIEWS[view])
     c = Vector((list(center) + [0, 0, 0])[:3])
     cam_data = bpy.data.cameras.new("qa_cam")
     cam_data.type = "ORTHO"
     cam_data.ortho_scale = max(extent)
     cam_data.clip_end = distance * 2
+    if clip is not None:
+        cam_data.clip_start = max(0.001, distance - clip)
+    right = fwd.cross(up)
+    matrix = Matrix.Translation(c - fwd * distance) @ Matrix((right, up, -fwd)).transposed().to_4x4()
+    return _render(path, cam_data, matrix, (max(16, int(round(extent[0] * px_per_m))),
+                                            max(16, int(round(extent[1] * px_per_m)))))
+
+
+def render_view(path, pos, target, lens=24.0, size=(1280, 720)):
+    """Perspective Workbench render from a spec view: camera at `pos` looking at `target` (world metres), focal length
+    `lens` mm. Use the spec's `views` so the comparison is never framed after seeing the result. Restores the scene."""
+    cam_data = bpy.data.cameras.new("qa_cam")
+    cam_data.lens = lens
+    cam_data.clip_start = 0.05
+    direction = Vector(target) - Vector(pos)
+    rot = direction.to_track_quat("-Z", "Y").to_matrix().to_4x4()
+    return _render(path, cam_data, Matrix.Translation(Vector(pos)) @ rot, size)
+
+
+def _render(path, cam_data, matrix, size):
+    scene = bpy.context.scene
     cam = bpy.data.objects.new("qa_cam", cam_data)
     scene.collection.objects.link(cam)
-    right = fwd.cross(up)
-    cam.matrix_world = Matrix.Translation(c - fwd * distance) @ Matrix((right, up, -fwd)).transposed().to_4x4()
+    cam.matrix_world = matrix
     saved = (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
              scene.render.resolution_percentage, scene.render.filepath, scene.render.film_transparent)
+    # Workbench's default flat grey hides every edge between same-coloured faces; colour each object, shade cavities
+    # and outline objects so pieces, openings and seams read in the render.
+    shading = scene.display.shading
+    saved_shading = {k: getattr(shading, k) for k in ("color_type", "show_cavity", "show_object_outline")}
     try:
         scene.camera = cam
+        for k, v in (("color_type", "RANDOM"), ("show_cavity", True), ("show_object_outline", True)):
+            try:
+                setattr(shading, k, v)
+            except (TypeError, AttributeError) as exc:
+                print("[qa] shading %s not set: %s" % (k, exc))
         try:
             scene.render.engine = "BLENDER_WORKBENCH"
         except TypeError as exc:
             print("[qa] cannot select Workbench:", exc)
-        scene.render.resolution_x = max(16, int(round(extent[0] * px_per_m)))
-        scene.render.resolution_y = max(16, int(round(extent[1] * px_per_m)))
+        scene.render.resolution_x, scene.render.resolution_y = size
         scene.render.resolution_percentage = 100
-        scene.render.film_transparent = True
+        scene.render.film_transparent = cam_data.type == "ORTHO"
         scene.render.filepath = path
         bpy.ops.render.render(write_still=True)
     finally:
         (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
          scene.render.resolution_percentage, scene.render.filepath, scene.render.film_transparent) = saved
+        for k, v in saved_shading.items():
+            setattr(shading, k, v)
         bpy.data.objects.remove(cam)
         bpy.data.cameras.remove(cam_data)
     return path
@@ -214,7 +249,11 @@ def overlay_svg(render_png, reference, out_svg, opacity=0.5, size=None):
     SVG with a data-frame attribute (spec_to_svg output) is cropped to its drawn area; a PNG is stretched to the
     render. The render must cover the same world area: a plan's zone bounds, an elevation's width x height."""
     w, h = size or tuple(bpy.data.images.load(render_png, check_existing=True).size[:])
-    rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(out_svg))).replace("\\", "/")
+    def rel(p):
+        try:
+            return os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(out_svg))).replace("\\", "/")
+        except ValueError:  # Windows: different drives have no relative path
+            return "file:///" + os.path.abspath(p).replace("\\", "/").lstrip("/")
     ref = '<image href="%s" width="%d" height="%d" opacity="%g" preserveAspectRatio="none"/>' % (
         rel(reference), w, h, opacity)
     if reference.lower().endswith(".svg"):
@@ -247,6 +286,10 @@ def _main():
     ap.add_argument("--center", type=float, nargs="+")
     ap.add_argument("--extent", type=float, nargs=2)
     ap.add_argument("--px-per-m", type=float, default=20.0)
+    ap.add_argument("--clip", type=float, help="ortho only: draw only geometry from this many metres in front of "
+                    "the centre plane onward (an interior wall from inside the room)")
+    ap.add_argument("--view", type=float, nargs=7, metavar=("PX", "PY", "PZ", "TX", "TY", "TZ", "LENS"),
+                    help="perspective render from a spec view: pos, target and lens")
     ap.add_argument("--png")
     ap.add_argument("--overlay")
     ap.add_argument("--overlay-out")
@@ -263,8 +306,11 @@ def _main():
         rep["problems"] = probs
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(rep, f, indent=2)
-    if a.render:
-        render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m)
+    if a.view:
+        render_view(a.png, a.view[0:3], a.view[3:6], a.view[6])
+        print("[qa] rendered " + a.png)
+    elif a.render:
+        render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m, clip=a.clip)
         print("[qa] rendered " + a.png)
         if a.overlay:
             size = (max(16, int(round(a.extent[0] * a.px_per_m))), max(16, int(round(a.extent[1] * a.px_per_m))))

@@ -13,6 +13,8 @@ Use those, never a viewpoint chosen after seeing the result, so the comparison c
 |---|---|---|
 | Plan SVG (`plan_<zone>.svg`) | `qa_measure.py --render top --center <zone centre> --extent <zone w> <zone h>` | `--px-per-m` as the SVG's `data-px-per-m`; add `--overlay plan_<zone>.svg` |
 | Elevation SVG (`elevation_<id>.svg`) | `qa_measure.py --render front` (facade facing south; `back` north, `right` east, `left` west) | Centre on the facade's middle, extent = its width x height, `--px-per-m` as the SVG's; `--overlay` the SVG |
+| Interiors (plan or inside wall) | Same as above plus `--clip <m>` | Draws only geometry from `<m>` metres in front of the centre plane onward: a plan centred at floor level with `--clip 2` drops the ceiling; an inside elevation with `--clip` less than the room depth drops the wall behind you |
+| A spec view (gates, G4, B5) | `qa_measure.py --view <px py pz tx ty tz lens> --png <view>.png`, or Blender MCP `look` from the same position | Headless perspective render, objects in random colours with outlines; with mockups, compare stages 7+ in material preview through `look` |
 | Mockup image | Blender MCP `look` from the view's camera position | Material preview for stages 7+, solid for greybox |
 | Blender vs Unity (stage 10) | Blender `look` from the view; Unity MCP `manage_camera` screenshot from the same transform (Blender `(x, y, z)` is Unity `(-x, z, -y)`) | Same field of view; compare placement, not lighting |
 
