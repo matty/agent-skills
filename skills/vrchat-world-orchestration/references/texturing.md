@@ -18,19 +18,23 @@ family named `M_<FAMILY>_<Name>`, at the family's `map_px`, matching the mockup 
    `sd_list_node_properties`).
 2. One package per family in `blender/substance/<FAMILY>/`, one graph per material, outputs base colour, normal
    (OpenGL), and a metallic-smoothness map, per the channel plan below, or whatever the spec's channel plan says.
-3. Trim sheet: fix the strip layout first (heights in pixels, which strip is which trim), write it to
-   `blender/substance/TRIM/layout.md`, and give it to the UV task.
+3. Trim sheet: `T-TEX-TRIM-LAYOUT` fixes the strip layout first (heights in pixels, which strip is which trim),
+   writes it to `blender/substance/<FAMILY>/layout.md` for the trim family, and the UV task works from it.
 4. Export maps as PNG at `map_px` into `blender/textures/<FAMILY>/` (`T_<FAMILY>_<Name>_<Map>.png`). If the MCP cannot
-   export bitmaps, export the `.sbsar` and either ask the user to export outputs from Designer, or bake the `.sbsar`
-   through the Blender fallback.
+   export bitmaps (the community Designer MCP's tools export a package `.sbsar` but no bitmaps, as of 2026-10-17),
+   export the `.sbsar` and render its outputs with `sbsrender`, which ships in Designer's install folder:
+   `sbsrender render --input <pkg>.sbsar --output-path blender/textures/<FAMILY> --output-format png --set-value
+   "$outputsize@10,10"` (10 = log2 of 1024; name the files with `--output-name`, or rename them after). Blender
+   cannot read a `.sbsar` without Adobe's add-on, so there is no Blender route. Only without `sbsrender`, ask the
+   user to export the outputs from Designer. Checked 2026-10-17 against `sbsrender render --help`, Designer 16.0.7.
 5. Build `M_<FAMILY>_<Name>` in the KIT file from those images, so the FBX carries the material name and Unity can
    remap it to the shared material.
 
 ## Painter (unique props, user-assisted)
 
 Prepare: low-poly with final UV0, a high-poly or bake cage if needed, exported to
-`blender/substance/PROP/<Piece>/`. Record a ledger task with role `user` and wait for the textures. Do not block the
-other families on it.
+`blender/substance/PROP/<Piece>/`. Add the painting to `flags.user_actions`, give it a ledger task with role `user`
+that the prop's later tasks depend on, and wait for the textures. Do not block the other families on it.
 
 ## Blender fallback
 
@@ -39,12 +43,13 @@ metallic, roughness, through an Emission shader and bake EMIT, which gives the e
 the DIFFUSE colour-only and ROUGHNESS bake types), then packed per the channel plan below. Tiling materials: bake
 one tile of the family's UV0 layout (on a `map_px` map at `texel_density` px/m one tile covers `map_px /
 texel_density` metres: 2 x 2 m at 512 px/m on 1024), with patterns that repeat a whole number of times per tile,
-then check that 3 x 3 repeats show no seam. Save the node setup in `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
+then check that 3 x 3 repeats show no seam. Save the node setup in
+`blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
 
 ## Channel plan for Unity's Built-in Render Pipeline
 
-VRChat worlds use the Built-in pipeline's Standard shader (PC) and VRChat's mobile shaders (Quest). Pack for what
-they read, not for a glTF-style ORM map, which Standard wires up wrong:
+VRChat worlds use the Built-in pipeline's Standard shader (PC) and VRChat's mobile shaders (Quest and iOS). Pack for
+what they read, not for a glTF-style ORM map, which Standard wires up wrong:
 
 | Map | Channels | Colour space | Unity slot |
 |---|---|---|---|
@@ -54,8 +59,9 @@ they read, not for a glTF-style ORM map, which Standard wires up wrong:
 | Occlusion | Usually skipped in a baked world: the lightmap carries it. If used, its own map; Standard reads G | linear | Occlusion |
 
 Source for the Standard slots: https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterMetallic.html
-(checked 2026-10-16). Quest: check which of these maps the chosen VRChat mobile shader reads before baking them
-(`vrchat-world-sdk-setup`, `vrchat-texture-and-vram`).
+(checked 2026-10-16). Mobile: `VRChat/Mobile/Lightmapped` reads only the base colour (and the lightmap);
+`VRChat/Mobile/Standard Lite` reads more, the metallic-smoothness map among them. Check the chosen shader's inputs in
+`vrchat-world-sdk-setup` before baking maps it ignores (`vrchat-texture-and-vram` for their import settings).
 
 ## Unique detail on a tiling family
 
@@ -70,6 +76,7 @@ wall" and "carries its own detail": the two conflict.
 - Texel density comes from the spec; never "make it look sharp" by raising map size past `map_px`.
 - One normal-map convention throughout (OpenGL, as Blender uses; Unity reads it).
 - Colour space is decided by the importer, not the file: Blender's PNG writer tags every PNG sRGB and Unity
-  ignores the tag. Unity: sRGB on for base colour, off for every linear map (normal, metallic-smoothness, AO), with
-  Alpha Source: Input Texture Alpha for the smoothness. Blender: load linear maps as Non-Color.
-- Keep source files (`.sbs`, `.spp`, `.blend` node setups) next to the exports; X6 checks for them.
+  ignores the tag (measured 2026-10-16, Blender 5.2.2 / Unity 2022.3.22f1). Unity: sRGB on for base colour, off for
+  every linear map (normal, metallic-smoothness, AO), with Alpha Source: Input Texture Alpha for the smoothness.
+  Blender: load linear maps as Non-Color.
+- Keep source files (`.sbs`, `.spp`, `.blend` node setups) next to the exports; stage 7 QA checks for them.

@@ -62,7 +62,7 @@ for the full installer reference and for how to add or change a skill.
 | Skill | Covers |
 |---|---|
 | `vrchat-world-optimization` | Entry point: profiling order, budgets (PC, and mobile = Android and iOS), pre-upload audit, routing to the rest |
-| `vrchat-world-orchestration` | Master-agent pipeline for a whole world build: intake, mockups, YAML world spec with generated SVG plans/elevations, KIT/ASM/MASTER .blend structure, greybox and user gates, subagent briefs, QA after every task, resumable ledger, plus spec validator and SVG generator scripts |
+| `vrchat-world-orchestration` | Master-agent pipeline for a whole world build: intake, mockups, YAML world spec with generated SVG plans/elevations, KIT/ASM/MASTER .blend structure, greybox and user gates, subagent briefs, QA after every task, resumable ledger, plus spec validator (with lightmap footprints) and SVG generator scripts |
 | `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, plus an instanced UdonSharp field and an instancing-ready shader |
 | `vrchat-lighting-and-baking` | Plan, bake, verify: lightmap footprints and capacity, bake settings, light probes plus VRC Light Volumes, reflection probes, LTCGI, Quest/iOS lighting, switchable lights, mirrors, occlusion culling, plus a lightmap budget script |
 | `vrchat-texture-and-vram` | Two procedures (download too big, VRAM too high), a per-map format table (BC7 / DXT / BC5 / ASTC), crunch limits, mip streaming, VRAM maths, the mobile 100 MB limit, mesh/audio import settings |

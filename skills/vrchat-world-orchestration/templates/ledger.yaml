@@ -1,65 +1,56 @@
-# Pipeline ledger - the master agent's memory. Copy to <project>/world/ledger.yaml.
-# Only the master agent writes this file. Rules: ../references/ledger.md
+# Pipeline ledger - the master agent's memory. Copy to <world>/world/ledger.yaml at stage 0.
+# Only the master agent writes this file. Fields and rules: ../references/ledger.md
 version: 1
-world: Example Market
+world: My World                       # world.name from the spec
 stage: 0                              # the stage the master is working on
-updated: 2026-10-13T18:00:00Z
+updated: 2026-10-17T09:00:00Z         # UTC from the clock, at every write
 
-intake:                               # answers from stage 0, mirrored into spec.yaml
-  platforms: [pc, quest]
-  allow_generated_assets: false
-  performance_tier: quest-safe
-  substance: {designer: true, painter: true}
-  blender_cli: C:/Users/me/.blender/blender-5.2.2/blender.exe
-  unity_project: C:/Users/me/Unity/ExampleMarket
+intake:                               # what the spec does not hold; the answers live in the spec's world and tools
+  world_root: C:/Users/me/Worlds/MyWorld   # the folder holding world/, blender/ and export/
+  brief: >-
+    The user's request in their own words: the place, mood, size, references and must-have interactions.
+  answers: []                         # the user's intake replies, verbatim: {question, answer}
+  skills_declined: []                 # skills the user chose not to install (QA marks their checks not-run, owner user)
 
 gates:                                # user approvals; tasks list them in deps as gate:<name>
   spec:
     status: pending                   # pending | approved | changes-requested
-    after: [T-SPEC-01]                # tasks that must be done before the gate is asked
+    after: [T-SPEC-01]                # tasks that must be done before asking; small scale: [T-PLAN-01]
     by: null
     at: null
     notes: ""
+    history: []                       # earlier decisions, kept when the gate re-opens: {status, by, at, notes}
+    reopened_by: null                 # the task whose output re-opened the gate (it may run under it)
   greybox:
     status: pending
     after: [T-GREY-MASTER]
     by: null
     at: null
     notes: ""
+    history: []
+    reopened_by: null
 
-tasks:
-  - id: T-SPEC-01
+tasks:                                # stage 0 adds the first tasks; the planner drafts the rest into
+                                      # world/briefs/draft-tasks.yaml and the master merges them before the spec gate
+  - id: T-SPEC-01                     # small scale: T-PLAN-01 (stages 1-3 in one task, still stage: 2),
+                                      # with gates.spec.after above set to it
     stage: 2
-    title: Write spec.yaml, plans and elevations from the mockups
+    title: Write spec.yaml and its diagrams, and draft the stage 3-13 tasks
     role: planner
-    deps: []
-    writes: [world/spec.yaml, world/diagrams/]
+    deps: []                          # with mockups: [T-MOCK-01], a stage 1 task added the same way
+    writes: [world/spec.yaml, world/diagrams/, world/briefs/draft-tasks.yaml]
     status: todo                      # todo | running | qa | done | failed | escalated | blocked | skipped
     attempts: 0
     brief: world/briefs/T-SPEC-01.md
     report: world/reports/T-SPEC-01.yaml
-    qa: world/reports/qa/T-SPEC-01/verdict.yaml
-  - id: T-GREY-EXT
-    stage: 4
-    title: Greybox every EXT piece
-    role: kit-modeller
-    deps: [gate:spec]
-    writes: [blender/kits/KIT_Arch_Exterior.blend]
-    status: todo
-    attempts: 0
-  - id: T-GREY-MASTER
-    stage: 4
-    title: Lay out MASTER from the plans with greybox pieces
-    role: integrator
-    deps: [T-GREY-EXT]
-    writes: [blender/MASTER.blend, "@blender-live"]   # @ = a live editor: one task at a time
-    status: todo
-    attempts: 0
+    qa: world/reports/qa/T-SPEC-01/verdict.yaml   # small scale: world/reports/qa/stage-<n>/verdict.yaml
 
 flags:
   generated_assets: []                # props made with generate_3d or imported from a library: {piece, source, task}
-  overrides: []                       # library overrides in ASM/MASTER: {file, object, reason}
+  overrides: []                       # library overrides in ASM or MASTER files: {file, object, reason}
   open_conflicts: []                  # unresolved placement-sync conflicts: {scope, id, why}
+  user_actions: []                    # what only the user can do (installs, sign-in, uploads, reviews):
+                                      # {what, why, task, since}
 
-log:                                  # append-only, newest last
-  - {at: 2026-10-13T18:00:00Z, event: "ledger created"}
+log:                                  # append-only, newest last; every `at` from the UTC clock
+  - {at: 2026-10-17T09:00:00Z, event: "ledger created"}

@@ -1,111 +1,39 @@
 # World spec - the single source of truth every agent builds against.
-# Copy to <project>/world/spec.yaml. Schema and rules: ../references/world-spec.md
+# Copy to <world>/world/spec.yaml at stage 0 and replace every value in world and tools with the intake answers.
+# Only version, world, tools and the budget ceilings belong here at stage 0; the planning task (T-SPEC-01 and
+# T-KIT-PLAN, or T-PLAN-01 in small scale) tightens the budgets and adds the other sections.
+# Schema: ../references/world-spec.md; a complete spec: ../references/example-spec.yaml.
 # Coordinates are Blender world metres: X east, Y north, Z up. Rotations are degrees about Z.
 version: 1
 
 world:
-  name: Example Market
-  platforms: [pc, quest]            # pc, quest - asked at intake, cross-platform by default
+  name: My World                    # the world's working name
+  platforms: [pc, quest]            # pc, quest (the Android build), ios - asked at intake
   scale: full                       # full | small (one zone, about 30 pieces or fewer)
-  performance_tier: quest-safe      # quest-safe | pc-high
   allow_generated_assets: false     # props only, and only if the user allows it at intake
-  mockups: false                    # false without a user-confirmed concept-art tool (stage 1 skipped)
-  style: "Weathered Victorian market town at dusk, warm gas light, wet cobbles"
+  mockups: false                    # true only with a concept-art tool the user confirmed (else stage 1 is skipped)
+  style: "Era, materials, palette, time of day, weather in one line"
 
 tools:                              # detected at intake, confirmed by the user
-  blender: C:/Users/me/.blender/blender-5.2.2/blender.exe
-  unity_project: C:/Users/me/Unity/ExampleMarket
-  substance_designer: true
-  substance_painter: true
-  rizomuv: true
-  unity_packages: [com.vrchat.worlds]   # detected at intake; the plan uses only these (light volumes, bakery, ...)
-  build_modules: [windows, android]    # Unity build support installed for the platforms
+  blender: C:/Users/me/.blender/blender-5.2.2/blender.exe   # the Blender CLI path
+  blender_mcp: false                # Blender MCP connected: MASTER and ASM tasks use the live Blender
+  unity_project: C:/Users/me/Unity/MyWorld
+  substance_designer: false
+  substance_painter: false
+  rizomuv: false
+  unity_packages: [com.vrchat.worlds]   # installed packages the plan may use (UdonSharp and ClientSim ship inside it)
+  build_modules: [windows]             # Unity build support installed: windows, android, ios
 
-grid:
-  module: 1.0                       # metres; every grid piece is a whole number of modules
-  sub_module: 0.25                  # trim and detail placement
-  storey_height: 3.0
-
-families:
-  EXT:
-    file: blender/kits/KIT_Arch_Exterior.blend
-    materials: [M_EXT_Brick, M_EXT_Stone]
-    texturing: tiling               # tiling | trim | atlas | unique
-    texel_density: 512              # px per metre on UV0
-    map_px: 1024
-    thickness: 0.3                  # wall thickness in metres (walls run along X, thickness in +Y)
-  TRIM:
-    file: blender/kits/KIT_Trim.blend
-    materials: [M_TRIM_Sheet01]
-    texturing: trim
-    texel_density: 512
-    map_px: 1024
-  PROP:
-    file: blender/kits/KIT_Props_Market.blend
-    materials: [M_PROP_Atlas01]
-    texturing: atlas
-    texel_density: 384
-    map_px: 1024
-
-budgets:                            # no looser than vrchat-world-optimization budgets for the platforms
+budgets:                            # ceilings: the Quest targets (vrchat-world-optimization), binding with mobile;
+                                    # a PC-only world may raise them to the PC targets. The planner tightens them to
+                                    # the world and adds piece_tris and lightmap
   world_tris: 250000
   view_tris: 100000
   materials: 25
   setpass: 50
   batches: 150
   texture_vram_mb: 150
-  download_mb: {pc: 200, quest: 100}
-  piece_tris: {EXT: 800, TRIM: 200, PROP: 1500}
-  lightmap: {max_px: 1024, count: 4, texels_per_m: 20}   # texels_per_m = Unity's Lightmap Resolution; the validator
-                                                         # checks the placed pieces fit and sizes each piece's footprint
+  download_mb: {pc: 200, quest: 100}   # add ios: 100 with ios; mobile hard limit 100 MB, MB = 2^20 bytes
 
-pieces:
-  - {name: EXT_Wall_2x3_A, desc: "Plain brick bay", collision: box}
-  - {name: EXT_Window_2x3_A, desc: "Sash window bay", collision: box}
-  - {name: EXT_Door_2x3_A, desc: "Shop door bay with fanlight", collision: box}
-  - {name: TRIM_Cornice_2x1_A, desc: "Cornice strip", collision: none, tris: 120}
-  - {name: PROP_Crate_Free_A, desc: "Wooden crate", collision: box}
-
-assemblies:
-  - name: ASM_ShopFront_A
-    file: blender/asm/ASM_ShopFront.blend
-    size: [6, 0.3, 6]               # metres x, y, z, for plans
-    uses: [EXT_Wall_2x3_A, EXT_Window_2x3_A, EXT_Door_2x3_A, TRIM_Cornice_2x1_A]
-
-zones:
-  - id: square
-    name: Market Square
-    kind: exterior                  # exterior | interior
-    bounds: [0, 0, 30, 27]          # x0, y0, x1, y1 (the square plus the shops on its north side)
-    floor_z: 0
-    placements:                     # coarse layout for the plan and the greybox
-      - {ref: ASM_ShopFront_A, pos: [2, 20, 0], rot: 0}
-      - {ref: ASM_ShopFront_A, pos: [8, 20, 0], rot: 0}
-      - {ref: PROP_Crate_Free_A, pos: [15, 10, 0], rot: 30}
-    rooms:
-      - id: bakery
-        name: Bakery
-        bounds: [2, 20.3, 8, 26]
-        height: 3
-        openings:
-          - {type: door, at: [4.5, 20.3], width: 1.2, height: 2.2}
-
-elevations:
-  - id: square_north_row
-    zone: square
-    facing: south                   # the way the facade faces; the viewer looks the other way
-    origin: [2, 20, 0]              # bottom-left of the facade as seen from the front
-    courses:                        # bottom course first; pieces left to right as seen from the front
-      - [EXT_Wall_2x3_A, EXT_Door_2x3_A, EXT_Wall_2x3_A, EXT_Window_2x3_A, EXT_Door_2x3_A, EXT_Window_2x3_A]
-      - [EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A]
-
-views:
-  - {id: hero_square, pos: [15, 2, 1.7], target: [15, 20, 4], lens: 24, matches: world/mockups/hero_square.png}
-
-interactivity:
-  - {id: shop_doors, desc: "Shop doors open on interact, state synced", sync: manual}
-
-lighting:
-  baker: progressive                # progressive | bakery
-  mode: baked
-  light_volumes: true
+# Added by the planning task, in this order (world-spec.md has each section's fields):
+# grid, families, pieces, assemblies, zones, elevations, views, interactivity, lighting

@@ -1,0 +1,117 @@
+# A complete world spec, as the planning tasks leave it (`full` scale): a reference for the planner, never a file to
+# copy. Stage 0 copies ../templates/spec.yaml instead. Schema and rules: world-spec.md. It validates clean:
+#   python ../scripts/spec_validate.py example-spec.yaml --footprints
+# Coordinates are Blender world metres: X east, Y north, Z up. Rotations are degrees about Z.
+version: 1
+
+world:
+  name: Example Market
+  platforms: [pc, quest]            # pc, quest (the Android build), ios
+  scale: full                       # full | small (one zone, about 30 pieces or fewer)
+  allow_generated_assets: false     # props only, and only if the user allows it at intake
+  mockups: false                    # no confirmed concept-art tool: stage 1 skipped, views match nothing
+  style: "Weathered Victorian market town at dusk, warm gas light, wet cobbles"
+
+tools:                              # detected at intake, confirmed by the user
+  blender: C:/Users/me/.blender/blender-5.2.2/blender.exe
+  blender_mcp: true                 # connected: MASTER and ASM tasks use the live Blender (@blender-live)
+  unity_project: C:/Users/me/Unity/ExampleMarket
+  substance_designer: true
+  substance_painter: true
+  rizomuv: true
+  unity_packages: [com.vrchat.worlds]   # installed packages the plan may use (UdonSharp and ClientSim ship inside it)
+  build_modules: [windows, android]    # Unity build support installed for the platforms
+
+grid:
+  module: 1.0                       # metres; every grid piece is a whole number of modules
+  sub_module: 0.1                   # trim placement: divides the module and every wall thickness (0.3)
+  storey_height: 3.0
+
+families:
+  EXT:
+    file: blender/kits/KIT_Arch_Exterior.blend
+    materials: [M_EXT_Brick, M_EXT_Stone]
+    texturing: tiling               # tiling | trim | atlas | unique
+    texel_density: 512              # px per metre on UV0
+    map_px: 1024
+    thickness: 0.3                  # wall thickness in metres (walls run along X, thickness in +Y)
+  TRIM:
+    file: blender/kits/KIT_Trim.blend
+    materials: [M_TRIM_Sheet01]
+    texturing: trim
+    texel_density: 512
+    map_px: 1024
+  PROP:
+    file: blender/kits/KIT_Props_Market.blend
+    materials: [M_PROP_Atlas01]
+    texturing: atlas
+    texel_density: 384
+    map_px: 1024
+
+budgets:                            # no looser than vrchat-world-optimization budgets for every platform
+  world_tris: 250000                # one number for every platform, or per platform: {pc: 400000, quest: 250000}
+  view_tris: 100000
+  materials: 25
+  setpass: 50
+  batches: 150
+  texture_vram_mb: 150
+  download_mb: {pc: 200, quest: 100}   # mobile (quest, ios) hard limit 100 MB, MB = 2^20 bytes
+  piece_tris: {EXT: 800, TRIM: 200, PROP: 1500}
+  lightmap: {max_px: 1024, count: 1, texels_per_m: 20}   # texels_per_m = Unity's Lightmap Resolution
+
+pieces:
+  - {name: EXT_Wall_2x3_A, desc: "Plain brick bay", collision: box}
+  - {name: EXT_Window_2x3_A, desc: "Sash window bay", collision: box}
+  - {name: EXT_Door_2x3_A, desc: "Shop door bay with fanlight; socket: doorway 1.2 x 2.2 m centred", collision: box}
+  - {name: TRIM_Cornice_2x1_A, desc: "Cornice strip along the roof line", collision: none, tris: 120,
+     lightmap_scale: 1.5}          # a grid piece stays lightmapped: 47 px at 20 texels/m, so scale it over 64
+  - {name: PROP_Crate_Free_A, desc: "Wooden crate", collision: box, size: [0.6, 0.6, 0.6],
+     lightmap: false}               # small prop: probe-lit
+
+assemblies:                         # one assembly per ASM file, named after it
+  - name: ASM_ShopFront_A
+    file: blender/asm/ASM_ShopFront_A.blend
+    size: [6, 0.3, 7]               # metres x, y, z, for plans
+    uses: {EXT_Wall_2x3_A: 1, EXT_Door_2x3_A: 1, EXT_Window_2x3_A: 4, TRIM_Cornice_2x1_A: 3}
+
+zones:
+  - id: square
+    name: Market Square
+    kind: exterior                  # exterior | interior
+    bounds: [0, 0, 30, 27]          # x0, y0, x1, y1 (the square plus the shops on its north side)
+    floor_z: 0
+    placements:                     # coarse layout for the plan and the greybox
+      - {ref: ASM_ShopFront_A, pos: [2, 20, 0], rot: 0}
+      - {ref: ASM_ShopFront_A, pos: [8, 20, 0], rot: 0}
+      - {ref: PROP_Crate_Free_A, pos: [15, 10, 0], rot: 30}
+    rooms:                          # a light switch in the bakery would make it a zone of its own, with
+                                    # lighting_states and its shop front placed in it (world-spec.md)
+      - id: bakery
+        name: Bakery
+        bounds: [2, 20.3, 8, 26]
+        height: 3
+        openings:
+          - {type: door, at: [4.4, 20.3], width: 1.2, height: 2.2}   # the door bay's opening, x 4.4 to 5.6
+          - {type: window, at: [6.4, 20.3], width: 1.2, height: 1.5, sill: 0.9}   # the window bay, 0.9 to 2.4 m up
+
+elevations:
+  - id: square_north_row
+    zone: square
+    facing: south                   # the way the facade faces; the viewer looks the other way
+    origin: [2, 20, 0]              # bottom-left of the facade as seen from the front
+    courses:                        # bottom course first; pieces left to right as seen from the front
+      - [EXT_Wall_2x3_A, EXT_Door_2x3_A, EXT_Window_2x3_A, EXT_Wall_2x3_A, EXT_Door_2x3_A, EXT_Window_2x3_A]
+      - [EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A, EXT_Window_2x3_A]
+      - [TRIM_Cornice_2x1_A, TRIM_Cornice_2x1_A, TRIM_Cornice_2x1_A, TRIM_Cornice_2x1_A, TRIM_Cornice_2x1_A,
+         TRIM_Cornice_2x1_A]
+
+views:
+  - {id: hero_square, pos: [15, 2, 1.7], target: [15, 20, 4], lens: 24, matches: null}   # a mockup path with mockups
+
+interactivity:
+  - {id: shop_doors, desc: "Shop doors open on interact, state synced", sync: manual}
+
+lighting:
+  baker: progressive                # progressive | bakery
+  mode: baked                       # baked (every light Baked: required with quest or ios) | mixed (PC-only worlds)
+  light_volumes: false              # true only when the VRC Light Volumes package is installed

@@ -2,47 +2,104 @@
 
 For each stage: what goes in, what comes out, how to split it into tasks, and what QA checks. QA checklist letters
 refer to `vrchat-world-qa` (stage 1 = C, 2 = S, 3 = P, 4 = B, 5 = M, 6 = U, 7 = X, 8 = A, 9 = E, 10 = N, 11 = L,
-12 = I, 13 = O); every task also gets the general checks G1-G5.
+12 = I, 13 = O); every task also gets the general checks G1-G5. Without `vrchat-world-qa` installed, the QA agent uses
+the minimum acceptance checks at the end of this file instead.
 
-Task ids: `T-<STAGE TAG>-<FAMILY or AREA>[-n]`, for example `T-MOD-EXT`, `T-UV-PROP-2`, `T-UNITY-MASTER`. In
-`small` scale with one `KIT_World.blend`, kit tasks take `WORLD` in place of the family: `T-GREY-WORLD`,
-`T-MOD-WORLD`, `T-UV-WORLD`, `T-TEX-WORLD`, `T-EXP-WORLD`.
+## Task ids
+
+| Stage | Tasks |
+|---|---|
+| 1 | `T-MOCK-01` (one per zone, `T-MOCK-<ZONE>`, past three zones) |
+| 2 | `T-SPEC-01` |
+| 3 | `T-KIT-PLAN` |
+| 1-3, `small` scale | `T-PLAN-01` in place of the three above |
+| 4 | `T-GREY-<FAMILY>`, `T-GREY-ASM-<NAME>`, `T-GREY-MASTER` |
+| 5 | `T-MOD-<FAMILY>`, `T-MOD-MASTER` |
+| 6 | `T-UV-<FAMILY>` |
+| 7 | `T-TEX-TRIM-LAYOUT` (a trim family only), `T-TEX-<FAMILY>` |
+| 8 | `T-ASM-<NAME>`, `T-DRESS-<ZONE>` |
+| 9 | `T-EXP-<FAMILY>` |
+| 10 | `T-UNITY-IMPORT`, `T-UNITY-SYNC-ASM-<NAME>` per assembly then `T-UNITY-SYNC-MASTER`, `T-UNITY-SETUP`, `T-UNITY-PLATFORM` |
+| 11 | `T-LIGHT` |
+| 12 | `T-UDON-<ID>`, one per `interactivity` id |
+| 13 | `T-OPT`, then `T-BUILD-<PLATFORM>` per platform (`T-BUILD-PC`, `T-BUILD-QUEST`, `T-BUILD-IOS`) |
+| Any, after stage 4 | `T-RENAME-<PIECE>`, one per piece renamed after the greybox (`world-spec.md`, "Names"); `<PIECE>` is the old name in upper case with hyphens (`T-RENAME-EXT-DOOR-2X3-A`) |
+
+Ids are upper case with hyphens: `<NAME>` is the assembly name without `ASM_` (`T-GREY-ASM-SHOPFRONT-A`), `<ZONE>` and
+`<ID>` the spec id (`T-DRESS-SQUARE`, `T-UDON-SHOP-DOORS`). Add `-2`, `-3` when one family needs several tasks
+(`T-UV-PROP-2`), and when a change after stage 4 needs work redone: a finished task is never re-run, so the change
+gets a new task with the next number, limited to what changed (`T-UV-EXT-2` for one resized piece, `T-LIGHT-2` for a
+re-bake; `world-spec.md`, "Changing the spec"). In `small` scale with one `KIT_World.blend`, kit tasks take `WORLD` in
+place of the family: `T-GREY-WORLD`, `T-MOD-WORLD`, `T-UV-WORLD`, `T-TEX-WORLD`, `T-EXP-WORLD`. Only the ids change:
+`<FAMILY>` in every path below is still each family's code, so `T-TEX-WORLD` writes `blender/textures/INT/`,
+`blender/textures/STR/` and so on. `T-PLAN-01` records `stage: 2`, the stage its gate follows.
+
+## Gate dependencies
+
+Draft every task so that it waits for the gates through its `deps`:
+
+| Task | Lists in `deps` |
+|---|---|
+| `T-KIT-PLAN` (full scale) | `gate:spec` |
+| The first stage-4 tasks: `T-GREY-<FAMILY>` in small scale (full scale: they depend on `T-KIT-PLAN`) | `gate:spec` |
+| Every `T-MOD-<FAMILY>` | `gate:greybox` |
+| Everything else | Its real predecessors, which lead back to those |
+
+The validator warns when a task of stage 4 or later cannot reach `gate:spec` through its `deps`, or a task of stage 5
+or later cannot reach `gate:greybox`. A plain dependency on `T-PLAN-01` or `T-GREY-MASTER` keeps the order but lets
+the task start before the user approves. While a gate is not approved, every task downstream of it that has not
+started is held (it stays `todo`; `ledger.md`), except the gate's `reopened_by` task; one already running finishes,
+and one whose session died goes back to `todo` (same attempt). The validator warns while such a task runs.
+
+`T-RENAME-<PIECE>` takes the ledger's current `stage` when it is added (5 or later), and lists in `deps` `gate:spec`
+(the rename re-opened it, so it waits for the user) and every task that
+writes one of its files and has started; every task that writes one of its files and has not started lists the
+rename in its own `deps` (in the 2026-10-17 resume test: the next KIT task, `T-MOD-MASTER`, the ASM task and that
+ASM's sync). Run the validator with `--ledger` after adding it: each one-writer error names a pair still to order.
 
 ## Where each stage writes
 
-Put these exact paths in each task's `writes` (relative to `<world>/`, or to the Unity project for `Assets/`).
-The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets/`, `ProjectSettings/` and the `@` editors.
+Put these exact paths in each task's `writes` (relative to `<world>/`, or to the Unity project for `Assets/` and
+`ProjectSettings/`). The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets/`,
+`ProjectSettings/` and the `@` editors.
 
 | Stage | Writes |
 |---|---|
 | 1 | `world/mockups/` |
-| 2-3 (or `T-PLAN-01`) | `world/spec.yaml`, `world/diagrams/`, `world/briefs/draft-tasks.yaml` |
-| 4-6 | `blender/kits/KIT_<FamilyName>.blend` (one task per file); ASM tasks `blender/asm/ASM_<Name>.blend`; MASTER `blender/MASTER.blend` |
-| 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/` (also with the Blender fallback, which keeps its node-setup `.blend` there), and the family's KIT file (materials) |
-| 8 | `blender/asm/ASM_<Name>.blend`, `blender/MASTER.blend` |
+| 2-3 (or `T-PLAN-01`) | `world/spec.yaml` (every section but `version`, `world` and `tools`), `world/diagrams/`, `world/briefs/draft-tasks.yaml`; `world/mockups/` too for `T-PLAN-01` when `world.mockups` is true |
+| 4-6 | `blender/kits/KIT_<FamilyName>.blend` (one task per file); `T-GREY-ASM-<NAME>` `blender/asm/ASM_<Name>_<Variant>.blend`; MASTER `blender/MASTER.blend` |
+| 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/` (also with the Blender fallback, which keeps its node-setup `.blend` there), and the family's KIT file (materials); `T-TEX-TRIM-LAYOUT` only `blender/substance/<FAMILY>/layout.md` |
+| 8 | `T-ASM-<NAME>` `blender/asm/ASM_<Name>_<Variant>.blend`; `T-DRESS-<ZONE>` `blender/MASTER.blend` |
 | 9 | `export/fbx/<FAMILY>/`, and the KIT file (`kit_status` only) |
-| 10 import, sync | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Assemblies/`, `Assets/World/PlacementSync/` (sync scripts, once), `Assets/World/Scenes/`, `world/placements/`, `@unity`; sync applies also `blender/MASTER.blend` or the ASM file |
-| 10 setup, platform | `Assets/World/Scenes/`, `Assets/World/Kits/<FAMILY>/` (static flags, instancing, import overrides), `ProjectSettings/` (layers, quality, build targets), `@unity` |
-| 11 | `Assets/World/Scenes/` (lighting objects, lightmaps), `ProjectSettings/` (lighting), `@unity` |
+| 10 import | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Editor/` (`blender-to-unity`'s `KitImport.cs`, first import only), `@unity` |
+| 10 sync | `Assets/World/PlacementSync/` (the sync scripts, first sync only), `Assets/World/Assemblies/` (`ASM_<Name>_<Variant>.prefab`), `Assets/World/Scenes/`, `world/placements/`, `@unity`; its apply step also writes `blender/MASTER.blend` or the scope's ASM file, plus `@blender-live` when the live Blender holds that file (placement sync then runs its Blender steps through the MCP) |
+| 10 setup | `Assets/World/Scenes/`, `Assets/World/Kits/<FAMILY>/` (static flags, instancing), `ProjectSettings/` (layers, collision matrix), `@unity` |
+| 10 platform | `Assets/World/Kits/<FAMILY>/` (Android and iOS import overrides, mobile materials), `Assets/World/Scenes/` (per-platform objects), `ProjectSettings/`, `@unity` |
+| 11 | `Assets/World/Scenes/` (lighting objects, lighting settings asset, lightmaps, occlusion data; with lighting states the baked copies under a `LIGHT_STATES` root outside MASTER's scope root, and the Mesh Renderers of the switched originals under MASTER turned off, the originals never moved, deleted or deactivated), `ProjectSettings/`, `@unity` |
+| `T-RENAME-<PIECE>` | The piece's KIT file, its `export/fbx/<FAMILY>/` file and `Assets/World/Kits/<FAMILY>/<Piece>/` folder (once they exist), every ASM file and `blender/MASTER.blend` that place it, `world/placements/` (after stage 10: the merge that carries the rename), `@unity` (and `@blender-live` when live) |
 | 12 | `Assets/World/Scripts/`, `Assets/World/Scenes/`, `@unity` |
-| 13 | `world/reports/optimisation.md`, `Assets/World/Kits/<FAMILY>/` (import settings), `ProjectSettings/`, `@unity` |
+| 13 `T-OPT` | `world/reports/optimisation.md`, `Assets/World/Kits/<FAMILY>/` (import settings), `Assets/World/Scenes/`, `Assets/World/Editor/` (build-time scripts), `ProjectSettings/`, `@unity` |
+| 13 `T-BUILD-<PLATFORM>` | `world/reports/build-<platform>.md`, `world/reports/publish-fields.md` (the first build task only), `Assets/World/Scenes/` (Pipeline Manager), `@unity` |
 
-QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.yaml` and the briefs in
-`world/briefs/` (the planner's `draft-tasks.yaml` is the one exception).
+QA writes only `world/reports/qa/<task>/` (`small` scale: `world/reports/qa/stage-<n>/`). Only the master writes
+`world/ledger.yaml` and the briefs in `world/briefs/` (the planner's `draft-tasks.yaml` is the one exception). Every
+agent keeps its own scripts and scratch renders in the scratch folder its brief names, outside the project.
 
 ## 0 - Intake (master)
 
 - In: the user's request.
-- Do: the intake questions in `SKILL.md`, then create the layout, copy the templates and fill in `world`, `tools`
-  and `intake`.
-- Out: `world/spec.yaml` (world and tools sections only), `world/ledger.yaml` with the stage 1-2 tasks.
+- Do: the intake questions in `SKILL.md`, then create the layout (`mechanics.md`), copy both templates, fill the
+  spec's `world` and `tools` and the ledger's `intake`, and add the first tasks: `T-SPEC-01` (plus `T-MOCK-01` when
+  `world.mockups` is true), or `T-PLAN-01` in `small` scale with `gates.spec.after: [T-PLAN-01]`.
+- Out: `world/spec.yaml` (version, world, tools and the template's budget ceilings), `world/ledger.yaml` with the
+  first tasks.
 - No QA. Moving on needs the user's answers.
 
 ## 1 - Mockups (concept artist; skipped if `world.mockups` is false)
 
 - In: the brief, the reference images, `world.style`.
-- Do: `references/mockups.md`. One hero view per zone, the key interiors, a material swatch sheet per family idea,
-  and a street-level view of every facade that will be built from a kit.
+- Do: `mockups.md`. One hero view per zone, the key interiors, a material swatch sheet per family idea, and a
+  street-level view of every facade that will be built from a kit.
 - Out: `world/mockups/<view>.png` with `<view>.prompt.txt`.
 - Tasks: one, or one per zone if there are more than three zones (each writes only its own files).
 - QA: C1-C4. Then show the mockups to the user. This is not a gate, but take their feedback into stage 2.
@@ -52,24 +109,39 @@ QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.
 ## 2 - Spec and diagrams (planner)
 
 - In: brief, mockups, intake answers.
-- Do: fill `spec.yaml` (`references/world-spec.md`): grid, families, budgets (with `lightmap.texels_per_m`, and
-  `lightmap: false` on props too small to lightmap; the validator then checks the placed pieces fit), pieces as far as known, zones with
-  rooms and openings, coarse placements, elevations for every kit-built facade, views matching each mockup. Run
-  `spec_validate.py` until clean, then `spec_to_svg.py`. Draft the full task graph for stages 3-13 into the ledger
-  and write `tasks.mmd`.
-- Out: `world/spec.yaml`, `world/diagrams/*`, ledger tasks.
+- Do: fill `spec.yaml` (`world-spec.md`; `example-spec.yaml` is a complete one): grid, families, budgets (with
+  `lightmap.texels_per_m`, and `lightmap: false` on props too small to lightmap), pieces as far as known (`size` on
+  lightmapped Free pieces), zones with rooms and openings, coarse placements, elevations for every kit-built facade,
+  views matching each mockup, interactivity, lighting. Run `spec_validate.py --footprints` until clean (it reports
+  the lightmap fill), then `spec_to_svg.py` (it removes drawings of zones and elevations no longer in the spec).
+- A light players switch: load `vrchat-lighting-and-baking`; the switch method comes from it. In a world with
+  `quest` or `ios` that is lighting states, a baked copy of the zone's static geometry per state: set the zone's
+  `lighting_states`, which the fill check multiplies in. A switch changes the light in one zone, so every piece it
+  changes is placed in that zone: a room it lights inside a bigger zone becomes its own zone, and a facade shared
+  with the street is placed in the switched zone (`world-spec.md`, "Lightmap check"). A realtime point light does not
+  show on lightmapped Quest surfaces; the 2026-10-16 dry run, planned without that skill, fell back to one.
+- Draft the stage 3-13 tasks into `world/briefs/draft-tasks.yaml`: a `tasks:` list in the ledger's task format
+  (`status: todo`, `attempts: 0`, ids and `writes` from the tables above), checked with `spec_validate.py --ledger
+  world/ledger.yaml --draft world/briefs/draft-tasks.yaml`.
+- Out: `world/spec.yaml`, `world/diagrams/*`, `world/briefs/draft-tasks.yaml`.
 - QA: S1-S7.
-- **Spec gate**: show the user the plans, elevations and mockups side by side, the platform and budgets, the zone
-  list, and anything you had to assume. Wait. "Changes requested" means editing the spec, regenerating and asking
-  again.
+- Master, then: merge the draft into the ledger, run the validator with `--ledger` and `--mermaid`.
+- **Spec gate**: show the user the plans, elevations and mockups side by side, the platforms and budgets, the zone
+  list, `tasks.mmd`, and anything you had to assume. Wait. "Changes requested" means editing the spec, regenerating
+  and asking again.
 
 ## 3 - Kit plan (planner)
 
 - In: approved spec.
 - Do: complete `pieces` (every piece an elevation, room or assembly needs, plus corners, ends and trims), fix
   `families` (KIT file, 1-3 materials, texturing approach, texel density, map size, wall thickness), and
-  `assemblies` (each with `uses` and `size`). Mark sockets (doorways, window openings) in piece `desc`.
-- Out: `world/spec.yaml`.
+  `assemblies` (each with `file`, `uses` counts and `size`). Mark sockets (doorways, window openings) in piece `desc`.
+  Validate, regenerate the diagrams, and when families or assemblies changed, update `draft-tasks.yaml` (one task per
+  KIT file and per assembly); the master checks it with `--draft` (a re-drafted task replaces its ledger copy) and
+  swaps the changed tasks into the ledger. This planned completion, adding pieces or tightening budgets, does not
+  re-open the spec gate; removing or renaming an approved piece, zone or elevation does (`world-spec.md`), so the
+  report lists every rename and removal in `issues`, checked against `world/spec.approved.yaml`.
+- Out: `world/spec.yaml`, `world/diagrams/`, `world/briefs/draft-tasks.yaml`.
 - QA: P1-P4, S1, S3.
 - Prefer one piece used many times over near-duplicates. Every variant must earn its draw call.
 
@@ -80,126 +152,214 @@ QA writes only `world/reports/qa/<task>/`. Only the master writes `world/ledger.
   out with its pieces, families and assemblies already complete.
 - Out: everything stages 1-3 produce: `world/mockups/` (if any), `world/spec.yaml`, `world/diagrams/`,
   `world/briefs/draft-tasks.yaml`.
-- QA: one pass, S1-S7 plus P1-P4, plus C1-C4 when there are mockups.
-- Then the **spec gate**, with `gates.spec.after: [T-PLAN-01]`.
+- QA: one pass, S1-S7 plus P1-P4, plus C1-C4 when there are mockups, writing `world/reports/qa/stage-2/` (the task's
+  `stage` is 2).
+- Then the master merges the draft and asks at the **spec gate** (`gates.spec.after: [T-PLAN-01]`).
 
 ## 4 - Greybox (kit modellers in parallel, then the integrator)
 
 - `T-GREY-<FAMILY>`, one per KIT file, in parallel: create each piece as a collection in its KIT file with simple
   box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut where the spec says,
-  `kit_status = grey`. Headless: `blender -b --factory-startup <KIT> --python <task>.py`, saving at the end with
-  `preferences.filepaths.save_version = 0` set, so no `.blend1` backup appears beside the file.
-- `T-GREY-ASM-<name>` (after the kits it uses): build each assembly from linked pieces.
-- `T-GREY-MASTER` (after all of the above; integrator; live Blender with `@blender-live` in `writes`, or headless
-  when the Blender MCP is not connected, see rule 3 in `SKILL.md`): link and place assemblies and pieces from the
-  spec's placements. Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF`
-  collection).
-- QA: B1-B7, for each KIT task and for MASTER.
+  `kit_status = grey`. Headless (`mechanics.md`): `blender -b --factory-startup --python-exit-code 1 <KIT> --python
+  <task>.py`, saving at the end with `preferences.filepaths.save_version = 0` set, so no `.blend1` backup appears
+  beside the file.
+- `T-GREY-ASM-<NAME>` (after the kits it uses): build the assembly as the one collection `ASM_<Name>_<Variant>` in
+  its own `blender/asm/ASM_<Name>_<Variant>.blend`, from linked pieces, with its `uses` counts.
+- `T-GREY-MASTER` (after all of the above; integrator; the live Blender with `@blender-live` in `writes` when
+  `tools.blender_mcp` is true, else headless): link and place assemblies and pieces from the spec's placements. Add a
+  1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF` collection).
+- QA: B1 for each KIT task; B2-B3 for each `T-GREY-ASM` (on its ASM file) and for `T-GREY-MASTER`; B4-B7 for MASTER.
 - **Greybox gate**: walkthrough renders from every view plus top and elevation overlays. Show them to the user.
   This is the last cheap moment to change layout or scale.
 
 Kit rules agents need even without other skills: piece = one collection named `<FAMILY>_<Type>_<Size>_<Variant>`,
 mesh objects at identity transform, `instance_offset` zero, walls run along X with thickness in +Y, Size counts
-modules in X, Y, Z skipping axes thinner than half a module; link with relative paths; MASTER and ASM never hold
+modules in X, Y, Z skipping any axis under one module (thickness); link with relative paths; MASTER and ASM never hold
 geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit_library.py` path in the brief:
-`new_piece`, `link_piece`, `reload_libraries`, and `audit_kit` to self-check before reporting.
+`new_piece`, `link_piece`, `reload_libraries`, `save_file` (a headless save without a `.blend1`), and `audit_kit`
+(`--audit --module <grid.module>` from the command line) to self-check before reporting.
 
 ## 5 - Kit modelling (kit modellers, parallel per KIT file)
 
 - `T-MOD-<FAMILY>`: replace each greybox mesh with final geometry **inside the same collection**, keeping name,
-  pivot and extents. LODs if the piece's `lods` > 0 (`_LOD1`, `_LOD2` at about 50% and 20%). Collision per piece
-  `collision` (`_COL` shell for `mesh`). `kit_status = modelled`.
+  pivot and extents. When the piece's `lods` > 0: the main mesh becomes `<Piece>_LOD0`, with `<Piece>_LOD1` (about
+  50%) and `<Piece>_LOD2` (about 20%) as siblings in the collection. Collision per piece `collision`: a `<Piece>_COL`
+  shell for `mesh`. `kit_status = modelled`.
 - Brief: load `blender-mesh-topology` for topology work.
 - Budget: `budgets.piece_tris.<FAMILY>`, or the piece's `tris`.
 - QA: M1-M8.
 - `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): reload libraries in
-  MASTER and spot-check the greybox views again.
+  MASTER and spot-check the greybox views again. QA: M9.
 
 ## 6 - UVs (UV artists, parallel per KIT file)
 
 - `T-UV-<FAMILY>`: UV0 by the family's texturing approach (tiling to `texel_density`, trim onto the trim sheet
-  layout, unique packed to `map_px`), UV2 for every lightmapped mesh. `kit_status = uv`.
-- UV2 padding comes from each piece's own lightmap footprint, not from the lightmap's size: Unity gives every renderer
-  its own square of the map, about `texels_per_m x sqrt(surface area / 0.85)` px (the validator's
-  `lightmap_footprints`). Pad for 2 texels at that size (`uv_audit --map <footprint px> --pad 2`, or more), and put
-  each piece's footprint in the UV brief. Padding for the whole map size (8 px "at 512") silently assumes every piece
-  gets the whole map.
+  layout, atlas or unique packed to `map_px`); a UV2 on every kit render mesh (LODs and probe-lit props too, not
+  `_COL`), whose gaps matter on the lightmapped ones. `kit_status = uv`.
+- UV2 gaps come from each mesh's own lightmap square, not from the lightmap's size: padding for the whole map (8 px
+  "at 512") silently assumes every piece gets the whole map. Pack them for the worst case, UV2 charts whose bounding
+  box fills the tile: at least 2 texels at `texels_per_m x sqrt(A) x Scale In Lightmap` px, and at least 1 texel to
+  the tile edge (`world-spec.md`, "Lightmap check"). A `<Piece>_LOD<n>` mesh gets its own atlas space at 0.5^n of
+  that texel scale, so its gaps are sized at `texels_per_m x sqrt(A) x Scale In Lightmap x 0.5^n` px.
+- Pack the UV2 charts to fill their bounding box, in any aspect ratio: Unity packs the box, so empty space inside it
+  costs lightmap texels and lowers the texel density on the mesh (`uv-unwrapping` notes a box fill under 0.5).
+- A is the modelled mesh's real surface area, measured per mesh at this stage, never the spec's bounding box: an
+  opening or an open shell makes it much smaller (the example door bay: 11.04 m2 against 15.00 m2 for its box, so
+  gaps sized from the box came out at 1.73 texels), and QA's U4 measures the real mesh. The spec's `--footprints`
+  table plans the lightmap fill only. Per mesh:
+  - `--map` = that square rounded down: with `uv-unwrapping`, `uv_audit.lightmap_footprint(ob, texels_per_m,
+    scale, coverage=1)`, which applies an LOD mesh's 0.5^n itself (from its `_LOD<n>` name); otherwise the formula
+    `texels_per_m x sqrt(A) x scale x 0.5^n` with `qa_measure --lightmap-texels <texels_per_m>`'s `area_m2` as A, or
+    without either skill the evaluated mesh's summed polygon areas
+    (`sum(p.area for p in ob.evaluated_get(depsgraph).to_mesh().polygons)`);
+  - the gap = `2 / --map` in UV units, the Smart UV margin half of it;
+  - put those numbers in the UV brief, and audit with `uv_audit ... --layer 1 --lightmap --map <--map> --pad 2`.
+- Without `uv-unwrapping`: Smart UV Project with `margin_method='FRACTION'` and `island_margin` = half the mesh's
+  gap. FRACTION leaves exactly twice the margin between islands and the margin itself at the tile edge (measured in
+  Blender 5.2.2, 2026-10-17); the default `SCALED` left between 0.34 and 1.33 times it, depending on the mesh. UV0 of
+  an atlas or unique map gets the same treatment: islands `map_px / 64` apart (16 px at 1024) and `map_px / 128` from
+  the tile edge, which is Pack Islands (or Smart UV Project) with Margin Method Fraction and a margin of 1/128.
+- Under 64 px a Free prop (a Free `PROP` or `FOL` piece) is probe-lit (`lightmap: false`; its UV2 needs no gaps),
+  unless its zone has lighting states; every other piece, `ZONE` shells included, stays lightmapped whatever its size
+  (the validator only notes it).
 - Brief: load `uv-unwrapping`; also `rizomuv-uv-pipeline` when RizomUV is installed.
-- QA: U1-U6.
+- QA: U1-U6 (U4 checks the gaps at the UV2's measured bounding-box share).
 
 ## 7 - Texturing (texture artist)
 
 - `T-TEX-<FAMILY>`: the family's materials (`M_<FAMILY>_<Name>`), trim sheet or tiling sets or atlas, unique prop
-  textures. `kit_status = textured`. Process: `references/texturing.md`.
-- Trim sheets come **before** UVs of the families that use them. When a family uses `trim`, schedule a
-  `T-TEX-TRIM-LAYOUT` task first that fixes the strip layout, and make that family's UV task depend on it.
+  textures. `kit_status = textured`. Process: `texturing.md`.
+- Trim sheets come **before** UVs of the families that use them. When a family uses `trim`, schedule
+  `T-TEX-TRIM-LAYOUT` first, which fixes the strip layout in `blender/substance/<FAMILY>/layout.md`, and make that
+  family's UV task depend on it.
 - An `atlas` family runs the other way round: its UV task packs every piece into the shared atlas, then
   `T-TEX-<FAMILY>` paints it, so the texture task depends on the UV task. Only an atlas laid out from existing
   textures (UVs placed onto a finished sheet) needs a layout task first, like a trim sheet.
-- QA: X1-X6.
+- QA: `T-TEX-TRIM-LAYOUT` X6; `T-TEX-<FAMILY>` X1-X5 and X7.
 
 ## 8 - Assemblies and dressing (integrator)
 
-- `T-ASM-<name>`: finish each assembly with final pieces (usually nothing to do but check, since pieces improved in
-  place), add sockets.
-- `T-DRESS-<zone>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
-  foliage), within budget.
-- QA: A1-A5.
+- `T-ASM-<NAME>`: finish each assembly in its own ASM file with final pieces (usually nothing to do but check, since
+  pieces improved in place), add sockets. QA: A1-A4, M9.
+- `T-DRESS-<ZONE>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
+  foliage), within budget. QA: A1-A4, M9.
 
 ## 9 - Export (exporter)
 
 - `T-EXP-<FAMILY>`: one FBX per piece collection into `export/fbx/<FAMILY>/<Piece>.fbx`. `kit_status = exported`.
-- Brief: load `blender-to-unity`. Without it, use these settings: Limit to Selected, Object Types Mesh, Scale
-  1.0, Apply Scalings FBX All, -Z Forward, Y Up, Apply Unit on, Use Space Transform on, Bake Space Transform on,
-  Smoothing Face, Apply Modifiers on, Triangulate on, Tangent Space only with normal maps, no animation, Path Mode
-  Strip (kit pieces use the family's shared Unity material), embed off. Apply rotation and scale first.
+- Brief: load `blender-to-unity` (its batch export exports each piece collection whole). Without it, use these
+  settings: Limit to Selected, with every LOD and `_COL` object of the piece unhidden and selected (the exporter skips
+  hidden objects without a word), Object Types Mesh, Scale 1.0, Apply Scalings FBX All, -Z Forward, Y Up, Apply Unit
+  on, Use Space Transform on, Bake Space Transform (Apply Transform in the UI) on, Smoothing Face, Apply Modifiers on,
+  Triangulate on, Tangent Space off (Unity calculates MikkTSpace tangents on import), Vertex Colors None, no
+  animation, Path Mode Strip (kit pieces use the family's shared Unity material), embed off. Apply rotation and scale
+  first. These are the FBX add-on's options, documented as "FBX (Legacy)" in the Blender 5.2 manual:
+  https://docs.blender.org/manual/en/latest/files/import_export/fbx_legacy.html (checked 2026-10-17).
 - QA: E1-E4.
 
 ## 10 - Unity assembly (Unity integrator, Unity MCP)
 
 - `T-UNITY-IMPORT`: copy FBX files into `Assets/World/Kits/<FAMILY>/<Piece>/`, set import settings (Read/Write off,
-  Generate Lightmap UVs off, no cameras or lights, Animation Type None), make family materials in
-  `<FAMILY>/_Shared/` and remap by name, make a prefab variant per FBX.
-- `T-UNITY-SYNC-<scope>`: placement sync for each ASM scope, then MASTER. Brief: load
-  `blender-unity-placement-sync`; first time, install its Unity scripts.
+  Generate Lightmap UVs off, no cameras or lights, Animation Type None, Tangents Calculate Mikktspace on
+  normal-mapped materials and None otherwise), make family materials in `<FAMILY>/_Shared/` and remap by name, turn
+  `_COL` into a MeshCollider, make a prefab variant per FBX. `blender-to-unity` ships this as `KitImport.cs` (an
+  import postprocessor plus prefab variants); its `Check()` output is N1-N3 evidence. QA: N1-N3.
+- `T-UNITY-SYNC-ASM-<NAME>` for each assembly (it makes `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab`), then
+  `T-UNITY-SYNC-MASTER`. Brief: load `blender-unity-placement-sync`; the first sync installs its Unity scripts.
+  QA: N4-N5.
 - `T-UNITY-SETUP`: VRChat project and scene setup (first: the SDK's Setup Layers for VRChat and Setup Collision
   Matrix, which a build otherwise fails on; then scene descriptor, spawns, respawn height, reference camera, layers,
-  colliders for walkable areas), static flags, GPU instancing on the materials of repeated pieces. Brief: load
-  `vrchat-world-sdk-setup`, `unity-batching-and-instancing`.
-- `T-UNITY-PLATFORM` (cross-platform worlds): per-platform texture import overrides (1024 or below on Android),
-  mobile shader choice per material, per-platform objects, Android and iOS modules present. Brief: load
-  `vrchat-texture-and-vram` and `vrchat-world-sdk-setup` (cross-platform). Done here, not at the end, so every later
-  stage is measured on the platform that is hardest to fit.
+  colliders for walkable areas), static flags, GPU instancing on the materials of repeated pieces, and a VRC Mirror
+  Reflection at each of the spec's `zones[].mirrors` slots, off by default, with Reflect Layers per
+  `vrchat-world-sdk-setup` (Player and MirrorReflection, never PlayerLocal). The SDK's VRCMirror prefab is a Unity
+  Quad facing -Z, so the slot converts to position (-x, z, -y), Y rotation 180 - rot and scale (width, height, 1),
+  not the -rot placement sync gives kit pieces (`world-spec.md`, "Mirrors"). Brief: load
+  `vrchat-world-sdk-setup`, `unity-batching-and-instancing`. QA: N6-N7 (N7 covers the mirror's Reflect Layers).
+- `T-UNITY-PLATFORM` (cross-platform worlds): texture import overrides on both the Android and the iOS tab (1024 or
+  below), mobile shader choice per material, per-platform objects, the Android and iOS build modules present (a
+  missing module is a user install: `flags.user_actions`). Brief: load `vrchat-texture-and-vram` and
+  `vrchat-world-sdk-setup` (cross-platform). Done here, not at the end, so every later stage is measured on the
+  platform that is hardest to fit. QA: N8.
 - Every Unity task lists `@unity` in `writes`: one Unity editor, one writer at a time.
-- Subagents may not be able to read MCP resources (`mcpforunity://editor/state`). Brief them to read editor state
-  through `execute_code` instead: `EditorApplication.isCompiling`, `isPlaying`, and the active scene's `isDirty`.
-- QA: N1-N7.
 - From here on, layout edits happen on either side and go through placement sync, never by re-exporting MASTER.
+  After stage 11, in a zone with lighting states, edit the originals under MASTER (select them in the Hierarchy:
+  their renderers are off, so a click in the Scene view picks a `LIGHT_STATES` copy, which sync never sees) or edit
+  in Blender; a `T-LIGHT-<n>` then rebuilds the copies from the originals and re-bakes.
 
 ## 11 - Lighting and bake (lighting artist)
 
-- `T-LIGHT`: lighting per `lighting` in the spec, probes or VRC Light Volumes, reflection probes, bake, with Lightmap
-  Resolution = `budgets.lightmap.texels_per_m`. Brief: load `vrchat-lighting-and-baking`.
-- QA: L1-L6.
+- `T-LIGHT`: lighting per `lighting` in the spec, light probes (plus VRC Light Volumes when installed), reflection
+  probes, bake, with Lightmap Resolution = `budgets.lightmap.texels_per_m`. With `quest` or `ios` in the platforms,
+  every light is Baked: a cross-platform world shares one bake, and Quest/iOS show no realtime shadows (Standard
+  Lite takes the main directional light unshadowed; Lightmapped takes none). Then occlusion culling: bake it, and on
+  each mirror untick Turn Off Mirror Occlusion unless objects flicker in the reflection. A piece with
+  `lod_lightmap: false` gets Receive Global Illumination = Light Probes on its LOD1+ renderers. Brief: load
+  `vrchat-lighting-and-baking`, and give it the `--footprints` table.
+- A zone with `lighting_states` (the method is `vrchat-lighting-and-baking`'s):
+  - The state copies, one set of the zone's static geometry per state, are made here in Unity under a `LIGHT_STATES`
+    root outside MASTER's scope root, render-only (no colliders), so placement sync never sees them.
+  - The placed originals under MASTER keep their place, their colliders and their placement-sync role, with their
+    Mesh Renderers off. Never move, delete or deactivate them: moved or deleted, the next merge loses them;
+    deactivated, their colliders go too.
+  - During the bake, the copy whose state avatars should match sits at the origin inside the light probe group
+    (baked probes stay where they were baked); the others sit far away, and every copy moves back afterwards.
+  - A later placement sync that changes a switched piece needs a new `T-LIGHT-<n>`: rebuild the copies from the
+    originals and re-bake. After stage 12 it keeps the state parents, which the `T-UDON` scripts reference, and
+    rebuilds only their contents; its QA runs I1 as well as L1-L6.
+  - Hand-off: tell the user that a layout edit in a switched zone goes to the originals under MASTER (selected in
+    the Hierarchy) or to Blender, never to a copy, which the next `T-LIGHT-<n>` would overwrite.
+- QA: L1-L6 (L6 checks the UV2 gaps at the square Unity actually gave each renderer, its `lightmapScaleOffset`).
 
 ## 12 - Interactivity (Udon developer)
 
-- `T-UDON-<id>`, one per entry in `interactivity`: UdonSharp, event-driven, sync as specified. Brief: load
-  `vrchat-udon`.
+- `T-UDON-<ID>`, one per entry in `interactivity`: UdonSharp (it ships inside the Worlds SDK), event-driven, sync as
+  specified. Brief: load `vrchat-udon`; for a light switch also `vrchat-lighting-and-baking`: every state copy stays
+  enabled at load, and the script disables all but the starting one in `OnEnable`.
 - QA: I1-I4.
 
-## 13 - Optimisation audit (optimiser)
+## 13 - Optimisation audit and platform builds (optimiser)
 
-- `T-OPT`: measure everything in `budgets` on every platform build; fix in rank order of cost; re-measure. Brief:
-  load `vrchat-world-optimization`. Fixes that change geometry or UVs go back to the owning KIT task as new tasks,
-  never patched in Unity.
-- `T-BUILD-<platform>` (after `T-OPT`), one per platform in `world.platforms`, run one at a time (`@unity`): switch
-  the build target, clear SDK validation and console errors, Play-mode test with ClientSim, Build & Test with two
-  clients, and set the Pipeline Manager to the same blueprint ID as the PC build. Brief: load
-  `vrchat-world-sdk-setup`. Draft the publish fields (name, description, capacities, content warnings, tags,
-  thumbnail) for the user.
-- QA: O1-O5. Then tell the user the world is ready to upload on each platform, with the measured numbers and the
-  drafted publish fields. Uploading is the user's: it publishes under their account.
+- `T-OPT`: measure everything in `budgets` on the PC build, and estimate the mobile platforms from the Android and
+  iOS import overrides (`vrchat-world-optimization`'s method; nothing switches the build target yet); fix in rank
+  order of cost; re-measure. The real mobile builds are measured by `T-BUILD-<PLATFORM>`. Brief: load
+  `vrchat-world-optimization`. Fixes that change geometry or UVs go back to the owning KIT task as new tasks,
+  never patched in Unity. QA: O1-O4.
+- `T-BUILD-<PLATFORM>` (after `T-OPT`), one per platform in `world.platforms`, one at a time (`@unity`): switch the
+  build target, clear SDK validation and console errors, measure that platform's budgets on the real build (on
+  mobile, the 100 MB download limit too), Play-mode test with ClientSim, and on PC a Build & Test with two clients
+  when the SDK is signed in. Blueprint ID: one project serves every platform, and its Pipeline Manager
+  keeps the ID across build-target switches, so there is nothing to attach. A new world has no ID until the user's
+  first upload creates it; every later platform upload from this project then uses it (`vrchat-world-sdk-setup`,
+  cross-platform; only a separate copy of the project needs Detach and the ID pasted). Draft
+  the publish fields (name, description, capacities, content warnings, tags, thumbnail) into
+  `world/reports/publish-fields.md` and write `world/reports/build-<platform>.md`. The last build task switches the
+  build target back to Windows (`vrchat-world-sdk-setup`, cross-platform). Brief: load `vrchat-world-sdk-setup`.
+  QA: O5.
+- The user's part, recorded in `flags.user_actions`: uploads, on-device Build & Test (Android over ADB, iOS over VTP),
+  any multi-client test that needs their sign-in. Then tell the user the world is ready to upload on each platform,
+  with the measured numbers, the drafted publish fields and that list.
+
+## Minimum acceptance checks (when vrchat-world-qa is not installed)
+
+The QA ids above are the route whenever `vrchat-world-qa` is installed: it has the measurements, scripts and verdict
+format. Without it, a QA agent checks at least this, records what it measured, and says in its verdict that the
+deeper checklist was unavailable.
+
+| Stage | Minimum checks |
+|---|---|
+| Every task | Every output the brief lists exists; nothing outside its `writes` changed (file times against the dispatch time); names follow `world-spec.md`; the result matches the spec and its diagrams; the report's claims match what was measured |
+| 1 | One image per requested view (a hero per zone, key interiors, swatches), each with its prompt file, consistent in style |
+| 2-3 | `spec_validate.py` reports no errors, with `--draft` on the drafted tasks; the diagrams regenerate identically; budgets no looser than the platform targets; doors at least 1 x 2.1 m, ceilings at least 2.6 m; every family has a KIT file, 1-3 materials and a texturing approach; pieces are whole modules, with corners and ends or a reason |
+| 4 | `kit_library.py --audit` reports no problems on each KIT file; ASM and MASTER files hold only linked instances (and `REF` aids) by relative paths; a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
+| 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; MASTER reloads with every link found |
+| 6 | UV0 texel density within 10% of the family's (tiling and trim); no folded or badly stretched faces; a UV2 on every kit render mesh (not `_COL`), inside 0-1, no overlaps; on lightmapped ones, gaps of at least 2 texels at the mesh's real lightmap square (stage 6 above) and 1 texel to the tile edge |
+| 7 | 1-3 materials per family, named `M_<FAMILY>_<Name>`; maps no larger than `map_px`; metallic in R and smoothness in A, normal maps OpenGL; tiling maps seamless in a 3 x 3 repeat; source files kept |
+| 8 | No greybox left (every linked piece `textured` or later); grid pieces on the grid in 90-degree turns; no z-fighting at joints seen from walkable areas |
+| 9 | One FBX per piece in `export/fbx/<FAMILY>/`; a re-import has scale 1, rotation 0 and the piece's size; triangle counts equal the audit's; two UV channels on every render mesh |
+| 10 | One folder, FBX and prefab variant per piece; shared family materials, no extracted copies; Read/Write and Generate Lightmap UVs off, model roots at rotation 0; placement sync committed with no conflicts; VRChat layers and collision matrix set up, one scene descriptor, spawns on floors; Android and iOS overrides at 1024 or below |
+| 11 | The bake reports no UV overlaps; lightmap count and size within budget; no seams or light leaks at joints; avatars lit everywhere (probes); every lightmapped renderer keeps at least 2 texels of UV2 gap at the square Unity gave it |
+| 12 | Each interaction works in ClientSim; events rather than `Update()` loops; a late joiner sees the right state; no Udon console errors |
+| 13 | Every budget measured per platform and within it; mobile builds under 100 MB; the worst view per zone measured; every platform builds with no SDK validation or console errors |
 
 ## Parallelism at a glance
 
@@ -207,5 +367,5 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 |---|---|
 | Greybox/modelling/UV tasks for different KIT files | ASM tasks wait for the kits they use; MASTER waits for ASMs |
 | Texturing a family while another family is modelled | UVs of a trim family wait for its trim layout |
-| QA of one task while other tasks build | Anything that writes MASTER, or drives the live Blender (`@blender-live`): one at a time |
-| Udon scripts written outside Unity, in parallel with other work | Anything that drives the Unity editor (`@unity`): one at a time; lighting bake waits for final geometry and placements |
+| QA of one task while other tasks build, unless the QA drives a live editor: then it holds `@unity` or `@blender-live` like a task until it returns | Anything that writes MASTER, or drives the live Blender (`@blender-live`): one at a time |
+| Planning an Udon system (behaviour, sync, events) for its brief while other tasks build | Anything that drives the Unity editor (`@unity`) or writes into the open project's `Assets/` (a script dropped there recompiles the editor under another task): one at a time; lighting bake waits for final geometry and placements |

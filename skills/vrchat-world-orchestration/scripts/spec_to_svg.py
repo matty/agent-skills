@@ -6,15 +6,20 @@ Host: plain Python 3.9+, plus PyYAML for .yaml specs (see spec_validate.py; .jso
 
 Writes, in --out:
     plan_overview.svg          every zone, with views (camera markers)
-    plan_<zone>.svg            one zone: grid, rooms, openings, placement footprints, views
+    plan_<zone>.svg            one zone: grid, rooms, openings, placement footprints, mirrors, views
     elevation_<id>.svg         one facade: courses of pieces, bottom course first, left to right as seen from the front
+and deletes any other plan_*.svg or elevation_*.svg in --out (zones or elevations no longer in the spec), so the
+folder never holds a stale drawing. Other files there (tasks.mmd, lightmap_budget.txt) are left alone.
 
 Plans are top views in Blender coordinates: X to the right (east), Y up the page (north), 1 grid line per module.
-Each SVG carries data-px-per-m, data-origin (world X, Y of the drawing's top-left) and data-frame (the drawn
-area in SVG pixels: x y w h) so a QA render of the same area can be overlaid on it. Footprints come
-from the piece names' Size tokens (naming rules in ../references/world-spec.md), pivots at the
-bottom-left corner, rotated about the pivot; assemblies use their `size`; Free pieces are drawn as a labelled dot.
-Run spec_validate.py first: this script draws what it is given and skips what it cannot resolve.
+Each SVG carries data-px-per-m, data-frame (the drawn area in SVG pixels: x y w h) and data-origin, so a QA render of
+the same area can be overlaid on it. data-origin is, on a plan, the world X, Y at the top-left of the frame; on an
+elevation, the facade's `origin` (its bottom-left seen from the front, world X, Y), whose horizontal axis runs left
+to right as seen from the front. Footprints come from the piece names' Size tokens (naming rules in
+../references/world-spec.md), pivots at the bottom-left corner, rotated about the pivot; assemblies use their `size`;
+Free pieces are drawn as a labelled dot. An elevation shows the openings that run along its facade line, from rooms
+in any zone. Run spec_validate.py first: this script draws what it is given, skips what it cannot resolve, and
+reports a drawing it cannot make (a value of the wrong type) as an ERROR line with exit code 1, never a traceback.
 """
 
 import argparse
@@ -24,13 +29,15 @@ import sys
 from xml.sax.saxutils import escape
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from spec_validate import load, piece_extent  # noqa: E402
+from spec_validate import ID_RE, load, number, numbers, piece_extent, runs_along_x, valid_bounds  # noqa: E402
 
 MARGIN = 40
 OVERHEAD_M = 2.0     # placements this far above the zone floor are drawn as dashed outlines on plans
+MAX_GRID_LINES = 5000
+DRAW_ERRORS = (TypeError, ValueError, KeyError, IndexError, AttributeError, ZeroDivisionError, OverflowError)
 COL = {"grid": "#e3e3e3", "grid5": "#c4c4c4", "zone": "#263238", "room": "#fff3e0", "room_edge": "#e65100",
        "door": "#2e7d32", "piece": "#90caf9", "piece_edge": "#0d47a1", "asm": "#ce93d8", "asm_edge": "#4a148c",
-       "free": "#ef6c00", "view": "#c62828", "text": "#212121"}
+       "free": "#ef6c00", "view": "#c62828", "mirror": "#00838f", "text": "#212121"}
 
 
 class Svg:
@@ -56,11 +63,22 @@ class Svg:
             f.write(self.head + "\n" + "\n".join(self.parts) + "\n</svg>\n")
 
 
+def _by_name(items):
+    """{name: item} for the list entries that are mappings with a string name."""
+    if not isinstance(items, list):
+        return {}
+    return {it["name"]: it for it in items if isinstance(it, dict) and isinstance(it.get("name"), str)}
+
+
+def _list(v):
+    return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+
+
 def plan(spec, zones, path, px, title, draw_grid=True):
     module = spec["grid"]["module"]
     families = spec.get("families") or {}
-    pieces = {p["name"]: p for p in spec.get("pieces") or []}
-    asms = {a["name"]: a for a in spec.get("assemblies") or []}
+    pieces = _by_name(spec.get("pieces"))
+    asms = _by_name(spec.get("assemblies"))
     x0 = min(z["bounds"][0] for z in zones)
     y0 = min(z["bounds"][1] for z in zones)
     x1 = max(z["bounds"][2] for z in zones)
@@ -72,13 +90,13 @@ def plan(spec, zones, path, px, title, draw_grid=True):
     Y = lambda y: MARGIN + 30 + (y1 - y) * px
 
     if draw_grid:
-        n = 0
+        if max(x1 - x0, y1 - y0) / module > MAX_GRID_LINES:
+            raise ValueError("the zone spans more than %d modules of %g m" % (MAX_GRID_LINES, module))
         x = math.floor(x0 / module) * module
         while x <= x1 + 1e-9:
             c = COL["grid5"] if round(x / module) % 5 == 0 else COL["grid"]
             svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s"/>' % (X(x), Y(y0), X(x), Y(y1), c))
             x += module
-            n += 1
         y = math.floor(y0 / module) * module
         while y <= y1 + 1e-9:
             c = COL["grid5"] if round(y / module) % 5 == 0 else COL["grid"]
@@ -91,19 +109,22 @@ def plan(spec, zones, path, px, title, draw_grid=True):
                 % (X(b[0]), Y(b[3]), (b[2] - b[0]) * px, (b[3] - b[1]) * px, COL["zone"]))
         svg.text(X(b[0]) + 4, Y(b[3]) + 14, "%s (%s)" % (z.get("name", z["id"]), z.get("kind", "")), 12,
                  weight="bold")
-        for r in z.get("rooms") or []:
-            rb = r["bounds"]
+        for r in _list(z.get("rooms")):
+            rb = r.get("bounds")
+            if not numbers(rb, 4):
+                continue                               # spec_validate reports it
             svg.add('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" fill-opacity="0.7" stroke="%s"/>'
                     % (X(rb[0]), Y(rb[3]), (rb[2] - rb[0]) * px, (rb[3] - rb[1]) * px, COL["room"],
                        COL["room_edge"]))
-            svg.text((X(rb[0]) + X(rb[2])) / 2, (Y(rb[1]) + Y(rb[3])) / 2, r.get("name", r["id"]), 11, "middle")
+            svg.text((X(rb[0]) + X(rb[2])) / 2, (Y(rb[1]) + Y(rb[3])) / 2, r.get("name", r.get("id")), 11, "middle")
             svg.text((X(rb[0]) + X(rb[2])) / 2, (Y(rb[1]) + Y(rb[3])) / 2 + 13,
                      "%g x %g m, h %g" % (rb[2] - rb[0], rb[3] - rb[1], r.get("height", 0)), 9, "middle")
-            for o in r.get("openings") or []:
+            for o in _list(r.get("openings")):
+                if not _valid_opening(o):
+                    continue                           # spec_validate reports it
                 ax, ay = o["at"]
                 half = o.get("width", 1) / 2
-                horizontal = min(abs(ay - rb[1]), abs(ay - rb[3])) <= min(abs(ax - rb[0]), abs(ax - rb[2]))
-                if horizontal:
+                if runs_along_x(rb, ax, ay):
                     pts = (X(ax), Y(ay), X(ax + 2 * half), Y(ay))
                 else:
                     pts = (X(ax), Y(ay), X(ax), Y(ay + 2 * half))
@@ -113,12 +134,16 @@ def plan(spec, zones, path, px, title, draw_grid=True):
                          8, colour=COL["door"])
 
         overhead = set()
-        for pl in z.get("placements") or []:
-            ref, pos, rot = pl["ref"], pl.get("pos", [0, 0, 0]), math.radians(pl.get("rot", 0))
-            if ref in asms and isinstance(asms[ref].get("size"), list):
+        for pl in _list(z.get("placements")):
+            ref, pos = pl.get("ref"), pl.get("pos", [0, 0, 0])
+            if not (isinstance(ref, str) and numbers(pos) and len(pos) >= 2 and number(pl.get("rot", 0))):
+                continue                               # spec_validate reports it
+            rot = math.radians(pl.get("rot", 0))
+            if ref in asms and numbers(asms[ref].get("size"), 3):
                 ext, fill, edge = asms[ref]["size"], COL["asm"], COL["asm_edge"]
             elif ref in pieces:
-                ext, fill, edge = piece_extent(ref, module, families), COL["piece"], COL["piece_edge"]
+                ext, fill, edge = (piece_extent(ref, module, families, pieces[ref].get("size")), COL["piece"],
+                                   COL["piece_edge"])
             else:
                 ext = None
             if not ext:
@@ -144,7 +169,23 @@ def plan(spec, zones, path, px, title, draw_grid=True):
             svg.text(X(b[0]) + 4, Y(b[1]) - 6, "dashed: overhead, %g m or more above the floor (%s)"
                      % (OVERHEAD_M, ", ".join(sorted(overhead))), 8, colour=COL["piece_edge"])
 
-    for v in spec.get("views") or []:
+        for mi in _list(z.get("mirrors")):
+            p, size = mi.get("pos"), mi.get("size")
+            if not (numbers(p, 3) and numbers(size, 2) and number(mi.get("rot", 0))):
+                continue                               # spec_validate reports it
+            r = math.radians(mi.get("rot", 0))
+            dx, dy = math.cos(r) * size[0] / 2, math.sin(r) * size[0] / 2
+            fx, fy = math.sin(r) * 0.4, -math.cos(r) * 0.4      # the mirror faces -Y at rot 0
+            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="4"/>'
+                    % (X(p[0] - dx), Y(p[1] - dy), X(p[0] + dx), Y(p[1] + dy), COL["mirror"]))
+            svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="2"/>'
+                    % (X(p[0]), Y(p[1]), X(p[0] + fx), Y(p[1] + fy), COL["mirror"]))
+            svg.text(X(p[0] + fx) + 4, Y(p[1] + fy) + 4, "mirror %s %gx%g" % (mi.get("id"), size[0], size[1]), 8,
+                     colour=COL["mirror"])
+
+    for v in _list(spec.get("views")):
+        if not (numbers(v.get("pos"), 3) and numbers(v.get("target"), 3)):
+            continue                                   # spec_validate reports it
         p, t = v["pos"], v["target"]
         if not (x0 <= p[0] <= x1 and y0 <= p[1] <= y1):
             continue
@@ -154,54 +195,77 @@ def plan(spec, zones, path, px, title, draw_grid=True):
         svg.add('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="2"/>'
                 % (X(p[0]), Y(p[1]), X(ex), Y(ey), COL["view"]))
         svg.add('<circle cx="%.1f" cy="%.1f" r="5" fill="%s"/>' % (X(p[0]), Y(p[1]), COL["view"]))
-        svg.text(X(p[0]) + 7, Y(p[1]) + 14, "view %s" % v["id"], 9, colour=COL["view"])
+        svg.text(X(p[0]) + 7, Y(p[1]) + 14, "view %s" % v.get("id"), 9, colour=COL["view"])
 
     svg.text(MARGIN, 20, title, 14, weight="bold")
     bar = 5 * module
     svg.add('<rect x="%.1f" y="%.1f" width="%.1f" height="5" fill="%s"/>' % (w - MARGIN - bar * px, 12, bar * px,
                                                                             COL["text"]))
     svg.text(w - MARGIN - bar * px / 2, 30, "%g m" % bar, 9, "middle")
-    svg.text(w - MARGIN - bar * px - 18, 22, "N \u2191", 11, "middle", weight="bold")
+    nx = w - MARGIN - bar * px - 18                    # north arrow: a triangle pointing up the page, and "N"
+    svg.add('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s"/>'
+            % (nx + 9, 6, nx + 5, 16, nx + 13, 16, COL["text"]))
+    svg.text(nx, 22, "N", 11, "middle", weight="bold")
     svg.save(path)
 
 
 def _facade_openings(spec, e, width, tol=0.5):
-    """Room openings that lie in this facade, as (u0, u1, height, label): u is metres from the facade's left edge as
-    seen from the front. An opening belongs to the facade when its wall line is within `tol` m of the facade plane."""
-    ox, oy = (e.get("origin") or [0, 0])[:2]
+    """Room openings in this facade, as (u0, u1, bottom, top, label): u is metres from the facade's left edge as seen
+    from the front, bottom and top metres above the facade's base (the zone's floor_z plus the opening's `sill`). An
+    opening belongs to the facade when it runs along the facade (an opening in a side wall, at right angles to it,
+    does not) and its wall line is within `tol` m of the facade plane, whichever zone its room is in: a shop front
+    placed in the plaza zone shows the doors of the rooms in the shop's zone."""
+    origin = e.get("origin") or [0, 0, 0]
+    ox, oy = origin[:2]
+    base_z = origin[2] if len(origin) > 2 else 0
     facing = e.get("facing", "south")
-    # u (left to right as seen from the front) per facing; `along` is the world axis the facade runs along.
+    # u (left to right as seen from the front) per facing; `along_x` says which world axis the facade runs along.
     to_u = {"south": lambda x, y: x - ox, "north": lambda x, y: ox - x,
             "west": lambda x, y: oy - y, "east": lambda x, y: y - oy}.get(facing)
     if to_u is None:
         return []
     along_x = facing in ("south", "north")
     out = []
-    for z in spec.get("zones") or []:
-        if z.get("id") != e.get("zone"):
-            continue
-        for r in z.get("rooms") or []:
-            for o in r.get("openings") or []:
+    for z in _list(spec.get("zones")):
+        for r in _list(z.get("rooms")):
+            rb = r.get("bounds")
+            if not numbers(rb, 4):
+                continue
+            for o in _list(r.get("openings")):
+                if not _valid_opening(o):
+                    continue
                 ax, ay = o["at"]
+                if runs_along_x(rb, ax, ay) != along_x:
+                    continue                           # a side-wall opening, at right angles to this facade
                 wdt = o.get("width", 1)
                 if abs((ay - oy) if along_x else (ax - ox)) > tol:
                     continue
                 u0, u1 = sorted((to_u(ax, ay), to_u(ax + wdt, ay) if along_x else to_u(ax, ay + wdt)))
                 if u1 <= 0 or u0 >= width:
                     continue
-                out.append((max(u0, 0), min(u1, width), o.get("height", 2.1),
-                            "%s %gx%g" % (o.get("type", ""), wdt, o.get("height", 0))))
+                sill = o.get("sill", 0) or 0
+                bottom = z.get("floor_z", 0) - base_z + sill
+                label = "%s %gx%g" % (o.get("type", ""), wdt, o.get("height", 0))
+                out.append((max(u0, 0), min(u1, width), bottom, bottom + o.get("height", 2.1),
+                            label + (" sill %g" % sill if sill else "")))
     return out
+
+
+def _valid_opening(o):
+    """An opening with a usable `at` and, when given, numeric width, height and sill."""
+    return (numbers(o.get("at"), 2) and all(number(o.get(k, 1)) for k in ("width", "height"))
+            and (o.get("sill") is None or number(o.get("sill"))))
 
 
 def elevation(spec, e, path, px):
     module = spec["grid"]["module"]
     families = spec.get("families") or {}
+    sizes = {name: pc.get("size") for name, pc in _by_name(spec.get("pieces")).items()}
     rows, height, width = [], 0.0, 0.0
     for course in e.get("courses") or []:
         x, row_h, row = 0.0, 0.0, []
         for name in course:
-            ext = piece_extent(name, module, families)
+            ext = piece_extent(name, module, families, sizes.get(name)) if isinstance(name, str) else None
             if not ext:
                 continue
             row.append((name, x, ext[0], ext[2]))
@@ -227,11 +291,11 @@ def elevation(spec, e, path, px):
                 svg.text(cx + 3, cy, label, 8, "middle", colour=COL["piece_edge"], rotate=-90)
             else:
                 svg.text(cx, cy, label, 9, "middle", colour=COL["piece_edge"])
-    for u0, u1, oh, label in _facade_openings(spec, e, width):
+    for u0, u1, bottom, top, label in _facade_openings(spec, e, width):
         svg.add('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#ffffff" fill-opacity="0.85" stroke="%s" '
                 'stroke-width="2" stroke-dasharray="5 3"/>'
-                % (MARGIN + u0 * px, ground - oh * px, (u1 - u0) * px, oh * px, COL["door"]))
-        svg.text(MARGIN + (u0 + u1) / 2 * px, ground - oh * px - 4, label, 9, "middle", colour=COL["door"])
+                % (MARGIN + u0 * px, ground - top * px, (u1 - u0) * px, (top - bottom) * px, COL["door"]))
+        svg.text(MARGIN + (u0 + u1) / 2 * px, ground - top * px - 4, label, 9, "middle", colour=COL["door"])
     svg.add('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="2"/>'
             % (MARGIN - 10, ground, MARGIN + width * px + 10, ground, COL["zone"]))
     for i in range(int(round(width / module)) + 1):
@@ -244,29 +308,63 @@ def elevation(spec, e, path, px):
     svg.save(path)
 
 
+def render(spec, out, px_per_m=20.0):
+    """Draw every plan and elevation of `spec` into `out`. Returns (written paths, problems, attempted): a drawing
+    whose part of the spec has a value of the wrong type is skipped with a problem line instead of a traceback;
+    `attempted` is False when nothing could be drawn at all (no usable grid.module), so no drawing counts as stale."""
+    if not isinstance(spec, dict):
+        return [], ["the spec is not a mapping"], False
+    grid = spec.get("grid")
+    module = grid.get("module") if isinstance(grid, dict) else None
+    if not (number(module) and module > 0):
+        return [], ["grid.module must be a positive number of metres, got %r" % (module,)], False
+    os.makedirs(out, exist_ok=True)
+    zones = [z for z in _list(spec.get("zones")) if valid_bounds(z.get("bounds"))]
+    world = spec.get("world") if isinstance(spec.get("world"), dict) else {}
+    name = world.get("name") or "World"                # spec_validate reports a missing name
+    jobs, problems = [], []
+    if zones:
+        jobs.append(("plan_overview.svg",
+                     lambda p: plan(spec, zones, p, max(2.0, px_per_m / 4), "%s - overview" % name, draw_grid=False)))
+    for z in zones:
+        jobs.append(("plan_%s.svg" % z.get("id"),
+                     lambda p, z=z: plan(spec, [z], p, px_per_m, "Plan %s - %s" % (z["id"], z.get("name", "")))))
+    for e in _list(spec.get("elevations")):
+        jobs.append(("elevation_%s.svg" % e.get("id"),
+                     lambda p, e=e: elevation(spec, e, p, px_per_m * 2)))   # facades read better at twice the scale
+    written = []
+    for fname, draw in jobs:
+        if not ID_RE.match(fname.split("_", 1)[1][:-4]):
+            problems.append("%s skipped: ids name files, so they take letters, digits, _ and - only" % fname)
+            continue
+        p = os.path.join(out, fname)
+        try:
+            draw(p)
+            written.append(p)
+        except DRAW_ERRORS as exc:
+            problems.append("%s skipped: a value of the wrong type in its part of the spec (%s: %s); run "
+                            "spec_validate.py and fix its errors" % (fname, type(exc).__name__, exc))
+    return written, problems, True
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("spec")
     ap.add_argument("--out", required=True)
     ap.add_argument("--px-per-m", type=float, default=20.0)
     a = ap.parse_args()
-    spec = load(a.spec)
-    os.makedirs(a.out, exist_ok=True)
-    zones = [z for z in spec.get("zones") or [] if isinstance(z.get("bounds"), list) and len(z["bounds"]) == 4]
-    written = []
-    if zones:
-        p = os.path.join(a.out, "plan_overview.svg")
-        plan(spec, zones, p, max(2.0, a.px_per_m / 4), "%s - overview" % spec["world"]["name"], draw_grid=False)
-        written.append(p)
-    for z in zones:
-        p = os.path.join(a.out, "plan_%s.svg" % z["id"])
-        plan(spec, [z], p, a.px_per_m, "Plan %s - %s" % (z["id"], z.get("name", "")))
-        written.append(p)
-    for e in spec.get("elevations") or []:
-        p = os.path.join(a.out, "elevation_%s.svg" % e["id"])
-        elevation(spec, e, p, a.px_per_m * 2)          # facades read better at twice the plan scale
-        written.append(p)
+    written, problems, attempted = render(load(a.spec), a.out, a.px_per_m)
     print("\n".join("wrote " + p for p in written))
+    if attempted:
+        keep = {os.path.basename(p) for p in written}
+        for name in sorted(os.listdir(a.out)):
+            if (name.endswith(".svg") and name.startswith(("plan_", "elevation_")) and name not in keep
+                    and os.path.isfile(os.path.join(a.out, name))):
+                os.remove(os.path.join(a.out, name))
+                print("removed %s (not in the spec any more, or not drawable)" % os.path.join(a.out, name))
+    for p in problems:
+        print("ERROR %s" % p)
+    sys.exit(1 if problems else 0)
 
 
 if __name__ == "__main__":
