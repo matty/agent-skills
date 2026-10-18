@@ -35,7 +35,8 @@ the `vrchat-world-optimization` skill.
 4. Audio: Vorbis, mono for positional sources, Streaming for music (references/mesh-and-audio-import.md).
 5. Lightmaps: Non-Directional, and a lower Lightmap Resolution only before the UV2 is packed (afterwards it pushes
    the UV2 gaps under 2 texels); the `vrchat-lighting-and-baking` skill owns those numbers.
-6. Meshes: rig and blend shapes off, Mesh Compression Low or Medium.
+6. Meshes: rig and blend shapes off. Mesh Compression stays Off on kit pieces (Medium already misaligns tiling UVs
+   at joints and shrinks UV2 gaps: references/mesh-and-audio-import.md); Low at most on a unique prop.
 7. Remove PC-only decor from the mobile builds: EasyQuestSwitch (a Creator Companion package VRChat's cross-platform
    guide recommends) switches objects and components per build target; or keep a separate mobile scene.
 8. Re-check static batching: its combined mesh ships in the bundle.
@@ -65,11 +66,12 @@ references/texture-formats.md.
 
 | Map | PC (Standalone tab) | Android and iOS tabs |
 |---|---|---|
-| Albedo, no alpha | DXT1 (0.5); BC7 (1) where banding shows | ASTC 6x6 (0.44); 8x8 (0.25) for background |
+| Albedo, no alpha | DXT1 (0.5); BC7 (1) where banding shows, and on surfaces seen from under 1.5 m when PC leads (`world.quality: pc_lead`) | ASTC 6x6 (0.44); 8x8 (0.25) for background |
 | Albedo with alpha | BC7 or DXT5 (1) | ASTC 6x6 (0.44) |
 | Normal map | BC5, or Unity's default DXT5 (both 1) | ASTC 4x4 (1); 5x5 (0.64) if size-bound |
 | Metallic (R) + smoothness (A) | BC7 or DXT5 (1) | ASTC 6x6 (0.44); 4x4 (1) if its gradients band |
 | Single channel (height, mask) | BC4 (0.5) | ASTC 6x6 (0.44) |
+| Detail albedo, detail normal | As albedo and normal map: small (256-512) and finely tiled | As albedo and normal map |
 | HDR (skybox, cubemap) | BC6H (1) | ASTC HDR (Unity's only compressed HDR format on Android) |
 | UI, full-screen | as albedo, mipmaps off | as albedo, mipmaps off |
 
@@ -83,6 +85,7 @@ references/texture-formats.md.
 | Generate Mip Maps | On for all world geometry; off only for UI and full-screen effects |
 | Mip Streaming | On for world textures (VRChat streams world and avatar textures since client 2024.4.2) |
 | Mip Map Filtering | Kaiser: the SDK's build panel flags Box filtering as blurry |
+| Preserve Coverage, Alpha Cutoff | On for alpha-tested (cutout) textures, with Alpha Cutoff at the material's cutoff: otherwise foliage and fences thin out and vanish with distance as the mips average their alpha (Unity: it keeps "coverage during the alpha test", https://docs.unity3d.com/2022.3/Documentation/Manual/texture-type-default.html, checked 2026-10-18) |
 | sRGB (Color Texture) | Off for masks, metallic-smoothness, AO and other data; on for albedo and emission |
 | Alpha Source | None when the texture has no alpha (then DXT1 instead of DXT5) |
 | Aniso Level | Leave the default: the SDK's quality presets force anisotropic filtering on for all textures (SDK 3.10.5); raise a level only if a floor still blurs at grazing angles in the client |
@@ -92,7 +95,8 @@ references/texture-formats.md.
 ## Channel packing (Unity Standard and VRChat Standard Lite)
 
 - One `_MetallicGlossMap`: **R = metallic, A = smoothness** (1 - roughness), G and B unused. Both shaders read it
-  that way.
+  that way; Standard Lite also multiplies it by its Metallic and Smoothness sliders, so set both to 1 (a material
+  switched from Standard keeps Metallic 0 and renders non-metal; VRChat Worlds SDK 3.10.5 source).
 - Occlusion is its own map (Standard reads only its G channel). In a baked world the lightmap carries the occlusion:
   usually leave the slot empty.
 - Never a glTF-style ORM map (occlusion R, roughness G, metallic B) on Standard: it reads R as metallic and alpha as
@@ -102,8 +106,9 @@ references/texture-formats.md.
 ## Lightmaps and probes
 
 Lightmaps are textures and follow the same maths (PC 1 byte per pixel, mobile ASTC about 0.45); count, size and
-directional mode belong to the `vrchat-lighting-and-baking` skill. Baked reflection probes import compressed: keep
-them at 64-128.
+directional mode belong to the `vrchat-lighting-and-baking` skill. On Windows the Low, Normal and High Quality
+Lightmap Compression settings all store BC6H at the same size (measured Unity 2022.3.22f1, 2026-10-18), so High
+Quality costs no PC memory. Baked reflection probes import compressed: keep them at 64-128.
 
 ## Sources (checked 2026-10-17)
 

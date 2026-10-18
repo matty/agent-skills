@@ -12,7 +12,7 @@ Textures are usually the biggest item, but meshes and audio fill downloads too. 
 | Blend Shapes | Off unless used |
 | Normals | Import, when authored in Blender, so the hard edges survive |
 | Tangents | None when the material has no normal map |
-| Mesh Compression | Low or Medium to shrink the download; check large flat surfaces for artefacts. It saves disk and download only: "Unity decompresses the data" when it loads (https://docs.unity3d.com/2022.3/Documentation/Manual/mesh-compression.html) |
+| Mesh Compression | **Off for kit pieces and anything with tiling UVs or packed UV2 gaps.** Unity quantises each mesh on its own range ("a range between the maximum and minimum, where a fixed number of bits represents where each value falls", https://docs.unity3d.com/2022.3/Documentation/Manual/mesh-compression.html), so neighbouring pieces round differently. Measured on two kit walls (2 and 3 m) meeting at a joint, Unity 2022.3.22f1, 2026-10-18: Low moved nothing visibly (0.007 mm, 0.01 px); Medium stepped the tiling UV0 by up to 0.61 px at 1024 across the joint and cut 2-texel UV2 gaps to 1.81-1.85 texels; High opened the joint by up to 6.3 mm and cut the gaps to 1.3. The editor holds the quantised mesh, so the lightmap bake sees it too. Low at most, on a unique prop that meets nothing. It saves disk and download only: "Unity decompresses the data" when it loads |
 | Optimize Mesh | Everything (the default) |
 | Import Cameras, Lights, Visibility | Off: a Blender FBX brings extra objects otherwise |
 
