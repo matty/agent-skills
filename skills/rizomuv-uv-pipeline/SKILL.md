@@ -151,7 +151,7 @@ and lightmap notes, the attempt used and the time.
 
 ## 8. Texel density and lightmaps
 
-Choose the density with `uv-unwrapping` (about 1150 / d px/m at d metres; classes 512 / 256 / 128 / 64 px/m), size
+Choose the density with `uv-unwrapping` (about 1150 / d px/m at d metres; classes 2048 / 1024 / 512 / 256 / 128 / 64 px/m), size
 the map with `ru.texture_size(TD, area_m2)` and pack it exactly with `pack_spec(map_px, px_per_unit=TD)`. A
 renderer's lightmap footprint is texels_per_m x sqrt(area / b) x Scale In Lightmap, b = the UV2 bounding-box share
 (0.85 only to plan): gaps are packed for b = 1, so they hold at >= 2 texels, and checked at the measured b. How

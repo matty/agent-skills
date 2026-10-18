@@ -17,8 +17,9 @@ VRChat). This file states the same values and shows how RizomUV meets them. Work
 ## Choosing the density
 
 The density comes from viewing distance: about `1150 / d` px/m at 20 pixels per degree, quantised into classes
-T512 (0-3 m), T256 (3-6 m), T128 (6-12 m) and T64 (> 12 m). Shared trims and tiling materials keep one density
-everywhere (512 px/m for a T512-led world) and far surfaces sample lower mips; never make lower-density copies.
+T2048 (< 0.75 m, handheld), T1024 (0.75-1.5 m), T512 (1.5-3 m), T256 (3-6 m), T128 (6-12 m) and T64 (> 12 m).
+Shared trims and tiling materials keep one density everywhere (512 px/m for a T512-led world, with a detail map for
+walls players walk right up to) and far surfaces sample lower mips; never make lower-density copies.
 The derivation, class assignment and trim rules are in the `uv-unwrapping` skill (texel density); this file is how
 RizomUV delivers a chosen density exactly.
 
