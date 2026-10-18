@@ -6,8 +6,16 @@ arrays RizomUV uses (see rizom_uv.py for the layout), so it can grade UVs from a
 mesh_arrays() and uv_arrays() to get them from a Blender object and layer.
 
     import uv_metrics as um
-    rep = um.report(mesh, uvw_ids, uvw, map_px=1024, pad_px=8, margin_px=4)
-    um.check_gate(rep["distortion"])          # [] when it passes, else readable failures
+    rep = um.report(mesh, uvw_ids, uvw, map_px=1024, pad_px=16, margin_px=8)
+    um.grade(rep)                             # [] when it passes, else readable failures (distortion and layout)
+    um.check_gate(rep["distortion"])          # the distortion gate alone
+
+grade() is the one verdict the pipeline uses: the distortion gate (GATE, a partial gate merges over it) plus the
+layout checks (inside 0-1, no overlap, padding and margin at least what was asked, no flipped polygons) and, for a
+filled texture pack, a coverage floor (MIN_FILL_COVERAGE, lowered for long thin pieces by coverage_floor()).
+For a lightmap layer, call report() with map_px = the renderer's lightmap footprint in texels at the layout's
+measured bounding-box share (bbox_share), pad_px=2,
+margin_px=1 and pad_tol_px=0: the padding and margin are then checked in lightmap texels.
 
 Triangulation: never fans, and never dependent on which corner a polygon starts at. A concave quad is split
 through its reflex corner (the only valid split). A convex quad is split along the diagonal its UV layout was
@@ -23,21 +31,33 @@ Definitions (area-weighted over those triangles):
               (slivers have no meaningful shape); angular_max_all includes them
     area      |log2(sigma1*sigma2 / island mean)|. 0 = even density inside each island; 0.2 = 1.15x apart
     global    |log2(sigma1*sigma2 / mesh mean)|. Same, but across islands (does packing keep one density?)
-    islands_per_100_faces  fragmentation; ignored for meshes with FRAGMENT_FREE_ISLANDS islands or fewer
+    islands_per_100_faces  fragmentation, counted per connected shell against its planar regions (faces joined
+              across non-seam edges at under the preset's SharpEdges.AngleMin): only a shell cut into more than
+              FRAGMENT_FREE_ISLANDS islands and into more islands than it has regions counts, as its islands beyond
+              its regions per 100 of its faces; 0 when none does. A crate of planks, a mitred frame (16 faces, 16
+              regions) and a 5-step stair (14 regions) are not fragmented; one flat or smooth shell in confetti is
 Polygon areas (texel density, linear ratio) use the exact polygon area (Newell in 3D, shoelace in UV).
 """
 
 import numpy as np
 
-# Default UV0 gate (texture channel), measured on RizomUV 2027.0.598 (see ../references/distortion-and-quality.md).
-# angular_p95/area: a well-unwrapped organic prop passes, the default QuadLoopCutter unwrap of a curved body fails
-# (it measured angular p95 1.44, area p95 0.50). angular_p99: the tail p95 hides. angular_max: a hard limit on the
-# worst non-sliver triangle (folds and collapsed UVs). islands_per_100_faces: shattering.
+# Default UV0 gate (texture channel). The values are the uv-unwrapping skill's (it owns them); measured on RizomUV
+# 2027.0.598 (see ../references/distortion-and-quality.md). angular_p95/area: a well-unwrapped organic prop
+# passes, the default QuadLoopCutter unwrap of a curved body fails (it measured angular p95 1.44, area p95 0.50).
+# angular_p99: the tail p95 hides. angular_max: a hard limit on the worst non-sliver triangle (folds and collapsed
+# UVs). area_global_mean and islands_per_100_faces: kept by this grader for its retries (shattering, uneven packs).
 GATE = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_local_p95": 0.20,
         "area_global_mean": 0.05, "islands_per_100_faces": 25.0}
-FRAGMENT_FREE_ISLANDS = 12      # a cube's 6 islands or a small kit piece's dozen are never "fragmented"
+FRAGMENT_FREE_ISLANDS = 12      # per shell: a box's 6 islands or a small kit piece's dozen are never "fragmented"
 SLIVER_QUALITY = 0.02           # triangle quality 4*sqrt(3)*area / sum(edge^2): 1 equilateral, < 0.02 a sliver
 PAD_TOL_PX = 0.5                # RizomUV's PaddingPerfect pads on a pixel grid: measured gaps 3.5-3.9 px at pad 4
+MIN_FILL_COVERAGE = 0.35        # a filled texture pack below this is one sprawling island or worse: measured
+                                # 2026-10-17, 1-segment chamfered boxes under the hard preset covered 0.10-0.22
+SHAPE_COVERAGE_SHARE = 0.8      # a long thin piece cannot fill a square tile: its floor drops to this share of
+                                # shape_coverage_limit (a 3 m beam 0.16 x 0.8 = 0.13), never below what it allows
+FILL_COVERAGE_MAX_ISLANDS = 100 # sprawl means few islands: with hundreds the map/64 gaps take the tile (a craggy
+                                # 5120-face rock, 532 islands: 0.20), so the floor applies up to this many islands
+FRAGMENT_REGION_ANGLE = 40.0    # degrees: the hard preset's SharpEdges.AngleMin (unwrap_gated passes each attempt's)
 
 
 # ----------------------------------------------------------------------------------------------- input
@@ -184,7 +204,8 @@ def triangulate(sizes, xyz_ids, xyz, uvw_ids=None, uvw=None, info=None):
                              _tri_angular(V[:, [0, 2, 3]], W[:, [0, 2, 3]]))
             m13 = np.maximum(_tri_angular(V[:, [1, 2, 3]], W[:, [1, 2, 3]]),
                              _tri_angular(V[:, [1, 3, 0]], W[:, [1, 3, 0]]))
-            clear = np.abs(m02 - m13) > 1e-9 * np.maximum(np.minimum(m02, m13), 1.0)
+            with np.errstate(invalid="ignore"):                   # inf - inf on degenerate quads: no clear winner
+                clear = np.abs(m02 - m13) > 1e-9 * np.maximum(np.minimum(m02, m13), 1.0)
             use13 = np.where(clear, m13 < m02, use13)
             if info is not None:
                 lo, hi = np.minimum(m02, m13), np.maximum(m02, m13)
@@ -246,7 +267,7 @@ def _prep(mesh, uvw_ids, uvw, tri=None, info=None):
 
 
 # ----------------------------------------------------------------------------------------------- measures
-def distortion(mesh, uvw_ids, uvw, tri=None, info=None):
+def distortion(mesh, uvw_ids, uvw, tri=None, info=None, region_angle=FRAGMENT_REGION_ANGLE):
     info = {} if info is None else info
     sizes, xid, xyz, uid, uv, (tri, face) = _prep(mesh, uvw_ids, uvw, tri, info)
     P = xyz[xid[tri]]                                     # (T, 3, 3)
@@ -288,16 +309,79 @@ def distortion(mesh, uvw_ids, uvw, tri=None, info=None):
     local = np.where(good, np.abs(np.log2(np.maximum(R, 1e-300) / np.maximum(imean[isl], 1e-300))), np.inf)
     glob = np.where(good, np.abs(np.log2(np.maximum(R, 1e-300) / max(gmean, 1e-300))), np.inf)
     nisl, nfaces = int(isl_face.max() + 1), len(sizes)
+    frag, nshells = fragmentation(sizes, xid, isl_face, regions=lambda: planar_regions(mesh, region_angle))
     return {"angular_mean": round(float(np.sum(w * ang)), 4), "angular_p95": round(_wpct(ang, w, 0.95), 4),
             "angular_p99": round(_wpct(ang, w, 0.99), 4),
             "angular_max": round(float(ang[shaped].max()) if shaped.any() else float(ang.max()), 3),
             "angular_max_all": round(float(ang.max()), 3),
             "area_local_mean": round(float(np.sum(w * local)), 4), "area_local_p95": round(_wpct(local, w, 0.95), 4),
             "area_global_mean": round(float(np.sum(w * glob)), 4), "linear_ratio": float(np.sqrt(max(gmean, 0.0))),
-            "finite": bool(finite.all()), "islands": nisl, "faces": nfaces,
-            "islands_per_100_faces": round(100.0 * nisl / nfaces, 2),
+            "finite": bool(finite.all()), "islands": nisl, "faces": nfaces, "shells": nshells,
+            "islands_per_100_faces": frag, "islands_per_100_faces_all": round(100.0 * nisl / nfaces, 2),
             "split_sensitive_quads": info.get("split_sensitive_quads", 0),
             "split_sensitive_area_share": round(info.get("split_sensitive_area", 0.0) / float(a3.sum()), 5)}
+
+
+def planar_regions(mesh, angle_deg=FRAGMENT_REGION_ANGLE):
+    """Region index per polygon: polygons joined across edges that are not seams (both ends share their seed UV
+    vertex in mesh["uvw_ids"]) and whose normals differ by less than angle_deg. The islands a hard-surface piece
+    falls into naturally: a mitred frame with mitre seams has 16 regions in 16 faces, a 5-step stair 14 (treads,
+    risers, back, bottom and two sides)."""
+    sizes = np.asarray(mesh["sizes"], dtype=np.int64)
+    xid = np.asarray(mesh["xyz_ids"], dtype=np.int64)
+    sid = np.asarray(mesh["uvw_ids"], dtype=np.int64)
+    xyz = np.asarray(mesh["xyz"], dtype=np.float64).reshape(-1, 3)
+    starts, nxt, foc = _starts(sizes), _next_corner(sizes), _face_of_corner(sizes)
+    P = xyz[xid] - xyz[xid][starts][foc]
+    nrm = np.add.reduceat(np.cross(P, P[nxt]), starts, axis=0)                 # Newell
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-300)
+    a, b = xid, xid[nxt]
+    key = np.stack([np.minimum(a, b), np.maximum(a, b)], 1)
+    uv_ends = np.where((a <= b)[:, None], np.stack([sid, sid[nxt]], 1), np.stack([sid[nxt], sid], 1))
+    order = np.lexsort((key[:, 1], key[:, 0]))
+    k, u, f = key[order], uv_ends[order], foc[order]
+    i = np.flatnonzero(np.all(k[1:] == k[:-1], axis=1) & (k[1:, 0] != k[1:, 1]))
+    fa, fb = f[i], f[i + 1]
+    keep = np.all(u[i] == u[i + 1], axis=1) & (np.einsum("ij,ij->i", nrm[fa], nrm[fb])
+                                               > np.cos(np.radians(float(angle_deg))))
+    parent = list(range(len(sizes)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for p, q in zip(fa[keep].tolist(), fb[keep].tolist()):
+        rp, rq = find(p), find(q)
+        if rp != rq:
+            parent[rq] = rp
+    lut = {}
+    return np.array([lut.setdefault(find(x), len(lut)) for x in range(len(sizes))], dtype=np.int64)
+
+
+def fragmentation(sizes, xyz_ids, island_of_face, regions=None):
+    """(islands beyond the planar regions per 100 faces, over the shells cut into more than FRAGMENT_FREE_ISLANDS
+    islands and into more islands than regions; shell count). A shell is a connected piece of the mesh (polygons
+    sharing 3D vertices). regions: a function returning planar_regions() (called only when a shell has more than
+    FRAGMENT_FREE_ISLANDS islands); None counts every face as its own region. 0.0 when no shell is fragmented."""
+    shell = islands(sizes, xyz_ids)                       # connected by shared 3D vertices
+    n = int(shell.max()) + 1
+
+    def per_shell(labels):
+        pairs = np.unique(np.stack([shell, labels], 1), axis=0)
+        return np.bincount(pairs[:, 0], minlength=n)
+    isl_per_shell = per_shell(island_of_face)
+    bad = isl_per_shell > FRAGMENT_FREE_ISLANDS
+    if not bad.any():
+        return 0.0, n
+    faces_per_shell = np.bincount(shell, minlength=n)
+    reg_per_shell = per_shell(regions()) if regions is not None else faces_per_shell
+    excess = isl_per_shell - reg_per_shell
+    bad &= excess > 0
+    if not bad.any():
+        return 0.0, n
+    frag = 100.0 * float(excess[bad].sum()) / float(faces_per_shell[bad].sum())
+    return round(frag, 2), n
 
 
 def polygon_areas(mesh, uvw_ids, uvw):
@@ -418,9 +502,11 @@ def _seg_dist(p1, q1, p2, q2):
 
 
 def padding_gaps(mesh, uvw_ids, uvw, map_px, pad_px, tol_px=PAD_TOL_PX):
-    """Exact padding: the smallest Euclidean gap, in pixels at map_px, between the boundaries of every pair of
-    islands. Returns {"min_gap_px", "pairs_below_min", "worst": [(island a, island b, gap px), ...]}; a pair is
-    below the minimum when its gap < pad_px - tol_px (0 = strict)."""
+    """Exact padding near the limit: the boundary-to-boundary Euclidean gap, in pixels at map_px, between islands.
+    Returns {"min_gap_px", "pairs_below_min", "worst": [(island a, island b, gap px), ...]}; a pair is below the
+    minimum when its gap < pad_px - tol_px (0 = strict). pairs_below_min is exact. Only pairs closer than about
+    2 x pad_px are measured, so min_gap_px is the true smallest gap when it is below that, and None when every pair
+    of islands is farther apart (or there is only one island)."""
     sizes, xid, xyz, uid, uv = _arrays(mesh, uvw_ids, uvw)
     isl = islands(sizes, uid)[_face_of_corner(sizes)]
     nxt = _next_corner(sizes)
@@ -441,7 +527,8 @@ def padding_gaps(mesh, uvw_ids, uvw, map_px, pad_px, tol_px=PAD_TOL_PX):
     t0, t1 = (k / n[rep])[:, None], ((k + 1) / n[rep])[:, None]
     P0, P1, PO = A[rep] + (B[rep] - A[rep]) * t0, A[rep] + (B[rep] - A[rep]) * t1, O[rep]
     cell = 2.0 * L                                           # pieces closer than the padding share a 3x3 block
-    cx, cy = np.floor((P0[:, 0] + P1[:, 0]) / 2 / cell).astype(np.int64), np.floor((P0[:, 1] + P1[:, 1]) / 2 / cell).astype(np.int64)
+    cx = np.floor((P0[:, 0] + P1[:, 0]) / 2 / cell).astype(np.int64)
+    cy = np.floor((P0[:, 1] + P1[:, 1]) / 2 / cell).astype(np.int64)
     buckets = {}
     for i, c in enumerate(zip(cx.tolist(), cy.tolist())):
         buckets.setdefault(c, []).append(i)
@@ -467,7 +554,7 @@ def padding_gaps(mesh, uvw_ids, uvw, map_px, pad_px, tol_px=PAD_TOL_PX):
         keys.append(kk)
         gaps.append(d)
     if not keys:
-        return {"min_gap_px": float("inf"), "pairs_below_min": 0, "worst": []}
+        return {"min_gap_px": None, "pairs_below_min": 0, "worst": []}       # every pair farther than ~2 x pad_px
     kk, d = first_per_key(np.concatenate(keys), np.concatenate(gaps))
     o = np.argsort(d, kind="stable")
     worst = [(int(k // K), int(k % K), round(float(g), 3)) for k, g in zip(kk[o][:5], d[o][:5])]
@@ -484,26 +571,32 @@ def flipped_polygons(mesh, uvw_ids, uvw):
     return int(np.count_nonzero(s < 0))
 
 
-def report(mesh, uvw_ids, uvw, map_px, pad_px=None, margin_px=None, raster_px=None, pad_tol_px=PAD_TOL_PX):
+def report(mesh, uvw_ids, uvw, map_px, pad_px=None, margin_px=None, raster_px=None, pad_tol_px=PAD_TOL_PX,
+           region_angle=FRAGMENT_REGION_ANGLE):
     """Everything at once. raster_px defaults to map_px clamped to 256-2048 (coverage and overlap are counted in
-    those pixels); padding and margin are exact and in map_px pixels."""
+    those pixels); padding and margin are exact and in map_px pixels (map_px may be a fractional lightmap
+    footprint). margin_px_min is None when a UV is not finite; padding_min_px is None when every pair of islands
+    is farther apart than about 2 x pad_px (see padding_gaps)."""
     info = {}
     sizes, xid, xyz, uid, uv, tri = _prep(mesh, uvw_ids, uvw, info=info)
     res = int(raster_px or min(max(map_px, 256), 2048))
     grid, clash = raster(mesh, uvw_ids, uvw, res, tri=tri)
-    dist = distortion(mesh, uvw_ids, uvw, tri=tri, info=info)
+    dist = distortion(mesh, uvw_ids, uvw, tri=tri, info=info, region_angle=region_angle)
     finite = bool(np.all(np.isfinite(uv[np.unique(uid)])))
     used = uv[np.unique(uid)]
-    margin = float(min(used.min(), 1.0 - used.max()) * map_px) if finite else float("nan")
-    out = {"faces": dist["faces"], "islands": dist["islands"],
+    margin = float(min(used.min(), 1.0 - used.max()) * map_px) if finite else None
+    out = {"faces": dist["faces"], "islands": dist["islands"], "shells": dist["shells"],
            "islands_per_100_faces": dist["islands_per_100_faces"], "finite": finite,
            "in_unit_tile": bool(finite and used.min() >= -1e-6 and used.max() <= 1 + 1e-6),
            "flipped_polygons": flipped_polygons(mesh, uvw_ids, uvw),
            "overlap_px": clash, "coverage": round(float(np.count_nonzero(grid >= 0)) / grid.size, 4),
-           "margin_px_min": round(margin, 3), "texel": texel_density(mesh, uvw_ids, uvw, map_px),
-           "distortion": dist}
+           "bbox_share": round(bbox_share(uvw_ids, uvw), 4) if finite else None,
+           "margin_px_min": None if margin is None else round(margin, 3),
+           "texel": texel_density(mesh, uvw_ids, uvw, map_px), "distortion": dist,
+           "shape_coverage_limit": round(shape_coverage_limit(mesh, uvw_ids, uvw), 4),
+           "pad_px": pad_px, "margin_px": margin_px}
     if margin_px is not None:
-        out["margin_ok"] = bool(margin >= float(margin_px) - pad_tol_px)
+        out["margin_ok"] = bool(margin is not None and margin >= float(margin_px) - pad_tol_px)
     if pad_px:
         g = padding_gaps(mesh, uvw_ids, uvw, map_px, pad_px, pad_tol_px)
         out["padding_min_px"] = g["min_gap_px"]
@@ -511,13 +604,72 @@ def report(mesh, uvw_ids, uvw, map_px, pad_px=None, margin_px=None, raster_px=No
     return out
 
 
+def shape_coverage_limit(mesh, uvw_ids=None, uvw=None):
+    """About the most a filled square tile can cover with this piece at one density: its 3D surface area over the
+    square of the bounding-box diagonal of its largest connected shell (an island cut from a shell is about as long
+    as that shell at most), capped at 1. A 3 x 0.12 x 0.12 m beam 0.16, a 1.2 x 0.15 x 0.03 m plank 0.30, a 1 m cube
+    1, three 1 m cubes 5 m apart in one object 1. It lowers the coverage floor for long thin pieces only: a compact
+    piece that covers little (a sprawling chamfer ring) still fails, and so does a band (a rim, a washer, a hoop),
+    which unrolls to pi x its diameter until seams cut it."""
+    ids = mesh["uvw_ids"] if uvw_ids is None else uvw_ids
+    a3 = float(polygon_areas(mesh, ids, mesh["uvw"] if uvw is None else uvw)[0].sum())
+    sizes = np.asarray(mesh["sizes"], dtype=np.int64)
+    xid = np.asarray(mesh["xyz_ids"], dtype=np.int64)
+    shell = islands(sizes, xid)[_face_of_corner(sizes)]          # connected shell of every corner
+    order = np.argsort(shell, kind="stable")
+    pts = np.asarray(mesh["xyz"], dtype=np.float64).reshape(-1, 3)[xid][order]
+    cut = np.flatnonzero(np.r_[True, shell[order][1:] != shell[order][:-1]])
+    span = np.maximum.reduceat(pts, cut, axis=0) - np.minimum.reduceat(pts, cut, axis=0)
+    d2 = float((span ** 2).sum(1).max())
+    return 1.0 if d2 <= 0 else min(1.0, a3 / d2)
+
+
+def coverage_floor(rep, min_coverage=MIN_FILL_COVERAGE):
+    """The coverage a filled pack must reach: min_coverage, lowered for a long thin piece to SHAPE_COVERAGE_SHARE of
+    its shape_coverage_limit (a 25:1 piece cannot fill a square tile, whatever the seams), and none above
+    FILL_COVERAGE_MAX_ISLANDS islands (the map/64 gaps take the tile)."""
+    if rep.get("islands", 0) > FILL_COVERAGE_MAX_ISLANDS:
+        return 0.0
+    lim = rep.get("shape_coverage_limit")
+    return float(min_coverage) if lim is None else min(float(min_coverage), SHAPE_COVERAGE_SHARE * lim)
+
+
+def bbox_share(uvw_ids, uvw):
+    """Area of the bounding box of the UVs the corners use, as a share of the 0-1 tile (b in the lightmap footprint
+    texels_per_m x sqrt(A / b) x scale: Unity sizes a renderer's lightmap rectangle from it)."""
+    uv = np.asarray(uvw, dtype=np.float64).reshape(-1, 3)[:, :2][np.unique(np.asarray(uvw_ids, dtype=np.int64))]
+    span = uv.max(0) - uv.min(0)
+    return float(span[0] * span[1])
+
+
+def merge_gate(gate=None):
+    """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest.
+    A value of float('inf') switches that check off. Raises TypeError or ValueError for anything but a dict of
+    known keys and numbers, so a typo fails at once instead of sending every piece to review."""
+    if gate is None:
+        return dict(GATE)
+    if not isinstance(gate, dict):
+        raise TypeError("gate must be a dict of thresholds such as {'angular_p95': 1.2}, not %r" % (gate,))
+    unknown = sorted(set(gate) - set(GATE))
+    if unknown:
+        raise ValueError("unknown gate key(s) %s: use %s" % (unknown, ", ".join(sorted(GATE))))
+    for k, v in gate.items():
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise TypeError("gate[%r] must be a number, not %r" % (k, v))
+    merged = dict(GATE)
+    merged.update(gate)
+    return merged
+
+
 def check_gate(dist, gate=None):
     """Readable failures of a distortion() result against the gate; [] means it passes. Non-finite values fail.
-    A gate may list any subset of the keys; islands_per_100_faces is skipped for small island counts."""
-    gate = GATE if gate is None else gate
+    A partial gate merges over GATE (merge_gate); islands_per_100_faces is skipped for small island counts."""
+    gate = merge_gate(gate)
     fails = [] if dist.get("finite", True) else ["non-finite UVs (NaN or infinity)"]
     for k, v in gate.items():
         if k == "islands_per_100_faces" and dist.get("islands", 0) <= FRAGMENT_FREE_ISLANDS:
+            continue
+        if v == float("inf"):
             continue
         x = dist.get(k)
         if x is None:
@@ -525,3 +677,51 @@ def check_gate(dist, gate=None):
         elif not (x <= v):                       # also catches NaN
             fails.append("%s %.3f > %.3f" % (k, x, v))
     return fails
+
+
+def layout_failures(rep, flips=True):
+    """Readable layout failures of a report(): outside the 0-1 tile, overlapping islands, padding or margin below
+    what report() was asked to check, flipped (mirrored or folded) polygons. [] means the layout is clean."""
+    fails = []
+    if not rep.get("finite", True):
+        fails.append("non-finite UVs (NaN or infinity)")
+    elif not rep.get("in_unit_tile", True):
+        fails.append("UVs outside the 0-1 tile")
+    if rep.get("overlap_px"):
+        fails.append("overlap %d px" % rep["overlap_px"])
+    if rep.get("padding_pairs_below_min"):
+        fails.append("padding: %d island pair(s) closer than %s px (closest %s px)"
+                     % (rep["padding_pairs_below_min"], rep.get("pad_px"), rep.get("padding_min_px")))
+    if rep.get("margin_ok") is False:
+        fails.append("margin: %s px to the tile edge, asked %s" % (rep.get("margin_px_min"), rep.get("margin_px")))
+    if flips and rep.get("flipped_polygons"):
+        fails.append("%d flipped polygon(s)" % rep["flipped_polygons"])
+    return fails
+
+
+def grade(rep, gate=None, distortion=True, layout=True, flips=True, min_coverage=None):
+    """The one verdict: distortion gate failures (check_gate, partial gate merged over GATE) plus layout failures
+    (layout_failures) of a report(), plus coverage below min_coverage (pass MIN_FILL_COVERAGE for a filled texture
+    pack; coverage_floor() lowers it for long thin pieces). [] means the layer passes."""
+    fails = check_gate(rep["distortion"], gate) if distortion else []
+    if layout:
+        fails += [f for f in layout_failures(rep, flips) if f not in fails]
+    if min_coverage and rep.get("coverage") is not None:
+        floor = coverage_floor(rep, min_coverage)
+        if rep["coverage"] < floor:
+            fails.append("coverage %.3f < %.3f" % (rep["coverage"], floor))
+    return fails
+
+
+def json_safe(obj):
+    """A copy with every NaN or infinity replaced by None and numpy scalars made plain, for json.dump(...,
+    allow_nan=False): strict JSON parsers reject NaN and Infinity."""
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    if isinstance(obj, np.generic):
+        obj = obj.item()
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
