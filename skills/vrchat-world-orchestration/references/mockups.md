@@ -2,7 +2,9 @@
 
 Mockups fix intent before anyone models: mood, palette, rhythm, proportion. They need an image tool that makes
 whole-scene concept art from a text prompt and saves it as a file under `world/mockups/`. If there is none, skip the
-stage (`world.mockups: false`) and plan from the user's reference images.
+stage (`world.mockups: false`) and plan from the user's reference images: save them in `world/refs/` and list them in
+the spec's `look.references` (finished work at the level aimed for in `look.quality_bar`), so modelling, texturing
+and QA judge against pictures rather than one line of style (`world-spec.md`, "Look").
 
 A tool does not qualify just because it generates images. Asset generators do not count: texture, sprite or icon
 tools, or anything that imports its output into an engine project (Unity MCP's `generate_image` is one, and cannot

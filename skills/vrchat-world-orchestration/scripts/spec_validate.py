@@ -42,10 +42,14 @@ What it checks:
   - lighting states: zones naming one `switch` need the same lighting_states; NOTEs for a probe-lit piece in a zone
     with them (it keeps one state), and for a wall, facade or openings such a zone shares with a zone on another
     switch (or none) on the same storey (a switch changes the light in its zones only);
-  - views, interactivity and lighting;
+  - views, interactivity and lighting; world.quality (pc_lead or parity; a NOTE when a pc_lead world gives PC no
+    budget of its own); the look section (references, wear, lighting_mood, quality_bar, lead_family, per-material
+    albedo_srgb, roughness and metal targets for QA X5 and X8) and each piece's ref and detail list; with --root,
+    every reference image exists;
   - with --ledger: unique task ids, known dependencies and gates, no cycles, writes inside the project layout, no
     two tasks that could run at once writing one file (a folder overlaps every file inside it), every task of
-    stage 4 or later ordered after gate:spec (stage 5 or later: after gate:greybox), and a warning for a task
+    stage 4 or later ordered after gate:spec (stage 5 or later: after gate:greybox; stage 9 or later and every
+    texture task but the lead family's and T-TEX-TRIM-LAYOUT: after gate:look), and a warning for a task
     running while a gate it waits for is not approved (except the gate's `reopened_by` task): one already running
     when the gate re-opened finishes, one whose session died goes back to todo. --draft merges a draft task list (a
     bare list, or {tasks: [...]}) into the ledger's tasks first; a draft task replaces the ledger task with the same
@@ -90,6 +94,9 @@ FACINGS = {"north", "south", "east", "west"}
 SYNC = {"none", "manual", "continuous"}
 BAKERS = {"progressive", "bakery"}
 LIGHT_MODES = {"baked", "mixed"}
+QUALITY = {"pc_lead", "parity"}       # world.quality: PC gets its own budgets and sources, or ships what mobile ships
+WEAR = {"pristine", "lived-in", "weathered", "derelict"}
+ALBEDO_SRGB = (30, 240)              # the dielectric base-colour range QA X8 holds every map to (pbr_check.py)
 STATUSES = {"todo", "running", "qa", "done", "failed", "escalated", "blocked", "skipped"}
 GATE_STATUSES = {"pending", "approved", "changes-requested"}
 
@@ -257,15 +264,19 @@ PROBE_LIT_FAMILIES = ("PROP", "FOL")
 FREE_TEXT = ("desc", "notes")
 KNOWN_KEYS = {
     "spec": ("version", "world", "tools", "grid", "families", "budgets", "pieces", "assemblies", "zones",
-             "elevations", "views", "interactivity", "lighting"),
-    "world": ("name", "platforms", "scale", "allow_generated_assets", "mockups", "style", "performance_tier"),
+             "elevations", "views", "interactivity", "lighting", "look"),
+    "world": ("name", "platforms", "scale", "allow_generated_assets", "mockups", "style", "quality",
+              "performance_tier"),
     "tools": ("blender", "blender_mcp", "unity_project", "substance_designer", "substance_painter", "rizomuv",
               "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
-    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness"),
+    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map"),
     "budgets": BUDGET_KEYS + ("download_mb", "piece_tris", "lightmap"),
     "lightmap": ("max_px", "count", "texels_per_m", "min_footprint_px"),
-    "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size"),
+    "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size", "ref",
+              "detail"),
+    "look": ("references", "wear", "lighting_mood", "quality_bar", "lead_family", "materials"),
+    "look_material": ("ref", "albedo_srgb", "roughness", "metal", "wear"),
     "assembly": ("name", "file", "size", "uses"),
     "zone": ("id", "name", "kind", "bounds", "floor_z", "placements", "rooms", "lighting_states", "switch",
              "mirrors"),
@@ -440,7 +451,98 @@ def check_world(world, f):
         f.error("world.mockups must be true or false")
     if "performance_tier" in world:
         f.note("world.performance_tier is no longer used: world.platforms and budgets set the targets")
+    if world.get("quality") is not None and not one_of(world.get("quality"), QUALITY):
+        f.error("world.quality must be pc_lead or parity (asked at intake), got %r" % (world.get("quality"),))
     return [p for p in platforms if one_of(p, PLATFORM_LIMITS)]
+
+
+def check_quality(world, platforms, budgets, f):
+    """world.quality against the platforms and budgets (planning specs): a PC-lead world gives PC its own budgets."""
+    q = world.get("quality")
+    cross = "pc" in platforms and any(p in MOBILE for p in platforms)
+    if q is None:
+        if cross:
+            f.note("world.quality is not set, so parity is assumed: the PC build ships what the mobile builds ship. "
+                   "Intake asks pc_lead or parity (world-spec.md)")
+        return
+    if q == "pc_lead" and not cross:
+        f.note("world.quality pc_lead only matters in a world that ships to pc and to quest or ios")
+    elif q == "pc_lead":
+        shared = [k for k in BUDGET_KEYS if k in budgets and not isinstance(budgets[k], dict)]
+        if shared and len(shared) == len([k for k in BUDGET_KEYS if k in budgets]):
+            f.note("world.quality is pc_lead, but every budget is one number for all platforms, so the PC build is "
+                   "held to the mobile budgets: give PC its own value ({pc: ..., quest: ...}, world-spec.md)")
+
+
+def image_list(v):
+    """v is an image path or a list of them."""
+    return isinstance(v, str) and v != "" or isinstance(v, list) and bool(v) and all(isinstance(x, str) and x
+                                                                                     for x in v)
+
+
+def check_look(spec, families, pieces, root, f):
+    """The art direction texturing and QA judge against (X5, X8, L7, the look gate)."""
+    look = spec.get("look")
+    if look is None:
+        f.note("look missing: texturing and QA (X5, X8, L7) judge against world.style alone; give references, wear, "
+               "lighting_mood, lead_family and per-material targets (world-spec.md, Look)")
+        return
+    if not isinstance(look, dict):
+        f.error("look must be a mapping: references, wear, lighting_mood, quality_bar, lead_family, materials")
+        return
+    check_keys(look, "look", "look", f)
+    paths = []
+    for key in ("references", "quality_bar"):
+        v = look.get(key)
+        if v is None:
+            continue
+        if not (isinstance(v, list) and all(isinstance(x, str) and x for x in v)):
+            f.error("look.%s must be a list of image paths" % key)
+        else:
+            paths += [("look.%s" % key, p) for p in v]
+    if look.get("wear") is not None and not one_of(look.get("wear"), WEAR):
+        f.error("look.wear must be one of %s" % ", ".join(sorted(WEAR)))
+    if look.get("lighting_mood") is not None and not isinstance(look.get("lighting_mood"), str):
+        f.error("look.lighting_mood must be text: colour temperatures, contrast, time of day")
+    lead = look.get("lead_family")
+    if lead is not None and lead not in families:
+        f.error("look.lead_family %r is not in families: the family textured first, before the look gate" % (lead,))
+    known = {m for fam in families.values() if isinstance(fam, dict)
+             for m in (fam.get("materials") if isinstance(fam.get("materials"), list) else []) if isinstance(m, str)}
+    for name, t in mapping(look, "materials", f, "look.materials").items():
+        where = "look.materials.%s" % name
+        if name not in known:
+            f.error("%s: not a material any family lists" % where)
+        if not isinstance(t, dict):
+            f.error("%s must be a mapping: ref, albedo_srgb, roughness, metal, wear" % where)
+            continue
+        check_keys(t, "look_material", where, f)
+        if "ref" in t:
+            if not image_list(t["ref"]):
+                f.error("%s.ref must be an image path or a list of them" % where)
+            else:
+                paths += [(where + ".ref", p) for p in ([t["ref"]] if isinstance(t["ref"], str) else t["ref"])]
+        a = t.get("albedo_srgb")
+        if a is not None:
+            if not (numbers(a, 2) and 0 <= a[0] < a[1] <= 255):
+                f.error("%s.albedo_srgb must be [low, high] sRGB luma, 0-255 (the dielectric median)" % where)
+            elif a[0] < ALBEDO_SRGB[0] or a[1] > ALBEDO_SRGB[1]:
+                f.warn("%s.albedo_srgb %s reaches outside %d-%d, the dielectric range QA X8 holds every base colour to"
+                       % (where, a, ALBEDO_SRGB[0], ALBEDO_SRGB[1]))
+        r = t.get("roughness")
+        if r is not None and not (numbers(r, 2) and 0 <= r[0] < r[1] <= 1):
+            f.error("%s.roughness must be [low, high] between 0 and 1 (the median roughness)" % where)
+        if "metal" in t and t["metal"] not in (True, False):
+            f.error("%s.metal must be true or false" % where)
+        if "wear" in t and not isinstance(t["wear"], str):
+            f.error("%s.wear must be text" % where)
+    for name, pc in pieces.items():
+        if image_list(pc.get("ref")):
+            paths += [("piece %s ref" % name, p) for p in ([pc["ref"]] if isinstance(pc["ref"], str) else pc["ref"])]
+    if root:
+        for where, p in paths:
+            if not os.path.exists(os.path.join(root, p)):
+                f.warn("%s: %s does not exist yet" % (where, p))
 
 
 def check_tools(tools, f):
@@ -580,6 +682,9 @@ def check_families(families, module, sub_module, f):
                 # A Size names only axes of one module or more; anything thinner is thickness and is skipped.
                 f.warn("family %s thickness %g m is one module (%g m) or more: no axis of its pieces is thin, so each "
                        "needs a three-number Size (WxDxH)" % (code, th, module))
+            if fam.get("detail_map", False) not in (True, False):
+                f.error("family %s detail_map must be true or false (a close-range detail map on its materials)"
+                        % code)
             mp = fam.get("map_px")
             if not number(mp) or mp <= 0:
                 f.error("family %s needs map_px (texture size in pixels)" % code)
@@ -625,6 +730,13 @@ def check_pieces(spec, families, module, f):
             scale = pc.get("lightmap_scale", 1)
             if not number(scale) or scale <= 0:
                 f.error("piece %s: lightmap_scale (Unity's Scale In Lightmap) must be a positive number" % name)
+            if "ref" in pc and not image_list(pc["ref"]):
+                f.error("piece %s: ref must be an image path or a list of them (the references it is modelled to)"
+                        % name)
+            det = pc.get("detail")
+            if det is not None and not (isinstance(det, list) and all(isinstance(x, str) and x for x in det)):
+                f.error('piece %s: detail must be a list of features with their sizes, e.g. ["sill: 60 mm '
+                        'projection, 50 mm thick"]' % name)
             size = pc.get("size")
             nums = [] if m.group(2) == "Free" else m.group(2).split("x")
             if size is not None and not valid_size(size):
@@ -1102,6 +1214,10 @@ def check_spec(spec, f, root=None):
                    "and the lightmap fill leaves them out: place the facade in zones[].placements"
                    % (e.get("id"), ", ".join(only)))
 
+    with Guard(f, "world.quality"):
+        check_quality(world, platforms, budgets, f)
+    with Guard(f, "look"):
+        check_look(spec, families, pieces, root, f)
     check_views(spec, world, root, f)
     check_interactivity(spec, f)
     with Guard(f, "lighting"):
@@ -1480,10 +1596,18 @@ def check_ledger(ledger, f):
     for tid, t in ids.items():
         if t.get("status") in ("done", "skipped") or not number(t.get("stage")):
             continue
-        for gate, first in (("spec", 4), ("greybox", 5)):
+        for gate, first in (("spec", 4), ("greybox", 5), ("look", 9)):
             if gate in gates and t["stage"] >= first and gate not in gates_before(tid):
                 f.warn("task %s (stage %s) does not wait for gate:%s, directly or through its dependencies: it could "
                        "start before the user approves the %s gate" % (tid, t["stage"], gate, gate))
+        # only the lead family's texturing runs before the look gate (the trim layout comes before UVs)
+        if ("look" in gates and str(tid).startswith("T-TEX-") and tid != "T-TEX-TRIM-LAYOUT"
+                and tid not in ((gates["look"] or {}).get("after") or []) and "look" not in gates_before(tid)):
+            f.warn("task %s does not wait for gate:look: only the lead family's texturing (the gate's `after`) runs "
+                   "before the user approves the look" % tid)
+    if "look" not in gates and any(str(t).startswith("T-TEX-") and t != "T-TEX-TRIM-LAYOUT" for t in ids):
+        f.note("no look gate: add gates.look after the lead family's T-TEX task, and make the other T-TEX tasks and "
+               "every T-EXP task wait for it (ledger.md)")
     for tid, t in ids.items():
         if t.get("status") != "running":
             continue

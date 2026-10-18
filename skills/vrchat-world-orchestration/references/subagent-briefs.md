@@ -90,6 +90,8 @@ Writable files of the builder (for G2): <list>. Dispatched at: <UTC time from th
 Settings snapshot (projects without git): world/reports/qa/<task>/pre/
 Master edits since the builder returned (not the builder's doing): <file and what changed, or none>
 Views and diagrams to compare (G4): <view ids, svg paths>
+Look to judge against (X5, X8, L7, G4 per piece): <the spec's look, and the pieces' ref and detail, or "none: world.style">
+Map size for the PBR check (X8): <the family's map_px>
 Live editors you may drive: <@unity / @blender-live, read-only, or none> (the master holds them for you meanwhile)
 Python and scripts (S1, S4, S7): <world folder>/.venv/Scripts/python; <this skill, absolute>/scripts/spec_validate.py
 and spec_to_svg.py, run from the world folder (S7: spec_validate.py --ledger world/ledger.yaml, plus --draft
@@ -120,7 +122,8 @@ same collection, with the same name, pivot and extents. kit_status = modelled on
 All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/Users/me/AppData/Local/Temp/T-MOD-EXT/.
 
 ## Load these skills first
-- blender-mesh-topology: clean low-count topology for the window and door surrounds
+- blender-mesh-topology: finishing each piece's form (what is geometry, at what size, chamfers and joints) and clean
+  low-count topology for the window and door surrounds
 - blender-kit-library: kit piece rules
 - blender-to-unity: mesh hygiene before export
 
@@ -129,8 +132,14 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
     grid: {module: 1.0}
     families: {EXT: {thickness: 0.3, materials: [M_EXT_Brick, M_EXT_Stone]}}
     budgets: {piece_tris: {EXT: 800}}
-    pieces: [EXT_Wall_2x3_A (box), EXT_Window_2x3_A (box), EXT_Door_2x3_A (box)]
+    pieces:
+      - EXT_Wall_2x3_A (box), detail: ["plinth: 0.45 m high, 30 mm proud, chamfered top"]
+      - EXT_Window_2x3_A (box), ref: [world/refs/sash_window_01.jpg], detail: ["reveal: 100 mm deep",
+        "stone sill: 60 mm projection, 50 mm thick", "sash frame: 50 mm", "glazing bars: 20 mm"]
+      - EXT_Door_2x3_A (box), detail: ["door lining: 70 mm architrave", "fanlight: 0.4 m tall", "step: 150 mm"]
+    look: {wear: weathered, references: [world/refs/market_dusk_01.jpg, world/refs/shopfront_02.jpg]}
 - world/diagrams/elevation_square_north_row.svg (and world/mockups/hero_square.png when there are mockups)
+- Nearest walkable viewing distance of the facade: 1.5 m (the square's pavement)
 
 ## You may write ONLY
 - blender/kits/KIT_Arch_Exterior.blend
@@ -140,7 +149,11 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
 1. Open the file headless. For each piece, model the final mesh at the collection origin, replacing the greybox
    mesh data; keep the object name.
 2. Keep the footprint exactly 2 x 0.3 x 3 m; window and door openings where the greybox has them.
-3. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save.
+3. Model every item of each piece's detail list at its size, to its references: relief that shows in stereo at
+   1.5 m (blender-mesh-topology's detail_scale.py) is geometry, shallower relief is left to the textures; chamfer
+   every edge players see, never a face that meets the next bay.
+4. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save.
+5. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
 
 ## Tools and hosts
 - Blender CLI: C:/Users/me/.blender/blender-5.2.2/blender.exe, headless only (the live Blender belongs to the
@@ -152,6 +165,7 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
 - M2 LOD0 <= 800 tris per piece
 - M3 no n-gons, no edges shared by 3+ faces, no loose vertices
 - M5 the three pieces share boundary vertices when snapped side by side
+- G4 each piece matches its detail list (sizes within 10%) and references, from eye height at 1.5 m and close up
 - G1-G5 as in the template
 
 ## Fallbacks
@@ -225,8 +239,11 @@ strip is which trim) in `blender/substance/<FAMILY>/layout.md`, before the trim 
 `texturing.md`). Checks: X6.
 
 **Stage 7, T-TEX-EXT (texture artist).** Goal: `M_EXT_Brick`, `M_EXT_Stone` with base colour, normal and packed
-metallic-smoothness maps at 1024 (channel plan in `texturing.md`), matching the swatch mockups. Load: none (paste
-`texturing.md`); Substance MCP if available. Checks: X1-X5, X7.
+metallic-smoothness maps at the family's `map_px` (channel plan in `texturing.md`), a detail map where the family
+has `detail_map: true`, matching the swatch mockups, `look.references` and the `look.materials` targets, worn to
+`look.wear`. Load: `pbr-texturing` (without it, paste `texturing.md`); the Substance MCP if available. Paste the
+spec's `look`. Self-check with `pbr-texturing`'s `pbr_check.py` before reporting. When EXT is `look.lead_family`,
+its QA's look-dev renders go to the user at the look gate. Checks: X1-X5, X7, X8.
 
 **Stage 8, T-ASM-SHOPFRONT-A (integrator).** Goal: the assembly checked with final pieces, sockets added. Checks:
 A1-A4, M9.
@@ -267,7 +284,9 @@ their place, colliders and placement-sync role with their Mesh Renderers off, an
 deactivated. A piece with `lod_lightmap: false`: Receive Global Illumination = Light Probes on its LOD1+ renderers.
 A `T-LIGHT-<n>` after stage 12 keeps the state parents the `T-UDON` scripts reference and adds I1 to its checks.
 Report, for the user: layout edits in a switched zone go to the originals under MASTER (selected in the Hierarchy)
-or to Blender, never to the copies. Writes: the stage-table row. Load: `vrchat-lighting-and-baking`. Checks: L1-L6.
+or to Blender, never to the copies. Lights, colours and contrast follow `look.lighting_mood` (paste it); bake with the
+lighting skill's final-quality settings. Writes: the stage-table row. Load: `vrchat-lighting-and-baking`. Checks:
+L1-L7.
 
 **Stage 12, T-UDON-SHOP-DOORS (Udon developer).** Goal: the interaction as described in the spec, synced as
 specified, no `Update()`. Load: `vrchat-udon`; for a light switch also `vrchat-lighting-and-baking` (every state

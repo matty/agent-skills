@@ -12,12 +12,13 @@ rotations are degrees about Z, counter-clockwise seen from above.
 | Section | Holds | Filled at |
 |---|---|---|
 | `version` | `1` | 0 |
-| `world` | `name`; `platforms`: `pc`, `quest` (the Android build), `ios` (checked against the Quest limits); `scale` (`full`/`small`); `allow_generated_assets`; `mockups` (true only with a confirmed concept-art tool); `style` | 0 |
+| `world` | `name`; `platforms`: `pc`, `quest` (the Android build), `ios` (checked against the Quest limits); `scale` (`full`/`small`); `allow_generated_assets`; `mockups` (true only with a confirmed concept-art tool); `style`; `quality` (`pc_lead`: PC gets its own budgets and source sizes, mobile gets them through import overrides; `parity`: PC ships what mobile ships; "Quality tier" below) | 0 |
 | `tools` | `blender` (CLI path), `blender_mcp` (true when the Blender MCP is connected), `unity_project`, `substance_designer`, `substance_painter`, `rizomuv`, `unity_packages` (installed; UdonSharp and ClientSim are inside `com.vrchat.worlds`), `build_modules` (`windows`, `android`, `ios`) | 0 |
 | `grid` | `module` (m), `sub_module` (trim placement: it divides `module` into whole steps), `storey_height` | 2 |
-| `families` | Per family code: `file`, `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m on UV0), `map_px` (the source size, at most the PC maximum 2048: Android and iOS get 1024 or less from their import overrides at stage 10, QA N8 and X2), `thickness` (m, walls and slabs) | 2-3 |
+| `families` | Per family code: `file`, `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m on UV0, from the viewing-distance classes: T2048 under 0.75 m, T1024 0.75-1.5 m, T512 1.5-3 m, T256 3-6 m, T128 6-12 m, T64 beyond; `uv-unwrapping` has the rule), `map_px` (the source size, at most the PC maximum 2048: Android and iOS get 1024 or less from their import overrides at stage 10, QA N8 and X2), `thickness` (m, walls and slabs), optional `detail_map` (true: its materials get a finely tiled detail albedo and normal for the close look, the answer for walls players walk right up to) | 2-3 |
 | `budgets` | `world_tris`, `view_tris`, `materials`, `setpass`, `batches`, `texture_vram_mb`: one number for every platform, or a mapping per platform (`setpass: {pc: 100, quest: 50}`); `download_mb` per platform (mobile hard limit 100 MB, where MB = 2^20 bytes). In a mapping, `ios` falls back to the `quest` value, so it is never required; give it only to differ. `piece_tris` per family; `lightmap`: `max_px`, `count`, `texels_per_m` (= Unity's Lightmap Resolution), optional `min_footprint_px` (default 64) | 0 (the template's Quest ceilings), 2 |
-| `pieces` | `name`, `desc`, `collision` (`box`/`mesh`/`none`); optional `tris`, `lods` (LODs after LOD0), `lod_lightmap` (default true: each LOD gets its own lightmap space; `false`: LOD1+ probe-lit), `lightmap` (`false` = probe-lit), `lightmap_scale` (Unity's Scale In Lightmap, default 1), `size` [x, y, z] m (required for a one-number Size, whose extents it gives; for Free pieces, without it a lightmapped one is left out of the lightmap check) | 2-3 |
+| `pieces` | `name`, `desc`, `collision` (`box`/`mesh`/`none`); optional `tris`, `lods` (LODs after LOD0), `lod_lightmap` (default true: each LOD gets its own lightmap space; `false`: LOD1+ probe-lit), `lightmap` (`false` = probe-lit), `lightmap_scale` (Unity's Scale In Lightmap, default 1), `size` [x, y, z] m (required for a one-number Size, whose extents it gives; for Free pieces, without it a lightmapped one is left out of the lightmap check), `ref` (reference images it is modelled to), `detail` (each feature with its size: what stage 5 models and QA's G4 checks) | 2-3 |
+| `look` | The art direction: `references`, `wear`, `lighting_mood`, `quality_bar`, `lead_family`, `materials` targets ("Look" below) | 2 |
 | `assemblies` | `name`, `file` (`blender/asm/<name>.blend`: one assembly per ASM file), `size` [x, y, z] m, `uses` {piece: count} | 3 |
 | `zones` | `id`, `name`, `kind` (`exterior`/`interior`), `bounds` [x0, y0, x1, y1], `floor_z`, `placements`, `rooms`; optional `lighting_states` (default 1: the number of states of a light players switch in the zone, each a baked copy of its static geometry; "Lightmap check"), `switch` (the switch those states follow; default the zone's own id) and `mirrors` (below) | 2 |
 | `elevations` | `id`, `zone`, `facing`, `origin`, `courses` | 2 |
@@ -82,6 +83,47 @@ the facade, is left out.
 
 Named cameras that tie the build to the mockups. QA renders from these positions and never from a viewpoint chosen
 after seeing the result. Give every mockup a view, and add one view per zone at standing eye height (1.7 m).
+
+### Look
+
+`world.style` is one line for prompts. `look` is what modelling, texturing, lighting and QA judge the build against,
+so a world without mockups still has a target. The planner fills it at stage 2 from the brief and the user's images
+(saved under `world/refs/`):
+
+```yaml
+look:
+  references: [world/refs/market_dusk_01.jpg, world/refs/shopfront_02.jpg]   # the place, its materials and light
+  quality_bar: [world/refs/quality_bar_01.jpg]     # optional: finished work at the level aimed for
+  wear: weathered                                  # pristine | lived-in | weathered | derelict
+  lighting_mood: "dusk: 2700 K gas lamps against a 7500 K sky, deep but readable shadows"
+  lead_family: EXT                                 # textured first; the look gate follows it
+  materials:                                       # optional targets per material (QA X5 and X8)
+    M_EXT_Brick: {ref: world/refs/brick_01.jpg, albedo_srgb: [70, 140], roughness: [0.7, 0.95], metal: false,
+                  wear: "soot near the base, cleaner under the cornice"}
+```
+
+- `albedo_srgb` is the dielectric base colour's median luma in sRGB (0-255) and `roughness` the median roughness
+  (1 - smoothness); QA's `pbr_check` reads both. Keep targets inside 30-240, the range every base colour is held to.
+- `lead_family` is the family whose materials set the direction, usually the one with the most visible surface (the
+  facades, the main walls). Its `T-TEX-<FAMILY>` runs first and the **look gate** follows it (`stages.md`, stage 7).
+- Piece `ref` and `detail` carry the same intent down to one piece: `detail: ["sill: 60 mm projection, 50 mm thick",
+  "frame: 70 mm wide, 30 mm reveal"]`. Without a size, stage 5 takes one from `blender-mesh-topology`'s real-world
+  sizes and reports it.
+- Without `look`, the validator notes it and QA judges against `world.style` and the piece descs alone.
+
+### Quality tier
+
+`world.quality`, asked at intake, decides whether the PC build is held to the mobile platform:
+
+| | `pc_lead` | `parity` |
+|---|---|---|
+| Budgets | Per platform: `{pc: ..., quest: ...}`, PC up to the PC targets | One number each: the mobile targets bind PC too |
+| Source maps (`map_px`) | Sized for PC (up to 2048); Android and iOS get 1024 or less from their import overrides (stage 10) | 1024 or less, the same on every platform |
+| PC-only extras | Detail maps, decor and post-processing switched per build target (`vrchat-world-sdk-setup`) | None |
+| Lightmaps | One bake for every platform at Max Lightmap Size 1024 (`vrchat-lighting-and-baking`) | The same |
+
+The validator notes a `pc_lead` world whose budgets are all one number (PC held to mobile's), and a cross-platform
+world with no `quality` (parity assumed).
 
 ### Lightmap check
 

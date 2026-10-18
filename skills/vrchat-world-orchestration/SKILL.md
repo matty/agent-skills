@@ -11,8 +11,7 @@ the build lives in files, so any session can resume it.
 
 ## Start here
 
-1. Find the world folder: the one that holds `world/`, `blender/` and `export/` (ask the user if they did not say).
-   If `world/ledger.yaml` exists, go to **Resume**.
+1. Find the world folder (it holds `world/`, `blender/` and `export/`; ask if unsure); if it has `world/ledger.yaml`, **Resume**.
 2. Otherwise run **Stage 0**, then add the first tasks to the ledger: `T-SPEC-01` (after `T-MOCK-01` when
    `world.mockups` is true), or `T-PLAN-01` in `small` scale.
 3. Run **the loop** until stage 13 is done, stopping at each gate and at every escalation.
@@ -50,21 +49,23 @@ Detect first, then ask the user to confirm or change, in one message:
 | World folder | The current folder | - |
 | Platforms | `pc` and `quest` (the Android build); `ios` when asked for | - |
 | Pipeline scale | `full`, or `small` for one zone and about 30 pieces or fewer | Size of the brief |
-| Generated or library assets for props (`generate_3d`, asset libraries) | **No** | - |
-| Substance Designer / Painter | Use if present, else the Blender fallback | Substance MCP `sd_ping`, install folders |
+| Quality tier (`world.quality`) | `pc_lead` when PC and a mobile platform are both in: PC gets its own budgets and source sizes, mobile its import overrides; `parity` when PC should ship what mobile ships | - |
+| Generated or library assets: props (`generate_3d`, asset libraries), CC0 materials and HDRIs (Poly Haven, ambientCG) | **No**; when yes, each one's source and licence goes in `flags.generated_assets` | Blender MCP `search_assets` lists the libraries it reaches |
+| Substance Designer / Painter | Use if present, else the Blender fallback. Painter is user-assisted unless a Painter bridge (an MCP or plugin) answers | Substance MCP `sd_ping`, install folders |
 | Blender CLI path | - | `bpy.app.binary_path` through the Blender MCP; else `blender` on PATH, `Program Files\Blender Foundation\*`, portable unzips such as `~/.blender/blender-*`, Steam's `common\Blender`; else ask. A missing Blender MCP does not block the build: kit work is headless |
 | Blender MCP connected | - | A call to it answers (`tools.blender_mcp`) |
 | Unity project path | - | Unity MCP: `mcpforunity://instances` lists the open projects as `Name@hash`; the path is probably in `mcpforunity://project/info` (unverified: read both, and confirm the path with the user) |
-| Packages the plan may lean on (VRC Light Volumes, Bakery, LTCGI) and the Android / iOS build modules | Plan only with what is installed; anything else is a user install, asked now | `Packages/vpm-manifest.json` and `Packages/manifest.json`; `BuildPipeline.IsBuildTargetSupported` through Unity MCP. UdonSharp and ClientSim ship inside the Worlds SDK since 3.4.0 (https://creators.vrchat.com/releases/release-3-4-0, checked 2026-10-17): never detect or add them as packages |
+| Packages the plan may lean on (VRC Light Volumes, Bakery, LTCGI, Post Processing for PC) and the Android / iOS build modules | Plan only with what is installed; anything else is a user install, asked now | `Packages/vpm-manifest.json` and `Packages/manifest.json`; `BuildPipeline.IsBuildTargetSupported` through Unity MCP. UdonSharp and ClientSim ship inside the Worlds SDK since 3.4.0 (https://creators.vrchat.com/releases/release-3-4-0, checked 2026-10-17): never detect or add them as packages |
 | Image tool for mockups | Skip stage 1 unless the user confirms a tool | A tool that makes whole-scene concept art to a file; texture, sprite and engine-asset generators (Unity MCP `generate_image`) do not count (`references/mockups.md`) |
 
-Also ask for the brief itself if it is thin: the place, mood, scale (how many zones, roughly how big), reference
-images, and must-have interactions. Then create the project layout (`references/mechanics.md`), copy
-`templates/spec.yaml` and `templates/ledger.yaml` into `world/`, record the answers in the spec's `world` and `tools`
-and the brief, folder and verbatim replies in the ledger's `intake`, and check which skills are installed (routing
-table below). Strongly recommend `vrchat-world-qa` (without it QA has only the minimum checks in
-`references/stages.md`) and `uv-unwrapping` (without it the UV distortion and seam checks, U1 and U5, are skipped by
-the user's choice); record a declined skill in `intake.skills_declined`.
+Also ask for the brief if it is thin: the place, mood, scale (zones, rough size), reference images, must-have
+interactions, how worn the place is, and two or three images of finished work at the quality they want (the spec's
+`look`, `references/world-spec.md`; images go in `world/refs/`). Then create the project layout
+(`references/mechanics.md`), copy `templates/spec.yaml` and `templates/ledger.yaml` into `world/`, record the answers
+in the spec's `world` and `tools` and the brief, folder and verbatim replies in the ledger's `intake`, and check which
+skills are installed (routing table below). Strongly recommend `vrchat-world-qa` (without it QA has only the minimum
+checks in `references/stages.md`) and `uv-unwrapping` (without it U1 and U5 are skipped by the user's choice); record
+a declined skill in `intake.skills_declined`.
 
 ## The loop
 
@@ -100,10 +101,11 @@ spec or the task list; a spec that does not validate blocks the stage.
 |---|---|---|
 | **spec** | After stage 2 (`small`: after `T-PLAN-01`), once the drafted tasks are merged into the ledger | Plans, elevations and mockups side by side; platforms and budgets; the zone list; `tasks.mmd`; every assumption |
 | **greybox** | After stage 4 (`T-GREY-MASTER` done) | Walkthrough renders from every view, plan and elevation overlays: the last cheap moment to change layout or scale |
+| **look** | After the lead family's texturing (`look.lead_family`; `small`: `T-TEX-WORLD`) passes QA | QA's X5 look-dev renders (the family's materials on its pieces and from the spec views, in neutral and in mood light) and X8 numbers, beside the mockups or `look.references`: the last cheap moment to change the material direction, before every other family copies it |
 
 Present a short summary with the images, not the YAML, and wait for explicit approval; on approval keep the spec as
 `world/spec.approved.yaml` for later diffs. "Changes requested": record the user's words, send the tasks that produce
-what changes back with them (`references/ledger.md`), QA again, ask again. Both gates hold in `small` scale too.
+what changes back with them (`references/ledger.md`), QA again, ask again. Every gate holds in `small` scale too.
 
 ## Stages
 
@@ -116,9 +118,9 @@ Inputs, outputs, task ids, write paths and QA checks per stage: `references/stag
 | 2 | Spec and diagrams | planner | `spec.yaml`, SVG plans and elevations, drafted tasks. **Spec gate** |
 | 3 | Kit plan | planner | Full piece list, families, materials, texel density, assemblies, sockets |
 | 4 | Greybox | kit modellers, integrator | Greybox pieces in KIT files, ASM and MASTER laid out from the plans. **Greybox gate** |
-| 5 | Kit modelling | kit modellers (parallel, one per KIT file) | Final geometry, LODs, collision |
+| 5 | Kit modelling | kit modellers (parallel, one per KIT file) | Final geometry to each piece's detail list and references, LODs, collision |
 | 6 | UVs | UV artists | UV0 to the family's texel density, UV2 with gaps of 2 texels at each piece's worst-case lightmap square |
-| 7 | Texturing | texture artist | Family materials, trim sheets, unique prop textures |
+| 7 | Texturing | texture artist | The lead family first, then the **look gate**, then the other families' materials, trim sheets, unique prop textures |
 | 8 | Assemblies and dressing | integrator | ASM files and MASTER complete with final pieces |
 | 9 | Export | exporter | One FBX per piece |
 | 10 | Unity assembly | Unity integrator | Prefabs, materials, placements synced, VRChat scene set up, Android and iOS overrides in place |
@@ -140,7 +142,7 @@ Ask at intake, record as `world.scale` in the spec.
 | Stages 1-3 | Separate tasks, spec gate after 2 | One planning task, `T-PLAN-01` (mockups, spec, kit plan), spec gate after it |
 | KIT files | One per family | One `KIT_World.blend` may hold every family (pieces and `M_<FAMILY>_*` materials still named by family) |
 | QA | One pass per task | One pass per stage, after its last task returns: one verdict per task in `world/reports/qa/stage-<n>/verdict.yaml`. Until then a task waits in `qa`, which its same-stage dependants accept; later stages wait for `done` |
-| Gates | Spec, greybox | Spec, greybox (never skipped: they are the cheap moments to change course) |
+| Gates | Spec, greybox, look | Spec, greybox, look (never skipped: they are the cheap moments to change course) |
 | Everything else | As written | As written: same names, same spec, same ledger, so a small world can grow into a full one |
 
 ## Skills to route to
@@ -154,9 +156,9 @@ QA return `incomplete` (owner qa) until the user installs or declines it.
 |---|---|---|
 | 2-3 | `vrchat-lighting-and-baking` when the brief has a light players switch (`zones[].lighting_states`) | Plan a baked copy per state (`references/world-spec.md`, "Lightmap check") |
 | 4, 5, 8, 9 | `blender-kit-library` (kit files), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md` and the export settings in `references/stages.md` |
-| 5 | `blender-mesh-topology` | Brief carries the stage 5 minimum checks (`references/stages.md`) |
+| 5 | `blender-mesh-topology` (finishing each piece's form to its detail list, and clean topology) | Brief carries the stage 5 minimum checks (`references/stages.md`) |
 | 6 | `uv-unwrapping`; `rizomuv-uv-pipeline` if RizomUV is installed | Blender Smart UV Project with `margin_method='FRACTION'` and `island_margin` = half the UV2 gap, sized from each modelled mesh's real area (`references/stages.md`, stage 6; it leaves the full gap between islands and half of it, 1 texel, at the tile edge); UV0 of atlas and unique maps packed with Margin Method Fraction 1/128 (islands `map_px / 64` apart, `map_px / 128` from the edge); a manual texel-density pass |
-| 7 | Substance MCP; `references/texturing.md` | Blender procedural materials and bakes (`references/texturing.md`) |
+| 7 | `pbr-texturing` (values, bakes, Designer, Painter, wear, trim sheets); the Substance MCP when it answers | `references/texturing.md`: Blender procedural materials and bakes, the channel plan |
 | 10 | `blender-unity-placement-sync`, `unity-batching-and-instancing`, `vrchat-texture-and-vram`, `vrchat-world-sdk-setup` | Placement by hand through Unity MCP (user moves are not tracked); scene setup from the official VRChat creator docs |
 | 11 | `vrchat-lighting-and-baking` | Baked lighting with Unity defaults and the footprint table |
 | 12 | `vrchat-udon`; `vrchat-world-sdk-setup` for ClientSim and multi-client testing; `vrchat-lighting-and-baking` for a light switch | Event-driven UdonSharp, manual sync, no `Update()` |
@@ -182,10 +184,9 @@ QA return `incomplete` (owner qa) until the user installs or declines it.
 ## Change course
 
 When the user changes their mind mid-build, edit the spec, re-validate and regenerate the diagrams. Through stage 4,
-send the tasks whose inputs changed back to `todo` (attempts 0, the old count logged); after it, never re-run a
-finished task: add one limited to the change (`T-RENAME-<PIECE>`, or for a resized piece one task in its latest
-stage). Gate re-opening: `references/world-spec.md`, "Changing the spec"; ledger steps: `references/ledger.md`. Never
-patch a downstream file without changing the spec first.
+send the tasks whose inputs changed back to `todo` (attempts 0, old count logged); after it, add a task limited to the
+change (`T-RENAME-<PIECE>`, or one in a resized piece's latest stage), never re-run a finished one. Gate re-opening:
+`references/world-spec.md` ("Changing the spec"); ledger steps: `references/ledger.md`. Change the spec first, always.
 
 ## References and scripts
 
@@ -194,8 +195,7 @@ patch a downstream file without changing the spec first.
 | `references/stages.md` | Per stage: inputs, outputs, task ids, the write table, QA checks, parallelism |
 | `references/subagent-briefs.md` | Builder and QA brief templates, the essentials of every task's brief |
 | `references/ledger.md` | Ledger fields, the task lifecycle, what the master does at each moment |
-| `references/world-spec.md` | Spec schema, the lightmap check, kit rules (files, names, pivots), changing the spec |
-| `references/example-spec.yaml` | A complete spec that validates, for the planner |
+| `references/world-spec.md`, `references/example-spec.yaml` | Spec schema, the look, the quality tier, the lightmap check, kit rules (files, names, pivots), changing the spec; a complete spec that validates |
 | `references/mechanics.md` | Spawning subagents in Claude Code and Codex, the project layout, running the scripts |
 | `references/mockups.md`, `references/texturing.md` | Stage 1 and stage 7 |
 | `scripts/spec_validate.py` (Python + PyYAML) | Validates the spec and the task graph; `--footprints` for lightmap planning, `--draft` for drafted tasks, `--mermaid` for `tasks.mmd` |

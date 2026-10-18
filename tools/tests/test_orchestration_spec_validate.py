@@ -640,6 +640,66 @@ class SpecChecks(unittest.TestCase):
         for needle in ("is outside the zone", "unknown key 'colour'"):
             self.assertTrue(any(needle in m for m in warnings), (needle, warnings))
 
+    def test_quality_tier(self):
+        spec = study_spec()
+        notes = messages(run(spec)[0], "NOTE")
+        self.assertTrue(any("world.quality is not set, so parity is assumed" in m for m in notes), notes)
+        spec["world"]["quality"] = "best"
+        self.assertTrue(any("world.quality must be pc_lead or parity" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["world"]["quality"] = "pc_lead"                 # every budget one number: PC is held to mobile's
+        f = run(spec)[0]
+        self.assertEqual((f.errors, f.warnings), (0, 0), f.items)
+        self.assertTrue(any("held to the mobile budgets" in m for m in messages(f, "NOTE")), f.items)
+        spec["budgets"]["texture_vram_mb"] = {"pc": 600, "quest": 20}
+        self.assertFalse(any("held to the mobile budgets" in m for m in messages(run(spec)[0], "NOTE")))
+        spec["world"]["platforms"] = ["pc"]
+        self.assertTrue(any("pc_lead only matters" in m for m in messages(run(spec)[0], "NOTE")))
+
+    def test_look_section(self):
+        spec = study_spec()
+        self.assertTrue(any(m.startswith("look missing") for m in messages(run(spec)[0], "NOTE")))
+        spec["look"] = {"references": ["world/refs/study_01.jpg"], "wear": "weathered",
+                        "lighting_mood": "2700 K lamps, dim blue moonlight", "lead_family": "INT",
+                        "materials": {"M_INT_Wallpaper": {"ref": "world/refs/paper.jpg", "albedo_srgb": [70, 140],
+                                                          "roughness": [0.6, 0.9], "metal": False,
+                                                          "wear": "faded where the sun reaches"}}}
+        spec["pieces"][0]["ref"] = ["world/refs/wall_bay.jpg"]
+        spec["pieces"][0]["detail"] = ["skirting: 150 mm high, 20 mm proud", "picture rail at 2.1 m"]
+        spec["families"]["INT"]["detail_map"] = True
+        f = run(spec)[0]
+        self.assertEqual((f.errors, f.warnings), (0, 0), f.items)
+        self.assertFalse(any(m.startswith("look missing") for m in messages(f, "NOTE")))
+        spec["look"]["wear"] = "grimy"
+        spec["look"]["lead_family"] = "EXT"
+        spec["look"]["materials"]["M_EXT_Brick"] = {"albedo_srgb": [140, 70]}
+        spec["look"]["materials"]["M_INT_Wallpaper"].update(roughness=[0.9, 0.6], metal="no", colour="red")
+        spec["pieces"][0]["detail"] = "skirting"
+        spec["pieces"][1]["ref"] = 3
+        spec["families"]["STR"]["detail_map"] = "yes"
+        f = run(spec)[0]
+        errors = messages(f, "ERROR")
+        for needle in ("look.wear must be one of", "look.lead_family 'EXT' is not in families",
+                       "look.materials.M_EXT_Brick: not a material any family lists",
+                       "look.materials.M_EXT_Brick.albedo_srgb must be [low, high]",
+                       "look.materials.M_INT_Wallpaper.roughness must be [low, high]",
+                       "look.materials.M_INT_Wallpaper.metal must be true or false",
+                       "piece INT_Wall_2x3_A: detail must be a list", "piece INT_Door_2x3_A: ref must be an image path",
+                       "family STR detail_map must be true or false"):
+            self.assertTrue(any(needle in m for m in errors), (needle, errors))
+        self.assertTrue(any("unknown key 'colour'" in m for m in messages(f, "WARN")), f.items)
+
+    def test_look_targets_outside_the_pbr_range_and_missing_images(self):
+        spec = study_spec()
+        spec["look"] = {"references": ["world/refs/missing.jpg"],
+                        "materials": {"M_STR_Boards": {"albedo_srgb": [20, 120]}}}
+        warnings = messages(run(spec)[0], "WARN")
+        self.assertTrue(any("reaches outside 30-240" in m for m in warnings), warnings)
+        with tempfile.TemporaryDirectory() as d:
+            f = SV.Findings()
+            SV.check_spec(spec, f, root=d)
+            self.assertTrue(any("look.references: world/refs/missing.jpg does not exist yet" in m
+                                for m in messages(f, "WARN")), f.items)
+
     def test_intake_only_spec(self):
         spec = {k: v for k, v in study_spec().items() if k in ("version", "world", "tools")}
         f, ctx = run(spec)
@@ -708,6 +768,30 @@ class LedgerChecks(unittest.TestCase):
                        "T-GREY-MASTER (stage 4) does not wait for gate:spec"):
             self.assertTrue(any(m.startswith("task " + needle) for m in warnings), (needle, warnings))
         self.assertFalse(any("gate:greybox" in m for m in warnings), warnings)
+
+    def looked(self, other_tex_deps, exp_deps):
+        task = {"role": "x", "status": "todo"}
+        return {"gates": {"look": {"status": "pending", "after": ["T-TEX-INT"]}},
+                "tasks": [dict(task, id="T-TEX-TRIM-LAYOUT", stage=7, deps=[], writes=["blender/substance/TRIM/"]),
+                          dict(task, id="T-TEX-INT", stage=7, deps=["T-TEX-TRIM-LAYOUT"],
+                               writes=["blender/textures/INT/"]),
+                          dict(task, id="T-TEX-STR", stage=7, deps=other_tex_deps, writes=["blender/textures/STR/"]),
+                          dict(task, id="T-EXP-INT", stage=9, deps=exp_deps, writes=["export/fbx/INT/"])]}
+
+    def test_look_gate_holds_the_other_families_and_the_export(self):
+        f = SV.Findings()
+        SV.check_ledger(self.looked(["gate:look"], ["T-TEX-INT", "gate:look"]), f)
+        self.assertEqual((f.errors, f.warnings), (0, 0), f.items)
+        f = SV.Findings()                                  # the lead family itself and the trim layout never wait
+        SV.check_ledger(self.looked(["T-TEX-INT"], ["T-TEX-INT"]), f)
+        warnings = messages(f, "WARN")
+        self.assertEqual(sorted(m.split(":")[0] for m in warnings),
+                         ["task T-EXP-INT (stage 9) does not wait for gate", "task T-TEX-STR does not wait for gate"])
+        led = self.looked([], ["T-TEX-INT"])
+        del led["gates"]["look"]
+        f = SV.Findings()
+        SV.check_ledger(led, f)
+        self.assertTrue(any(m.startswith("no look gate") for m in messages(f, "NOTE")), f.items)
 
     def test_a_running_task_under_a_gate_that_is_not_approved_is_warned(self):
         led = self.gated(["gate:spec"], ["gate:greybox"])

@@ -29,6 +29,14 @@ gates:                                # user approvals; tasks list them in deps 
     notes: ""
     history: []
     reopened_by: null
+  look:                               # the lead family's materials, before the other families are textured
+    status: pending
+    after: [T-TEX-EXT]                # the lead family's (look.lead_family) texture task; small scale: [T-TEX-WORLD]
+    by: null
+    at: null
+    notes: ""
+    history: []
+    reopened_by: null
 
 tasks:                                # stage 0 adds the first tasks; the planner drafts the rest into
                                       # world/briefs/draft-tasks.yaml and the master merges them before the spec gate

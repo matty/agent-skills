@@ -1,14 +1,19 @@
 # Texturing (stage 7)
 
-Minimal guidance until texturing has its own skill. The goal is the material plan in the spec: 1-3 materials per
-family named `M_<FAMILY>_<Name>`, at the family's `map_px`, matching the mockup swatches.
+Load `pbr-texturing` for the craft: values, bakes, Substance Designer and Painter, wear, trim sheets, decals and its
+`pbr_check.py`. This file is what the pipeline fixes whatever the tool, and the minimum to work from when that skill
+is not installed: 1-3 materials per family named `M_<FAMILY>_<Name>`, at the family's `map_px`, matching the mockup
+swatches, `look.references` and the `look.materials` targets, worn to `look.wear` (`world-spec.md`, "Look").
+
+**Lead family first.** `look.lead_family`'s `T-TEX-<FAMILY>` runs alone; its QA's look-dev renders and PBR numbers
+go to the user at the look gate, and the other families start from the approved direction (`stages.md`, stage 7).
 
 ## Pick the tool
 
 | Situation | Use |
 |---|---|
 | Substance Designer installed and its MCP answers `sd_ping` | Designer for tiling materials and trim sheets |
-| Substance Painter installed | Unique hero props only. Painter has no automation here: the agent prepares bake-ready meshes and the user paints, or the prop falls back to Designer or Blender |
+| Substance Painter installed | Unique hero props. Painter's Python API (11.1 and later) can bake mesh maps, add fill layers and smart materials and export through a preset, but an agent reaches it only through a bridge the user installs (an MCP or a plugin). With none, the agent prepares bake-ready meshes and the user paints; or the prop falls back to Designer or Blender |
 | Neither | Blender procedural materials baked to images |
 
 ## Designer (tiling and trim)
@@ -24,7 +29,8 @@ family named `M_<FAMILY>_<Name>`, at the family's `map_px`, matching the mockup 
    export bitmaps (the community Designer MCP's tools export a package `.sbsar` but no bitmaps, as of 2026-10-17),
    export the `.sbsar` and render its outputs with `sbsrender`, which ships in Designer's install folder:
    `sbsrender render --input <pkg>.sbsar --output-path blender/textures/<FAMILY> --output-format png --set-value
-   "$outputsize@10,10"` (10 = log2 of 1024; name the files with `--output-name`, or rename them after). Blender
+   '$outputsize@10,10'` (10 = log2 of 1024; single quotes, or the shell expands `$outputsize` and passes only
+   `@10,10`; name the files with `--output-name`, or rename them after). Blender
    cannot read a `.sbsar` without Adobe's add-on, so there is no Blender route. Only without `sbsrender`, ask the
    user to export the outputs from Designer. Checked 2026-10-17 against `sbsrender render --help`, Designer 16.0.7.
 5. Build `M_<FAMILY>_<Name>` in the KIT file from those images, so the FBX carries the material name and Unity can
@@ -46,6 +52,14 @@ texel_density` metres: 2 x 2 m at 512 px/m on 1024), with patterns that repeat a
 then check that 3 x 3 repeats show no seam. Save the node setup in
 `blender/substance/<FAMILY>/<FAMILY>_materials.blend` so it can be re-baked.
 
+## Values every map meets (QA X8)
+
+Dielectric base colour between 30 and 240 sRGB luma (under 50 only for the darkest materials), raw metal 160 or
+more (180 in the guide; titanium measures 171), metallic 0 or 1 except where dust or worn paint blends them, smoothness in the metallic-smoothness map's alpha
+and never one flat value, normal maps unit length and OpenGL (Y+): Adobe's "The PBR Guide, Part 2"
+(https://www.adobe.com/learn/substance-3d-designer/web/the-pbr-guide-part-2, checked 2026-10-18) and this
+pipeline's working rules. QA runs its own copy of the check (`vrchat-world-qa`, `qa_measure --pbr`).
+
 ## Channel plan for Unity's Built-in Render Pipeline
 
 VRChat worlds use the Built-in pipeline's Standard shader (PC) and VRChat's mobile shaders (Quest and iOS). Pack for
@@ -57,11 +71,15 @@ what they read, not for a glTF-style ORM map, which Standard wires up wrong:
 | `T_<FAMILY>_<Name>_MetallicSmoothness.png` | R metallic, A smoothness (1 - roughness); G and B unused | linear | Metallic, Smoothness Source: Metallic Alpha |
 | `T_<FAMILY>_<Name>_Normal.png` (only if the material needs one) | OpenGL (Y+), as Blender bakes it | linear, import as Normal map | Normal Map |
 | Occlusion | Usually skipped in a baked world: the lightmap carries it. If used, its own map; Standard reads G | linear | Occlusion |
+| Detail maps (a family with `detail_map: true`) | A small, finely tiled detail albedo (mid grey is neutral) and detail normal | sRGB / linear | Secondary Maps, UV0 |
 
 Source for the Standard slots: https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterMetallic.html
 (checked 2026-10-16). Mobile: `VRChat/Mobile/Lightmapped` reads only the base colour (and the lightmap);
-`VRChat/Mobile/Standard Lite` reads more, the metallic-smoothness map among them. Check the chosen shader's inputs in
-`vrchat-world-sdk-setup` before baking maps it ignores (`vrchat-texture-and-vram` for their import settings).
+`VRChat/Mobile/Standard Lite` reads the metallic-smoothness map, normal, detail maps and emission, and Directional
+and Bakery MonoSH lightmaps; it is opaque only (VRChat Worlds SDK 3.10.5 source, read 2026-10-18). Check the chosen
+shader in `vrchat-world-sdk-setup` before baking maps it ignores (`vrchat-texture-and-vram` for their import
+settings). A normal map shows under baked light only with Directional or MonoSH lightmaps: decide it with the
+lighting task (`vrchat-lighting-and-baking`), or put that shading into the base colour instead.
 
 ## Unique detail on a tiling family
 
@@ -73,7 +91,8 @@ wall" and "carries its own detail": the two conflict.
 
 ## Rules that save rework
 
-- Texel density comes from the spec; never "make it look sharp" by raising map size past `map_px`.
+- Texel density comes from the spec; never "make it look sharp" by raising map size past `map_px`. Close-range
+  sharpness on a tiling surface comes from its detail map.
 - One normal-map convention throughout (OpenGL, as Blender uses; Unity reads it).
 - Colour space is decided by the importer, not the file: Blender's PNG writer tags every PNG sRGB and Unity
   ignores the tag (measured 2026-10-16, Blender 5.2.2 / Unity 2022.3.22f1). Unity: sRGB on for base colour, off for

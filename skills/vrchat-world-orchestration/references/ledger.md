@@ -14,9 +14,9 @@ return, so a crash never loses a decision.
 | `stage` | The stage the master is working on |
 | `updated` | UTC time of the last write |
 | `intake` | What the spec does not hold: `world_root` (the folder with `world/`, `blender/`, `export/`), `brief` (the user's request in their words), `answers` (their intake replies, verbatim), `skills_declined` (skills the user chose not to install, such as `uv-unwrapping`: QA marks the checks that need them not-run, owner user). The answers themselves live once, in the spec's `world` and `tools` |
-| `gates.<name>` | `status` (`pending`, `approved`, `changes-requested`), `after` (tasks that must be done before asking), `by`, `at`, `notes` with the user's words, `history` (earlier decisions, kept when the gate re-opens), `reopened_by` (the task whose output re-opened it, which may run under it; null otherwise). On approval the master also copies `world/spec.yaml` to `world/spec.approved.yaml`, so a re-open can be diffed |
+| `gates.<name>` | `spec`, `greybox` and `look` (`SKILL.md`, "Gates"): `status` (`pending`, `approved`, `changes-requested`), `after` (tasks that must be done before asking: for `look`, the `T-TEX-<FAMILY>` of the spec's `look.lead_family`, or `T-TEX-WORLD` in `small` scale, which the master sets when it merges the drafted tasks), `by`, `at`, `notes` with the user's words, `history` (earlier decisions, kept when the gate re-opens), `reopened_by` (the task whose output re-opened it, which may run under it; null otherwise). On approval the master also copies `world/spec.yaml` to `world/spec.approved.yaml`, so a re-open can be diffed |
 | `tasks[]` | `id`, `stage`, `title`, `role`, `deps` (task ids or `gate:<name>`), `writes`, `status`, `attempts` (the attempt number: 1 at the first dispatch, +1 after each QA fail; a crash or a `partial` or `blocked` return does not count), `brief`, `report`, `qa` (the verdict file; `false` only for a task that builds nothing, such as a skill test, and the validator warns on it) |
-| `flags.generated_assets` | Every prop made with `generate_3d` or imported from a library: piece, source, task |
+| `flags.generated_assets` | Every prop made with `generate_3d` or imported from a library, and every library material or HDRI a texture uses: piece or material, source, licence, task |
 | `flags.overrides` | Library overrides in ASM or MASTER files, with the reason |
 | `flags.open_conflicts` | Unresolved placement-sync conflicts waiting on the user |
 | `flags.user_actions` | What only the user can do, open until done: installs, sign-in, uploads, on-device tests, decisions to review: `{what, why, task, since}` |
@@ -80,7 +80,8 @@ From the world folder, with the venv that has PyYAML (`mechanics.md`):
 
 It rejects duplicate ids, unknown dependencies or gates, cycles, and two tasks that could run at once writing the
 same file or folder, and warns when a task of stage 4 or later does not wait for `gate:spec` (stage 5 or later:
-`gate:greybox`), directly or through its dependencies. Run it after every change to the task list. Before the spec
+`gate:greybox`; stage 9 or later, and every texture task but the lead family's and `T-TEX-TRIM-LAYOUT`:
+`gate:look`), directly or through its dependencies. Run it after every change to the task list. Before the spec
 gate, check the planner's draft merged in memory with `--draft world/briefs/draft-tasks.yaml`, then merge it into the
 ledger and show `tasks.mmd` at the gate. A later re-draft (after the kit plan, or a gate's "changes requested") is
 checked the same way: a draft task replaces the ledger task with the same id, with a NOTE.

@@ -13,6 +13,7 @@ world:
   allow_generated_assets: false     # props only, and only if the user allows it at intake
   mockups: false                    # true only with a concept-art tool the user confirmed (else stage 1 is skipped)
   style: "Era, materials, palette, time of day, weather in one line"
+  quality: pc_lead                  # pc_lead: PC gets its own budgets and source sizes | parity - asked at intake
 
 tools:                              # detected at intake, confirmed by the user
   blender: C:/Users/me/.blender/blender-5.2.2/blender.exe   # the Blender CLI path
@@ -25,8 +26,9 @@ tools:                              # detected at intake, confirmed by the user
   build_modules: [windows]             # Unity build support installed: windows, android, ios
 
 budgets:                            # ceilings: the Quest targets (vrchat-world-optimization), binding with mobile;
-                                    # a PC-only world may raise them to the PC targets. The planner tightens them to
-                                    # the world and adds piece_tris and lightmap
+                                    # a PC-only world may raise them to the PC targets, and a pc_lead world gives PC
+                                    # its own value ({pc: ..., quest: ...}). The planner tightens them to the world
+                                    # and adds piece_tris and lightmap
   world_tris: 250000
   view_tris: 100000
   materials: 25
@@ -36,4 +38,4 @@ budgets:                            # ceilings: the Quest targets (vrchat-world-
   download_mb: {pc: 200, quest: 100}   # add ios: 100 with ios; mobile hard limit 100 MB, MB = 2^20 bytes
 
 # Added by the planning task, in this order (world-spec.md has each section's fields):
-# grid, families, pieces, assemblies, zones, elevations, views, interactivity, lighting
+# grid, families, pieces, assemblies, zones, elevations, views, interactivity, lighting, look

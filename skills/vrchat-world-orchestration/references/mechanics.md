@@ -30,6 +30,7 @@ Claude Code subagents with MCP for Unity). Brief Unity subagents to read editor 
   world/
     spec.yaml  ledger.yaml
     mockups/       <view>.png + <view>.prompt.txt
+    refs/          the user's reference and quality-bar images (the spec's look and pieces' ref)
     diagrams/      plan_*.svg, elevation_*.svg, tasks.mmd, lightmap_budget.txt (generated; never hand-edited)
     briefs/        <task>.md, draft-tasks.yaml, <task>.attempt<n>.md after a retry
     reports/       <task>.yaml, optimisation.md, build-<platform>.md, publish-fields.md
