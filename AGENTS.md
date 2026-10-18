@@ -3,8 +3,9 @@
 Skills for Claude Code and Codex. Both agents read the same format, so nothing in
 this repo is specific to either one.
 
-`AGENTS.md` and `CLAUDE.md` are the same file in spirit — an agent working in this repo
-should read this one. It overrides `~/.agents/AGENTS.md` where they disagree.
+Codex and Claude Code (2.1.277+, when no `CLAUDE.md` is present:
+https://code.claude.com/docs/en/memory#agents-md, checked 2026-10-17) both read this file as the
+project instructions. It overrides `~/.agents/AGENTS.md` where they disagree.
 
 ## Layout
 
@@ -16,11 +17,15 @@ skills/<skill-name>/
   templates/*       optional — files the skill tells an agent to copy into a project
 install.ps1         the installer (see below)
 tools/check_conventions.py   checks conventions duplicated across skills still agree
+tools/lint_skills.py         checks each skill is well formed (frontmatter, README row, ASCII, links, script headers)
+tools/tests/                 plain-Python tests of the skills' scripts; tools/tests/blender/ for Blender-hosted ones
+tools/run_checks.py          runs all of the above (CI runs it too: .github/workflows/checks.yml)
 README.md           what each skill covers
 AGENTS.md           this file
 ```
 
-The folder name, the `name:` in frontmatter, and the heading in `README.md` must all match.
+The folder name, the `name:` in frontmatter, and the skill's row in `README.md`'s tables must all match
+(`tools/lint_skills.py` checks it).
 `install.ps1` only treats a folder as a skill if it contains `SKILL.md`, so drafts can sit
 in `skills/` without a `SKILL.md` and stay invisible to the installer.
 
@@ -29,7 +34,7 @@ in `skills/` without a `SKILL.md` and stay invisible to the installer.
 ```markdown
 ---
 name: kebab-case-matching-the-folder
-description: What it covers, then when to use it. One paragraph, no line breaks.
+description: When to use it (the words a user types), then what it covers, then which sibling wins. One line.
 ---
 
 # Human readable title
@@ -38,26 +43,44 @@ Body.
 ```
 
 The `description` is the only part an agent sees before deciding whether to load the
-skill, so it carries the whole triggering burden. Write it as *what it covers* followed
-by *when to use it* — name the symptoms and the words a user would actually type
-("draw calls too high", "avatars render black"), not an abstract summary. If two skills
-overlap, say in each which one wins, and route from the entry-point skill rather than
+skill, so it carries the whole triggering burden. Lead with *when to use it*: the
+symptoms and the words a user would actually type ("draw calls too high", "avatars
+render black"), not an abstract summary. Then *what it covers*, briefly. Then, if two
+skills overlap, which one wins; route from the entry-point skill rather than
 duplicating the material.
+
+Keep it under 500 characters, ASCII, with no angle brackets (`tools/lint_skills.py`
+warns past 500; 1,024 is the hard limit). Both agents cut descriptions once all
+installed skills pass a shared budget, and both say to put the key use case and
+trigger words first:
+
+- Claude Code truncates one description at 1,536 characters and, once the listing passes
+  1% of the context window (8,000 characters as a fallback), drops the descriptions of
+  the least-used skills: https://code.claude.com/docs/en/skills (checked 2026-10-17).
+- Codex shortens descriptions first and may omit skills past 2% of the context window
+  (8,000 characters as a fallback): https://learn.chatgpt.com/docs/build-skills (checked 2026-10-17).
 
 ## Making changes
 
 1. Edit under `skills/`. With the default `link` install the change is live in the
-   repo immediately — no reinstall step. Restart the agent only when you add, rename
-   or delete a whole skill, since both agents enumerate skills at startup.
+   repo immediately — no reinstall step. Claude Code watches its skills folders and
+   picks up added, edited or removed skills without a restart (run `/reload-skills` if
+   one does not appear; restart after a rename). Codex reads skills at startup, so
+   restart it after adding, renaming or deleting a skill.
 2. Keep facts with a shelf life (Unity versions, platform limits, SDK APIs) next to a
    source URL in the skill, so a stale number is checkable rather than trusted.
 3. Move anything long or narrow into `references/` and link to it from `SKILL.md`.
    `SKILL.md` should stay skimmable; depth lives one hop away.
 4. Update `README.md`'s table when you add or rename a skill.
-5. Run `python tools/check_conventions.py` if you touched a naming pattern, a budget number, the FBX export
-   settings, the axis conversion, `kit_status`, or `kit_library.py` (shipped in two skills). It lists every copy
-   that disagrees; update `CANON` in it when a fact really changes.
-6. Commit the skill and its README row together. One skill per commit where practical;
+5. Run `python tools/run_checks.py` (add `--blender <path to blender.exe>` when you
+   touched a Blender script) before committing. It runs `check_conventions.py`, which
+   lists every copy of a shared fact that disagrees (update `CANON` in it when a fact
+   really changes), the structure lint and the tests.
+6. A script decision that can be tested without its host gets a plain-Python test in
+   `tools/tests/test_<skill>_<topic>.py`; host behaviour gets a Blender test in
+   `tools/tests/blender/` that builds its own fixtures in a temp folder. A bug found
+   in a dry run gets a test that would have caught it.
+7. Commit the skill and its README row together. One skill per commit where practical;
    commit messages are `<skill-name>: what changed`.
 
 ### Adding a skill
@@ -66,7 +89,7 @@ duplicating the material.
 mkdir skills/my-skill
 # write skills/my-skill/SKILL.md with name: my-skill
 pwsh -File install.ps1 install -Skills my-skill
-# restart Claude Code / Codex
+# Claude Code picks it up (or run /reload-skills); restart Codex
 ```
 
 ### Renaming or deleting one

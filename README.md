@@ -15,7 +15,8 @@ pwsh -File install.ps1 install -Skills vrchat-*      # a subset
 pwsh -File install.ps1 update -Prune                 # git pull, refresh, drop removed skills
 ```
 
-Restart Claude Code / Codex afterwards — both scan for skills at startup.
+Claude Code picks up new skills without a restart (run `/reload-skills` if one does not
+appear); restart Codex, which scans for skills at startup.
 
 Skills go to `~/.claude/skills` (Claude Code) and `~/.agents/skills` (Codex). Add
 `-Targets claude,agents,codex` only for an older Codex that still reads `~/.codex/skills`;
@@ -72,3 +73,14 @@ for the full installer reference and for how to add or change a skill.
 
 Facts with a shelf life (VRChat's required Unity version, platform limits, SDK APIs)
 carry a source link in the skill — re-check those rather than trusting the number.
+
+## Checks
+
+```pwsh
+python tools/run_checks.py                                   # conventions, structure lint, plain-Python tests
+python tools/run_checks.py --blender "C:/path/to/blender.exe"   # plus the Blender-hosted tests
+```
+
+The plain tests use numpy and PyYAML when they are installed and skip what needs them
+otherwise. CI runs the same command on every push (`.github/workflows/checks.yml`).
+See [AGENTS.md](AGENTS.md) for when to add a test.
