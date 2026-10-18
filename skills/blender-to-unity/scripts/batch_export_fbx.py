@@ -1,22 +1,29 @@
-"""Batch-export Blender objects to Unity-ready FBX files.
+"""Batch-export Blender meshes to Unity-ready FBX files: one FBX per kit piece, per object or per collection.
 
-Usage
------
-Blender Text Editor: set EXPORT_DIR and MODE below, select objects, press Run.
-Blender MCP:         paste through `execute_blender_code` after `get_scene_info()`.
-Headless, a whole kit file, one FBX per piece collection into <dir>/<FAMILY>/<Piece>.fbx:
-    blender -b --factory-startup KIT_World.blend --python batch_export_fbx.py -- --kit --dir export/fbx
-            [--tangents] [--set-status]     # --set-status writes kit_status = "exported" and saves the KIT file
+Host: Blender 4.2+ (bpy; tested on 5.2.2), live or headless. Every exporter keyword it sets is in FBX_SETTINGS below,
+and ../references/fbx-export.md has one row per keyword saying why.
 
-MODE:
-    "object"     one FBX per selected object, named after the object
-    "collection" one FBX per collection that contains a selected object
-    "single"     one FBX containing everything selected, named SINGLE_NAME
+Headless, a whole KIT file, one FBX per piece collection into <dir>/<FAMILY>/<Piece>.fbx:
+    blender -b --factory-startup blender/kits/KIT_World.blend --python-exit-code 1 --python batch_export_fbx.py
+            -- --kit --dir <dir> [--set-status]   # --set-status writes kit_status = "exported" and saves the KIT file
+  --python-exit-code 1 makes a failed export exit 1 (without it Blender exits 0). <dir> is absolute, "//..." relative
+  to the .blend's folder (//../../export/fbx from blender/kits/), or relative to the current directory; the absolute
+  folder is printed. Every mesh in the piece collection is exported, hidden or not (LODs, <Piece>_COL), with its
+  modifiers applied, Path Mode Strip, and the written object names are printed. A mesh that reaches the exporter with
+  custom normals on faces of 4+ corners gets a warning: the exporter's own triangulation changes them.
 
-Settings match ../references/fbx-export.md: FBX All scaling, -Z forward / Y up,
-face smoothing, modifiers applied, triangulated, meshes only.
+Blender Text Editor: set EXPORT_DIR, MODE and PATH_MODE below, select mesh objects, press Run.
+Blender MCP (execute_blender_code): run the file as is to export the selection, or load the functions only:
+    ns = {"BATCH_EXPORT_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
+    ns["export_kit"]("//../../export/fbx")       # returns {fbx path: [object names]}
+
+MODE (interactive runs; only selectable objects are exported, hidden ones are reported and skipped):
+    "object"     one FBX per selected mesh object, named after the object
+    "collection" one FBX per collection holding a selected mesh, with the selected meshes of that collection
+    "single"     one FBX with every selected mesh, named SINGLE_NAME
 """
 
+import contextlib
 import os
 import re
 import sys
@@ -25,60 +32,166 @@ import bpy
 
 PIECE_RE = re.compile(r"^([A-Z]{2,5})_[A-Za-z0-9]+_(\d+(?:x\d+){0,2}|Free)_[A-Z]\d?$")
 
-# --- configure -------------------------------------------------------------
-EXPORT_DIR = "//export/fbx"   # // = next to the open .blend; forward slashes are fine on Windows
+# --- configure (Text Editor and MCP runs) -------------------------------------------------------------------------
+EXPORT_DIR = "//export/fbx"   # "//" = the open .blend's folder
 MODE = "object"
 SINGLE_NAME = "world_chunk"
-USE_TANGENTS = False        # True only if the meshes use normal maps
-APPLY_MODIFIERS = True
-# ---------------------------------------------------------------------------
+PATH_MODE = "COPY"            # a one-off asset with its own textures; kit pieces (shared Unity materials): "STRIP"
+VERTEX_COLORS = "NONE"        # "SRGB" or "LINEAR" only when the Unity shader reads vertex colours
+# ------------------------------------------------------------------------------------------------------------------
+
+# Every exporter keyword this script sets (path_mode and colors_type come from the call). One row each in
+# ../references/fbx-export.md.
+FBX_SETTINGS = dict(
+    object_types={"MESH"},
+    use_custom_props=False,
+    global_scale=1.0,
+    apply_unit_scale=True,
+    apply_scale_options="FBX_SCALE_ALL",
+    axis_forward="-Z",
+    axis_up="Y",
+    use_space_transform=True,
+    bake_space_transform=True,  # the axis change goes into the vertices: roots arrive in Unity at rotation 0
+    mesh_smooth_type="FACE",
+    use_mesh_modifiers=True,
+    use_subsurf=False,
+    use_mesh_edges=False,
+    use_triangles=True,
+    use_tspace=False,           # Unity calculates MikkTSpace tangents on import
+    colors_type="NONE",
+    add_leaf_bones=False,
+    bake_anim=False,
+    embed_textures=False,
+)
+KIT_PATH_MODE = "STRIP"         # kit pieces use the family's shared Unity material: no texture copies
 
 
-def _export(filepath, objects, path_mode="COPY"):
-    bpy.ops.object.select_all(action="DESELECT")
+def resolve_dir(path):
+    """Absolute folder for path: "//..." is relative to the open .blend's folder, anything else relative to the
+    current directory (as for any command-line tool)."""
+    return os.path.normpath(os.path.abspath(bpy.path.abspath(path)))
+
+
+def _warn_transform(ob, kit=False):
+    m = ob.matrix_basis
+    if any(abs(s - 1.0) > 1e-4 for s in m.to_scale()) or m.to_quaternion().angle > 1e-4:
+        print("[warn] '%s' has unapplied rotation or scale (Ctrl+A > Rotation & Scale)" % ob.name)
+    if kit and m.to_translation().length > 1e-4:
+        # every object in a kit piece sits at identity with its origin at the piece pivot (blender-kit-library);
+        # Unity's KitImport Check() flags an offset child
+        print("[warn] '%s' is off the piece origin (location %s): apply location (Ctrl+A > All Transforms)"
+              % (ob.name, tuple(round(v, 4) for v in m.to_translation())))
+
+
+def _warn_retriangulation(objects):
+    """use_triangles makes the exporter split every face of 4+ corners its own way. Measured on Blender 5.2.2: that
+    changes custom normals (a weighted-normal panel went from 0.00 to 10.42 deg off flat, Harden Normals chamfers by up
+    to 12.6 deg). A mesh that arrives already triangulated in its own stack exports unchanged. (Non-planar quads also
+    get the exporter's diagonal: mesh_audit.py counts them.)"""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
     for ob in objects:
-        ob.select_set(True)
-    bpy.context.view_layer.objects.active = objects[0]
+        if ob.type != "MESH":
+            continue
+        ev = ob.evaluated_get(depsgraph)
+        me = ev.to_mesh()
+        try:
+            big = sum(1 for p in me.polygons if p.loop_total > 3)
+            if big and me.has_custom_normals:
+                print("[warn] '%s': custom normals on %d face(s) with 4+ corners, which the exporter's triangulation "
+                      "changes: switch the stack's Triangulate back on if it is off in the viewport (UV work leaves "
+                      "it off), or put a Triangulate modifier (Minimum Vertices 4, Keep Normals on) directly above "
+                      "the Weighted Normal modifier, or after a Harden Normals bevel" % (ob.name, big))
+        finally:
+            ev.to_mesh_clear()
 
-    kwargs = dict(
-        filepath=filepath,
-        use_selection=True,
-        object_types={"MESH"},
-        global_scale=1.0,
-        apply_unit_scale=True,
-        apply_scale_options="FBX_SCALE_ALL",
-        use_space_transform=True,
-        bake_space_transform=True,  # axis change into the vertices: root arrives at rotation 0
-        axis_forward="-Z",
-        axis_up="Y",
-        mesh_smooth_type="FACE",
-        use_mesh_modifiers=APPLY_MODIFIERS,
-        use_triangles=True,
-        use_tspace=USE_TANGENTS,
-        use_custom_props=False,
-        add_leaf_bones=False,
-        bake_anim=False,
-        path_mode=path_mode,
-        embed_textures=False,
-    )
-    # Tolerate keyword changes between Blender versions.
+
+def _layer_paths(lc, coll, path=()):
+    path = path + (lc,)
+    if lc.collection == coll:
+        yield path
+    for child in lc.children:
+        yield from _layer_paths(child, coll, path)
+
+
+@contextlib.contextmanager
+def _evaluated(coll):
+    """Make every object in coll evaluated by the view layer while it is exported, then restore everything. The
+    exporter applies modifiers only to evaluated objects: measured on Blender 5.2.2, objects or collections disabled
+    in viewports, excluded collections and collections outside the scene export without their modifiers (objects
+    hidden with H, or in a collection hidden with the eye, are fine)."""
+    scene, vl = bpy.context.scene, bpy.context.view_layer
+    undo = []
+    if coll not in scene.collection.children_recursive:
+        scene.collection.children.link(coll)
+        undo.append(lambda: scene.collection.children.unlink(coll))
+    for path in list(_layer_paths(vl.layer_collection, coll)):
+        lcs = list(path[1:])
+        stack = [path[-1]]
+        while stack:
+            lc = stack.pop()
+            lcs.append(lc)
+            stack.extend(lc.children)
+        for lc in lcs:
+            if lc.exclude:
+                lc.exclude = False
+                undo.append(lambda lc=lc: setattr(lc, "exclude", True))
+            if lc.collection.hide_viewport:
+                lc.collection.hide_viewport = False
+                undo.append(lambda c=lc.collection: setattr(c, "hide_viewport", True))
+    for ob in coll.all_objects:
+        if ob.hide_viewport:
+            ob.hide_viewport = False
+            undo.append(lambda ob=ob: setattr(ob, "hide_viewport", True))
+    vl.update()
     try:
-        bpy.ops.export_scene.fbx(**kwargs)
-    except TypeError as exc:
-        print("[export] retrying with reduced kwargs:", exc)
-        for key in ("use_triangles", "add_leaf_bones", "embed_textures"):
-            kwargs.pop(key, None)
-        bpy.ops.export_scene.fbx(**kwargs)
-    print("[export] wrote", filepath)
+        yield
+    finally:
+        for fn in reversed(undo):
+            fn()
+        vl.update()
+
+
+def _export(filepath, objects=None, collection=None, path_mode=PATH_MODE, colors=VERTEX_COLORS):
+    """Write one FBX and return the mesh object names in it. collection: every mesh in that collection and its child
+    collections, visible or not, with no selection involved. objects: exactly these, which must be selectable
+    (visible and in the view layer); the others are reported and skipped."""
+    kw = dict(FBX_SETTINGS, filepath=filepath, path_mode=path_mode, colors_type=colors)
+    if collection is not None:
+        names = sorted(o.name for o in collection.all_objects if o.type == "MESH")
+        kw.update(collection=collection.name, use_selection=False, use_visible=False)
+        with _evaluated(collection):
+            if kw["use_triangles"]:
+                _warn_retriangulation(collection.all_objects)
+            bpy.ops.export_scene.fbx(**kw)
+    else:
+        bpy.ops.object.select_all(action="DESELECT")
+        for ob in objects:
+            if ob.name in bpy.context.view_layer.objects:
+                ob.select_set(True)
+        names = sorted(o.name for o in bpy.context.selected_objects if o.type == "MESH")
+        skipped = sorted({o.name for o in objects} - set(names))
+        if skipped:
+            print("[warn] not selectable (hidden or outside the view layer), not exported: " + ", ".join(skipped))
+        if not names:
+            print("[export] nothing to write for", filepath)
+            return []
+        bpy.context.view_layer.objects.active = bpy.data.objects[names[0]]
+        kw.update(use_selection=True)
+        if kw["use_triangles"]:
+            _warn_retriangulation([bpy.data.objects[n] for n in names])
+        bpy.ops.export_scene.fbx(**kw)
+    print("[export] wrote %s: %s" % (filepath, ", ".join(names)))
+    return names
 
 
 def export_kit(out_dir, set_status=False):
-    """One FBX per kit piece collection (local, named <FAMILY>_<Type>_<Size>_<Variant>) with every mesh in it (LODs
-    and _COL included), into out_dir/<FAMILY>/<Piece>.fbx. Returns the files written."""
-    out_dir = bpy.path.abspath(out_dir)
+    """One FBX per local kit piece collection (named <FAMILY>_<Type>_<Size>_<Variant>) with every mesh in it, hidden
+    or not (LODs and <Piece>_COL included), into <out_dir>/<FAMILY>/<Piece>.fbx with Path Mode Strip. Returns
+    {fbx path: [object names]}."""
+    out_dir = resolve_dir(out_dir)
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-    written = []
+    written = {}
     for coll in sorted(bpy.data.collections, key=lambda c: c.name):
         m = PIECE_RE.match(coll.name)
         if coll.library is not None or not m:
@@ -88,73 +201,69 @@ def export_kit(out_dir, set_status=False):
             print("[export] %s: no meshes, skipped" % coll.name)
             continue
         for ob in obs:
-            if tuple(round(v, 4) for v in ob.scale) != (1.0, 1.0, 1.0):
-                print("[warn] '%s' has unapplied scale %s" % (ob.name, tuple(ob.scale)))
+            _warn_transform(ob, kit=True)
         folder = os.path.join(out_dir, m.group(1))
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, coll.name + ".fbx")
-        # Kit pieces use the family's shared Unity material (remapped by name), so the FBX carries no textures:
-        # COPY would write a <Piece>.fbm folder with a duplicate of every texture next to each FBX.
-        _export(path, obs, path_mode="STRIP")
-        written.append(path)
+        written[path] = _export(path, collection=coll, path_mode=KIT_PATH_MODE)
         if set_status:
             coll["kit_status"] = "exported"
     if set_status and written:
-        bpy.context.preferences.filepaths.save_version = 0
+        bpy.context.preferences.filepaths.save_version = 0   # no .blend1 backup beside the KIT file
         bpy.ops.wm.save_mainfile()
     print("[export] kit: %d piece(s) into %s" % (len(written), out_dir))
     return written
 
 
-def main():
-    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    if "--kit" in argv:
-        global USE_TANGENTS
-        USE_TANGENTS = "--tangents" in argv
-        out = argv[argv.index("--dir") + 1] if "--dir" in argv else EXPORT_DIR
-        export_kit(out, set_status="--set-status" in argv)
-        return
-    os.makedirs(bpy.path.abspath(EXPORT_DIR), exist_ok=True)
-
+def export_selected(export_dir=EXPORT_DIR, mode=MODE, path_mode=PATH_MODE):
+    """The interactive modes (see MODE above) on the current selection. Returns {fbx path: [object names]}."""
+    out_dir = resolve_dir(export_dir)
+    os.makedirs(out_dir, exist_ok=True)
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
-
     selected = [ob for ob in bpy.context.selected_objects if ob.type == "MESH"]
     if not selected:
-        print("[export] nothing selected (mesh objects only) - aborting")
-        return
+        print("[export] nothing selected (mesh objects only): nothing written")
+        return {}
+    for ob in selected:
+        _warn_transform(ob)
 
-    original = list(selected)
-    warned = False
-    for ob in original:
-        if tuple(round(v, 4) for v in ob.scale) != (1.0, 1.0, 1.0):
-            print("[warn] '%s' has unapplied scale %s - Ctrl+A > Scale first" % (ob.name, tuple(ob.scale)))
-            warned = True
-    if warned:
-        print("[warn] exporting anyway; fix the transforms if Unity shows odd sizes")
+    def safe(name):
+        return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
 
-    if MODE == "single":
-        _export(os.path.join(bpy.path.abspath(EXPORT_DIR), SINGLE_NAME + ".fbx"), original)
-
-    elif MODE == "collection":
+    written = {}
+    if mode == "single":
+        path = os.path.join(out_dir, SINGLE_NAME + ".fbx")
+        written[path] = _export(path, objects=selected, path_mode=path_mode)
+    elif mode == "collection":
         groups = {}
-        for ob in original:
+        for ob in selected:
             for coll in ob.users_collection:
                 groups.setdefault(coll.name, []).append(ob)
         for name, obs in groups.items():
-            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
-            _export(os.path.join(bpy.path.abspath(EXPORT_DIR), safe + ".fbx"), obs)
-
-    else:  # "object"
-        for ob in original:
-            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in ob.name)
-            _export(os.path.join(bpy.path.abspath(EXPORT_DIR), safe + ".fbx"), [ob])
-
-    # restore selection
+            path = os.path.join(out_dir, safe(name) + ".fbx")
+            written[path] = _export(path, objects=obs, path_mode=path_mode)
+    else:
+        for ob in selected:
+            path = os.path.join(out_dir, safe(ob.name) + ".fbx")
+            written[path] = _export(path, objects=[ob], path_mode=path_mode)
     bpy.ops.object.select_all(action="DESELECT")
-    for ob in original:
+    for ob in selected:
         ob.select_set(True)
-    print("[export] done:", len(original), "object(s), mode =", MODE)
+    print("[export] done: %d file(s), mode %s, into %s" % (len(written), mode, out_dir))
+    return written
 
 
-main()
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    if "--kit" in argv:
+        if "--tangents" in argv:
+            print("[export] --tangents is ignored: Unity calculates MikkTSpace tangents (references/fbx-export.md)")
+        out = argv[argv.index("--dir") + 1] if "--dir" in argv else EXPORT_DIR
+        return export_kit(out, set_status="--set-status" in argv)
+    return export_selected()
+
+
+if not globals().get("BATCH_EXPORT_NO_MAIN"):
+    main()

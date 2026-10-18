@@ -54,7 +54,7 @@ for the full installer reference and for how to add or change a skill.
 
 | Skill | Covers |
 |---|---|
-| `blender-to-unity` | Scale/axis conventions, FBX export settings, UV0/UV2 channel rules, atlasing, per-piece Unity folders, prefabs and shared materials, LODs, collision, VRChat notes, plus batch-export / mesh-audit `bpy` scripts |
+| `blender-to-unity` | An ordered export pipeline: scale/axis conventions, one annotated FBX settings table, UV0/UV2 channel rules, atlasing, per-piece Unity folders, prefab variants and shared materials, LODs, collision, VRChat notes, plus batch-export / mesh-audit `bpy` scripts and a Unity import postprocessor (`KitImport.cs`) |
 | `blender-unity-placement-sync` | Two-way layout sync between MASTER/ASM .blend files and Unity: stable placement ids, three-way merge against the last synced snapshot, conflict / duplicate / deletion handling, plus `bpy` dump/apply, plain-Python merge and Unity editor scripts |
 
 ## VRChat world creation (Blender + Unity)
