@@ -32,6 +32,10 @@ placement sync matches them exactly.
 2. Make the family materials in `<FAMILY>/_Shared/` (and a prop's own `M_<Piece>.mat` in its folder), named exactly
    like the Blender materials (`M_INT_Wallpaper` in both). Texture maps for Unity's Standard shader: `_MainTex`
    albedo, `_MetallicGlossMap` with metallic in R and smoothness (1 - roughness) in A, occlusion as its own map.
+   A material made by script (Unity MCP `execute_code`) also calls `EnableKeyword` for each feature it uses,
+   `_NORMALMAP`, `_METALLICGLOSSMAP`, `_DETAIL_MULX2`, `_EMISSION`: only the material inspector sets them, and
+   without them the assigned map is ignored ("you must enable that variant by using the EnableKeyword function",
+   https://docs.unity3d.com/ru/2020.1/Manual/materials-scripting-standard-shader.html, checked 2026-10-18).
 3. Copy each `export/fbx/<FAMILY>/<Piece>.fbx` to `Assets/World/Kits/<FAMILY>/<Piece>/`. On import KitImport.cs sets
    the Model tab as in `fbx-export.md`, remaps every material by name to the project material, turns
    `<Piece>_COL` into a MeshCollider without a renderer, and picks tangents (MikkTSpace only where a remapped

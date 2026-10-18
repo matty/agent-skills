@@ -58,15 +58,15 @@ runs into -X and -Z (a 2 x 3 m wall 0.2 m thick spans x -2..0, z -0.2..0): that 
 
 ## Unity import (Model tab)
 
-`KitImport.cs` applies this to every FBX under `Assets/World/Kits/`, except the two rows marked "left to you"; set
-the same by hand for anything else.
+`KitImport.cs` applies this to every FBX under `Assets/World/Kits/`, except the row marked "left to you"; set the
+same by hand for anything else.
 
 | Field (`ModelImporter` property) | Value |
 |---|---|
 | Scale Factor (`globalScale`), Convert Units (`useFileUnits`) | 1, on |
 | Bake Axis Conversion (`bakeAxisConversion`) | off: the axis change is already in the vertices |
 | Import BlendShapes, Visibility, Cameras, Lights | off |
-| Mesh Compression | left to you: Off while iterating; Low or Medium at ship time |
+| Mesh Compression (`meshCompression`) | Off for kit pieces. Unity quantises each mesh on its own range, so neighbours round differently: on two 2 and 3 m walls meeting at a joint, Medium stepped the tiling UV0 by up to 0.61 px at 1024 across the joint and cut 2-texel UV2 gaps to 1.81-1.85 texels; High opened the joint by up to 6.3 mm and cut the gaps to 1.3; Low moved nothing visibly (0.007 mm, 0.01 px). The editor holds the quantised data, so the bake sees it. Low at most on a unique prop that meets nothing, checked by eye. Measured in Unity 2022.3.22f1, 2026-10-18 |
 | Read/Write (`isReadable`) | off |
 | Optimize Mesh | left to you: Everything (the default) |
 | Generate Colliders (`addCollider`) | off: collision is authored (`<Piece>_COL` or primitives) |

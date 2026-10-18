@@ -8,7 +8,9 @@
 // On every import of a kit FBX (KitModelPostprocessor):
 //   - Model settings: Scale Factor 1 with Convert Units, no Bake Axis Conversion (the FBX already has the axis change
 //     in its vertices), Read/Write off, Generate Lightmap UVs off (UV2 is authored in Blender), no cameras, lights,
-//     visibility, blend shapes, generated colliders or animation, Normals Import.
+//     visibility, blend shapes, generated colliders or animation, Normals Import, Mesh Compression Off (each mesh is
+//     quantised on its own range: at Medium a joint's tiling UVs stepped up to 0.6 px and 2-texel UV2 gaps fell to
+//     1.8 texels, at High the joint opened 6 mm; measured Unity 2022.3.22f1, 2026-10-18).
 //   - Materials: imported via MaterialDescription, kept embedded, and remapped by name to an existing material
 //     anywhere in the project (M_<FAMILY>_* in <FAMILY>/_Shared/, or a prop's own M_<Piece>). A material with no
 //     match stays embedded until it exists: create the shared materials, then Reimport.
@@ -184,6 +186,8 @@ namespace KitImport
                 if (importer.generateSecondaryUV) issues.Add("Generate Lightmap UVs on");
                 if (importer.importCameras || importer.importLights) issues.Add("imports cameras or lights");
                 if (importer.addCollider) issues.Add("Generate Colliders on");
+                if (importer.meshCompression != ModelImporterMeshCompression.Off)
+                    issues.Add("Mesh Compression " + importer.meshCompression + ": kit pieces keep it Off (joints and UV2 gaps)");
                 if (importer.animationType != ModelImporterAnimationType.None) issues.Add("Animation Type " + importer.animationType);
                 if (importer.materialLocation != ModelImporterMaterialLocation.InPrefab) issues.Add("materials extracted");
                 if (!IsIdentity(model.transform)) issues.Add("model root not at identity (rotation " + model.transform.localEulerAngles + "): export with Bake Space Transform on");
@@ -252,7 +256,7 @@ namespace KitImport
     public class KitModelPostprocessor : AssetPostprocessor
     {
         // Bump when the rules below change: Unity then reimports the kit models.
-        public override uint GetVersion() { return 1; }
+        public override uint GetVersion() { return 2; }
 
         void OnPreprocessModel()
         {
@@ -270,6 +274,7 @@ namespace KitImport
             importer.importBlendShapes = false;
             importer.addCollider = false;
             importer.importNormals = ModelImporterNormals.Import;
+            importer.meshCompression = ModelImporterMeshCompression.Off;
             importer.animationType = ModelImporterAnimationType.None;
             importer.importAnimation = false;
             importer.materialImportMode = ModelImporterMaterialImportMode.ImportViaMaterialDescription;
