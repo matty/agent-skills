@@ -7,22 +7,29 @@ assembly. Its stable id lives in the custom property `placement_id` on that empt
 it between collections never lose it. Transforms are written in Unity space (left-handed, Y up, metres) relative to
 the world origin, which is the scope root.
 
-Command line (the usual way; one writer per .blend, so not while someone has the file open and unsaved):
-    blender -b --factory-startup MASTER.blend --python export_placements.py -- dump  --dir placements --scope MASTER
-                                                         [--libraries "kits/*.blend" "asm/*.blend"]
-    blender -b --factory-startup MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER
-                                                         [--libraries ...] [--no-save]
+A scope covers the collection named like the scope when the file has one (an ASM file's assembly collection
+ASM_<Name>_<Variant>), else the whole scene (MASTER); --collection names another. apply creates new placements inside
+that collection. Library overrides are not placements: dump skips them and warns.
+
+Command line (the usual way). One writer per .blend: not while the file is open in a live Blender session.
+    blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
+        dump  --dir <placements> --scope MASTER [--libraries "kits/*.blend" "asm/*.blend"] [--collection NAME]
+    blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
+        apply --dir <placements> --scope MASTER [--libraries ...] [--collection NAME] [--no-save]
 
 From a live Blender (Blender MCP execute_blender_code):
     ns = {}; exec(open(r"<skill>/scripts/export_placements.py", encoding="utf-8").read(), ns)
     ns["dump"](r"F:/World/placements", "MASTER", libraries=[r"F:/World/blender/kits/*.blend"])
     ns["apply"](r"F:/World/placements", "MASTER", libraries=[...])        # then save the file yourself
 
-dump writes <dir>/<scope>.blender.json: every placement, plus "assets", the collection names this file links or
-could link from --libraries (so the merge knows which Unity-side additions Blender can take). apply reads
-<dir>/<scope>.plan.blender.json and does assign, delete, update, create in that order; anything it cannot do
-(an asset it cannot find) is printed and makes the exit code 1, so the commit step will refuse.
---libraries globs are relative to the .blend file's folder unless absolute.
+dump deletes the old <dir>/<scope>.blender.json first (a failed dump leaves none, so a merge cannot read a stale one),
+then writes every placement, "assets" (the collection names this file links or could link from --libraries, so the
+merge knows which Unity-side additions Blender can take) and "warnings". apply reads <dir>/<scope>.plan.blender.json
+and does assign, delete, update, create in that order; a deleted placement's children are moved to its parent with
+their world pose kept, poses are set parents first, and a placement parented under a moved one keeps its world pose
+unless the plan moves it too. Anything it cannot do (an asset it cannot find, an object that changed since the dump) is
+printed as an ERROR and makes the exit code 1, so the commit step will refuse. The command line saves with
+save_version 0 (no .blend1 backup). --libraries globs are relative to the .blend file's folder unless absolute.
 """
 
 import glob
@@ -36,7 +43,7 @@ from mathutils import Matrix, Quaternion, Vector
 PROP = "placement_id"
 
 # Blender (right-handed, Z up) -> Unity (left-handed, Y up), matching the FBX exporter's -Z forward / Y up with
-# Use Space Transform and Bake Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test in ../SKILL.md.
+# Use Space Transform and Bake Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test (SKILL.md).
 C = Matrix(((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))
 CT = C.transposed()
 
@@ -55,11 +62,55 @@ def from_unity(pos, rot, scl):
     return Matrix.LocRotScale(loc, r.to_quaternion(), s)
 
 
-def placements(scene=None):
-    """Local collection-instance empties in the scene (instances inside linked data are not placements here)."""
-    scene = scene or bpy.context.scene
-    return [o for o in scene.objects
+def scope_collection(scope, name=None):
+    """The local collection a scope covers: `name`, else the one named like the scope, else None (the whole scene)."""
+    for want in ([name] if name else [scope]):
+        for coll in bpy.data.collections:
+            if coll.name == want and coll.library is None:
+                return coll
+    if name:
+        raise KeyError("no local collection %r in %s" % (name, bpy.data.filepath or "this file"))
+    return None
+
+
+def _instances(scene=None, coll=None):
+    objs = coll.all_objects if coll is not None else (scene or bpy.context.scene).objects
+    return [o for o in objs
             if o.library is None and o.instance_type == "COLLECTION" and o.instance_collection is not None]
+
+
+def placements(scene=None, coll=None):
+    """Local collection-instance empties in `coll` (or the scene), library overrides excluded."""
+    return [o for o in _instances(scene, coll) if o.override_library is None]
+
+
+def scope_warnings(scene=None, coll=None, items=None):
+    """Problems that make the dump disagree with what Blender draws or with the merge's view of the file."""
+    out = []
+    over = [o.name for o in _instances(scene, coll) if o.override_library is not None]
+    if over:
+        out.append("skipped %d library-override instance(s), which are not placements: %s. An instance that was "
+                   "overridden reads as deleted; make a variant piece instead" % (len(over), ", ".join(sorted(over))))
+    offsets = {}
+    for o in placements(scene, coll):
+        off = tuple(round(v, 4) for v in o.instance_collection.instance_offset)
+        if any(off):
+            offsets.setdefault((o.instance_collection.name, off), []).append(o.name)
+    for (name, off), obs in sorted(offsets.items()):
+        out.append("collection %s has instance_offset %s: the engine places %s that far from where Blender draws "
+                   "them; zero it in its KIT or ASM file" % (name, off, ", ".join(sorted(obs))))
+    if coll is not None and any(abs(v) > 1e-4 for v in coll.instance_offset):
+        out.append("scope collection %s has instance_offset %s: where MASTER instances it, Blender draws it shifted "
+                   "from the Unity prefab; zero it" % (coll.name, tuple(round(v, 4) for v in coll.instance_offset)))
+    cons = sorted(o.name for o in placements(scene, coll) if len(o.constraints))
+    if cons:
+        out.append("placement(s) with constraints: %s. The sync reads and writes world poses and cannot see "
+                   "constraints, so these drift or fight it; remove the constraints (parent the empty instead)"
+                   % ", ".join(cons))
+    unit = (scene or bpy.context.scene).unit_settings.scale_length
+    if abs(unit - 1.0) > 1e-6:
+        out.append("scene unit scale is %g: placements assume 1 Blender unit = 1 m" % unit)
+    return out
 
 
 def _lib_files(libraries):
@@ -95,61 +146,135 @@ def _collection(name, index):
     return coll
 
 
-def dump(directory, scope, libraries=None):
+def dump(directory, scope, libraries=None, collection=None):
+    out = os.path.join(directory, "%s.blender.json" % scope)
+    if os.path.exists(out):
+        os.remove(out)          # a dump that fails below leaves no stale file for the merge to read
+    coll = scope_collection(scope, collection)
     items = []
-    for ob in placements():
+    for ob in placements(coll=coll):
         pos, rot, scl = to_unity(ob.matrix_world)
         items.append({"id": str(ob.get(PROP, "")), "asset": ob.instance_collection.name,
                       "pos": pos, "rot": rot, "scl": scl, "key": ob.name})
-    assets = {c.name for c in bpy.data.collections if c.library is not None}
+    assets = {c.name for c in bpy.data.collections if c.library is not None and not c.is_missing}
     assets |= set(_library_index(libraries))
     assets |= {i["asset"] for i in items}
+    warnings = scope_warnings(coll=coll)
     os.makedirs(directory, exist_ok=True)
-    out = os.path.join(directory, "%s.blender.json" % scope)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"scope": scope, "side": "blender", "file": bpy.data.filepath,
-                   "items": items, "assets": sorted(assets)}, f, indent=2)
-    print("[placements] dumped %d placement(s) to %s" % (len(items), out))
+                   "collection": coll.name if coll else None, "items": items, "assets": sorted(assets),
+                   "warnings": warnings}, f, indent=2)
+    print("[placements] dumped %d placement(s) from %s to %s"
+          % (len(items), "collection " + coll.name if coll else "scene " + bpy.context.scene.name, out))
+    for w in warnings:
+        print("[placements] WARNING " + w)
     return out
 
 
-def apply(directory, scope, libraries=None):
+def keep_children(ob):
+    """Before `ob` is deleted, move its children (often placements parented under it) to its parent, keeping their
+    world pose; a bare objects.remove() would leave them at their parent-relative transform."""
+    for child in list(ob.children):
+        mw = child.matrix_world.copy()
+        child.parent = ob.parent
+        child.matrix_parent_inverse = Matrix.Identity(4)
+        child.matrix_world = mw
+
+
+def same_pose(a, b, tol=1e-5):
+    """Two world matrices equal within `tol` (the tolerance PlacementSync.cs's SamePose uses)."""
+    return all(abs(a[i][j] - b[i][j]) <= tol for i in range(4) for j in range(4))
+
+
+def set_world_poses(poses, before):
+    """Set the planned {object name: world matrix} parents first, evaluating the scene between levels, so moving a
+    placement never drags one parented under it that was already set. A placement the plan does not move gets its
+    `before` matrix back only when an ancestor moved and dragged it; every other object is left alone (setting
+    matrix_world ignores constraints, so re-setting it would shift a constrained placement on every apply)."""
+    def depth(ob):
+        d, p = 0, ob.parent
+        while p is not None:
+            d, p = d + 1, p.parent
+        return d
+
+    def under_moved(ob):
+        p = ob.parent
+        while p is not None:
+            if p.name in poses:
+                return True
+            p = p.parent
+        return False
+
+    kept = {n: mw for n, mw in before.items() if n not in poses and under_moved(bpy.data.objects[n])}
+    levels = {}
+    for n in list(poses) + list(kept):
+        levels.setdefault(depth(bpy.data.objects[n]), []).append(n)
+    for d in sorted(levels):
+        bpy.context.view_layer.update()            # this level's parents are where the previous levels put them
+        for n in levels[d]:
+            ob = bpy.data.objects[n]
+            if n in poses:
+                ob.matrix_world = poses[n]
+            elif not same_pose(ob.matrix_world, kept[n]):
+                ob.matrix_world = kept[n]
+    bpy.context.view_layer.update()
+
+
+def apply(directory, scope, libraries=None, collection=None):
     """Apply <scope>.plan.blender.json. Returns a list of errors (empty = everything applied)."""
     with open(os.path.join(directory, "%s.plan.blender.json" % scope), encoding="utf-8-sig") as f:
         plan = json.load(f)
-    by_name = {o.name: o for o in placements()}
+    coll = scope_collection(scope, collection)
+    by_name = {o.name: o for o in placements(coll=coll)}
     errors, done = [], {"assign": 0, "delete": 0, "update": 0, "create": 0}
 
     for a in plan.get("assign", []):
         ob = by_name.get(a["key"])
         if ob is None:
-            errors.append("assign: no placement called %s" % a["key"])
+            errors.append("assign %s: no placement called %s (renamed since the dump? run the loop again)"
+                          % (a["id"], a["key"]))
+            continue
+        have = str(ob.get(PROP, ""))
+        if have == a["id"]:                     # done by an earlier run of this plan
+            continue
+        if "was" in a and have != a["was"]:
+            errors.append("assign %s: %s has id '%s', the merge saw '%s' (changed since the dump: run the loop again)"
+                          % (a["id"], ob.name, have, a["was"]))
+            continue
+        if a.get("asset") and ob.instance_collection.name != a["asset"]:
+            errors.append("assign %s: %s instances %s, the merge saw %s (changed since the dump: run the loop again)"
+                          % (a["id"], ob.name, ob.instance_collection.name, a["asset"]))
             continue
         ob[PROP] = a["id"]
         done["assign"] += 1
 
     by_id = {}
-    for o in placements():
+    for o in placements(coll=coll):
         by_id.setdefault(str(o.get(PROP, "")), o)
     index = None
 
     for pid in plan.get("delete", []):
         ob = by_id.pop(pid, None)
-        if ob is None:
-            errors.append("delete: no placement with id %s" % pid)
+        if ob is None:                          # already gone (an earlier run of this plan): nothing to do
             continue
+        keep_children(ob)
         bpy.data.objects.remove(ob)
         done["delete"] += 1
 
+    # Every placement's world pose before anything moves: those the plan does not move keep it, even when a placement
+    # they are parented under moves (the update-path twin of keep_children).
+    before = {o.name: o.matrix_world.copy() for o in placements(coll=coll)}
+    poses = {}
     for kind in ("update", "create"):
         for it in plan.get(kind, []):
             ob = by_id.get(it["id"])
-            coll = ob.instance_collection if ob is not None else None
-            if coll is None or coll.name != it["asset"]:
+            target = ob.instance_collection if ob is not None else None
+            if target is None or target.name != it["asset"]:
                 if index is None:
                     index = _library_index(libraries)
-                coll = _collection(it["asset"], index)
-                if coll is None:
+                target = _collection(it["asset"], index)
+                if target is None:
                     errors.append("%s %s: no collection %s in this file or --libraries" % (kind, it["id"], it["asset"]))
                     continue
             if ob is None:
@@ -158,17 +283,29 @@ def apply(directory, scope, libraries=None):
                 ob = bpy.data.objects.new(it["asset"], None)
                 ob.instance_type = "COLLECTION"
                 ob.empty_display_size = 0.25
-                bpy.context.scene.collection.objects.link(ob)
+                (coll or bpy.context.scene.collection).objects.link(ob)
                 ob[PROP] = it["id"]
                 by_id[it["id"]] = ob
-            ob.instance_collection = coll
-            ob.matrix_world = from_unity(it["pos"], it["rot"], it["scl"])
+            ob.instance_collection = target
+            poses[ob.name] = from_unity(it["pos"], it["rot"], it["scl"])
             done[kind] += 1
+    set_world_poses(poses, before)
 
     print("[placements] applied to %s: %s" % (scope, ", ".join("%d %s" % (n, k) for k, n in done.items())))
     for e in errors:
         print("[placements] ERROR " + e)
     return errors
+
+
+def save_mainfile():
+    """Save the open file without a .blend1 backup (save_version 0 for the save, restored afterwards)."""
+    prefs = bpy.context.preferences.filepaths
+    old = prefs.save_version
+    prefs.save_version = 0
+    try:
+        bpy.ops.wm.save_mainfile()
+    finally:
+        prefs.save_version = old
 
 
 def _main():
@@ -181,14 +318,21 @@ def _main():
     ap.add_argument("--dir", required=True)
     ap.add_argument("--scope", required=True)
     ap.add_argument("--libraries", nargs="*", default=[])
+    ap.add_argument("--collection", help="the collection the scope covers (default: the one named like the scope)")
     ap.add_argument("--no-save", action="store_true")
     a = ap.parse_args(argv)
-    if a.cmd == "dump":
-        dump(a.dir, a.scope, a.libraries)
+    try:
+        if a.cmd == "dump":
+            dump(a.dir, a.scope, a.libraries, a.collection)
+            return
+        errors = apply(a.dir, a.scope, a.libraries, a.collection)
+    except KeyError as e:
+        print("[placements] ERROR %s" % e.args[0])
+        if bpy.app.background:
+            sys.exit(1)
         return
-    errors = apply(a.dir, a.scope, a.libraries)
     if not a.no_save:
-        bpy.ops.wm.save_mainfile()
+        save_mainfile()
         print("[placements] saved %s" % bpy.data.filepath)
     if bpy.app.background:
         sys.exit(1 if errors else 0)

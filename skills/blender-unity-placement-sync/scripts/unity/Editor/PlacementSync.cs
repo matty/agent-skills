@@ -1,21 +1,26 @@
-// Unity side of blender-unity-placement-sync: dump placements to JSON, apply a merge plan.
+// Unity side of blender-unity-placement-sync: check the editor is ready, dump placements to JSON, apply a merge plan.
 // Host: Unity 2022.3+ editor. Copy to Assets/World/PlacementSync/Editor/PlacementSync.cs, next to ../PlacementId.cs.
 //
-// A placement is an outermost prefab instance under the scope root whose prefab asset lives under one of the prefab
-// roots (default Assets/World/Kits and Assets/World/Assemblies); its asset name is the prefab's file name. Anything
-// else under the root (lights, Udon objects, empties used as folders) is ignored, so re-organising the hierarchy
-// never loses a placement. Transforms are relative to the scope root, in Unity space.
+// A placement is an outermost prefab instance under the scope root, at any depth (a piece parented under another
+// piece counts), whose prefab asset lives under one of the prefab roots (default Assets/World/Kits and
+// Assets/World/Assemblies); its asset name is the prefab's file name. Pieces that are part of an assembly instance
+// belong to the assembly's own scope. Anything else under the root (lights, Udon objects, folder empties) is ignored.
+// Transforms are relative to the scope root, in Unity space.
 //
-// Scope targets:  "scene:<root GameObject name>"  a root object in an open scene (e.g. scene:MASTER)
-//                 "prefab:<asset path>"           a prefab asset, edited in place (e.g. an ASM_ assembly)
+// Scope targets:  "scene:<root name>"                a root GameObject in an open scene (e.g. scene:MASTER)
+//                 "scene:<scene path>#<root name>"   the same, when more than one open scene has such a root
+//                 "prefab:<asset path>"              a prefab asset edited in place (an ASM_ assembly); the first
+//                                                    Apply creates it (one empty root) when it does not exist yet
 //
 // From Unity MCP execute_code:
-//   PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "F:/World/placements/MASTER.unity.json", "MASTER");
-//   PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "F:/World/placements/MASTER.plan.unity.json");
-// Apply saves what it changed, so it refuses (and changes nothing) when the target scene already has unsaved changes,
-// or the target prefab is open in Prefab Mode with unsaved edits: saving would write someone else's work too. Pass
-// save: false to apply and leave the scene unsaved for review (scenes only; a prefab apply always writes the asset),
-// or force: true once those changes are known to be safe.
+//   return PlacementSync.PlacementSyncTool.Check("scene:MASTER");      // "[placements] ready ..." or why not
+//   return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "F:/World/placements/MASTER.unity.json", "MASTER");
+//   return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "F:/World/placements/MASTER.plan.unity.json");
+// Dump throws when the editor is not ready (Play mode, no prefab root, no or several matching roots) and deletes the
+// old dump first, so a merge never reads a stale one. Apply returns "[placements] REFUSED ..." and changes nothing in
+// Play mode, when the target scene was never saved or already has unsaved changes, or when the target prefab is open
+// in Prefab Mode. save: false applies and leaves the scene unsaved for review (scenes only); force: true saves over
+// pending changes the user confirmed are safe, and lets an asset swap discard Unity-side changes on that instance.
 // Or menu Tools > Placement Sync > Dump All / Apply All, driven by PlacementSync.json in the project root:
 //   {"scopes": [{"name": "MASTER", "target": "scene:MASTER", "dir": "F:/World/placements"}],
 //    "prefabRoots": ["Assets/World/Kits", "Assets/World/Assemblies"]}
@@ -31,8 +36,8 @@ using UnityEngine.SceneManagement;
 namespace PlacementSync
 {
     [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; public string name; }
-    [Serializable] public class Dump { public string scope; public string side = "unity"; public Item[] items; public string[] assets; }
-    [Serializable] public class Assign { public string key; public string id; }
+    [Serializable] public class Dump { public string scope; public string side = "unity"; public string target; public string[] prefabRoots; public string note; public Item[] items; public string[] assets; }
+    [Serializable] public class Assign { public string key; public string id; public string was; public string asset; }
     [Serializable] public class Plan { public string scope; public string side; public Assign[] assign; public string[] delete; public Item[] update; public Item[] create; }
     [Serializable] public class ScopeConfig { public string name; public string target; public string dir; }
     [Serializable] public class Config { public ScopeConfig[] scopes; public string[] prefabRoots; }
@@ -43,32 +48,55 @@ namespace PlacementSync
         static readonly string[] DefaultRoots = { "Assets/World/Kits", "Assets/World/Assemblies" };
 
         // Set from execute_code to use other prefab roots without a PlacementSync.json (null = config or defaults).
+        // A static: it stays set until the next domain reload, so set it back to null when done.
         public static string[] PrefabRootsOverride;
 
-        public static string[] PrefabRoots
+        static string[] ConfiguredRoots()
         {
-            get
-            {
-                if (PrefabRootsOverride != null && PrefabRootsOverride.Length > 0) return PrefabRootsOverride.Where(AssetDatabase.IsValidFolder).ToArray();
-                var cfg = LoadConfig();
-                var roots = cfg != null && cfg.prefabRoots != null && cfg.prefabRoots.Length > 0 ? cfg.prefabRoots : DefaultRoots;
-                return roots.Where(AssetDatabase.IsValidFolder).ToArray();
-            }
+            if (PrefabRootsOverride != null && PrefabRootsOverride.Length > 0) return PrefabRootsOverride;
+            var cfg = LoadConfig();
+            return cfg != null && cfg.prefabRoots != null && cfg.prefabRoots.Length > 0 ? cfg.prefabRoots : DefaultRoots;
         }
+
+        public static string[] PrefabRoots => ConfiguredRoots().Where(AssetDatabase.IsValidFolder).ToArray();
 
         // ---- public API ---------------------------------------------------------------------------------------
 
+        // Whether Apply would run now, and what the scope holds. Changes nothing.
+        public static string Check(string target)
+        {
+            var why = NotReady(target, true, true, false);
+            if (why != null) return $"[placements] not ready: {why}";
+            string what;
+            if (IsMissingPrefab(target)) what = $"{target.Substring(7)} does not exist yet (the first Apply creates it)";
+            else
+            {
+                int n = 0;
+                WithRoot(target, false, root => n = Placements(root).Count);
+                what = $"{n} placement(s)";
+            }
+            var missing = MissingRootsNote();
+            return $"[placements] ready: {target}, {what}, prefab roots {string.Join(", ", PrefabRoots)}"
+                   + (missing != null ? $" ({missing})" : "");
+        }
+
         public static string Dump(string target, string outPath, string scopeName = null)
         {
-            string summary = null;
-            WithRoot(target, false, root =>
+            if (File.Exists(outPath)) File.Delete(outPath);
+            var why = NotReady(target, false, false, false);
+            if (why != null) throw new InvalidOperationException($"[placements] dump of {target} refused: {why}");
+            var dump = new Dump
             {
-                var items = Placements(root).Select(t => ToItem(root, t)).ToArray();
-                var dump = new Dump { scope = scopeName ?? target, items = items, assets = AvailableAssets().Keys.OrderBy(k => k).ToArray() };
-                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
-                File.WriteAllText(outPath, JsonUtility.ToJson(dump, true));
-                summary = $"[placements] dumped {items.Length} placement(s) to {outPath}";
-            });
+                scope = scopeName ?? target, target = target, prefabRoots = PrefabRoots, note = MissingRootsNote(),
+                assets = AvailableAssets().Keys.OrderBy(k => k).ToArray(), items = new Item[0],
+            };
+            if (IsMissingPrefab(target))
+                dump.note = $"{target.Substring(7)} does not exist yet: the first Apply creates it. " + dump.note;
+            else
+                WithRoot(target, false, root => dump.items = Placements(root).Select(t => ToItem(root, t)).ToArray());
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
+            File.WriteAllText(outPath, JsonUtility.ToJson(dump, true));
+            var summary = $"[placements] dumped {dump.items.Length} placement(s) from {target} to {outPath}";
             Debug.Log(summary);
             return summary;
         }
@@ -76,30 +104,44 @@ namespace PlacementSync
         public static string Apply(string target, string planPath, bool save = true, bool force = false)
         {
             var plan = JsonUtility.FromJson<Plan>(File.ReadAllText(planPath));
-            if (!force)
+            var why = NotReady(target, true, save, force);
+            if (why == null && !string.IsNullOrEmpty(plan.side) && plan.side != "unity")
+                why = $"{planPath} is the {plan.side} plan, not the unity one";
+            if (why != null)
             {
-                var blocker = UnsavedWork(target, save);
-                if (blocker != null)
-                {
-                    var options = target.StartsWith("prefab:")
-                        ? "or force: true if they are safe to save"
-                        : "apply with save: false to leave the result unsaved, or force: true if they are safe to save";
-                    var refused = $"[placements] refused {plan.scope}: {blocker}. Nothing was changed. Save or discard those changes "
-                                + $"yourself and re-run, {options}.";
-                    Debug.LogError(refused);
-                    return refused;
-                }
+                var refused = $"[placements] REFUSED {plan.scope}: {why}. Nothing was changed.";
+                Debug.LogError(refused);
+                return refused;
             }
+            if (target.StartsWith("prefab:")) EnsurePrefab(target.Substring(7));
             var errors = new List<string>();
             var counts = new Dictionary<string, int> { { "assign", 0 }, { "delete", 0 }, { "update", 0 }, { "create", 0 } };
             WithRoot(target, true, root =>
             {
                 bool inScene = root.gameObject.scene.IsValid() && !EditorSceneManager.IsPreviewScene(root.gameObject.scene);
+                int undoGroup = -1;
+                if (inScene)
+                {
+                    Undo.IncrementCurrentGroup();
+                    Undo.SetCurrentGroupName("Placement Sync");
+                    undoGroup = Undo.GetCurrentGroup();
+                }
                 var touched = new List<UnityEngine.Object>();
                 var byKey = Placements(root).ToDictionary(t => KeyOf(root, t));
+                var haveIds = new HashSet<string>();
+                foreach (var t in byKey.Values)
+                {
+                    var p0 = t.GetComponent<PlacementId>();
+                    if (p0 != null && !string.IsNullOrEmpty(p0.id)) haveIds.Add(p0.id);
+                }
                 foreach (var a in plan.assign ?? new Assign[0])
                 {
-                    if (!byKey.TryGetValue(a.key, out var t)) { errors.Add($"assign: no placement at {a.key}"); continue; }
+                    if (haveIds.Contains(a.id)) continue;   // done by an earlier run of this plan (a re-run with force: true)
+                    if (!byKey.TryGetValue(a.key, out var t)) { errors.Add($"assign {a.id}: no placement at {a.key} (the hierarchy changed since the dump: run the loop again)"); continue; }
+                    var cur = t.GetComponent<PlacementId>();
+                    var curId = cur != null ? cur.id ?? "" : "";
+                    if (a.was != null && curId != a.was) { errors.Add($"assign {a.id}: {NameOf(root, t)} has id '{curId}', the merge saw '{a.was}' (changed since the dump: run the loop again)"); continue; }
+                    if (!string.IsNullOrEmpty(a.asset) && AssetName(t) != a.asset) { errors.Add($"assign {a.id}: {NameOf(root, t)} is {AssetName(t)}, the merge saw {a.asset} (changed since the dump: run the loop again)"); continue; }
                     var pid = GetOrAdd(t.gameObject, inScene);
                     if (inScene) Undo.RecordObject(pid, "Placement Sync");
                     pid.id = a.id;
@@ -116,33 +158,70 @@ namespace PlacementSync
 
                 foreach (var id in plan.delete ?? new string[0])
                 {
-                    if (!byId.TryGetValue(id, out var t)) { errors.Add($"delete: no placement with id {id}"); continue; }
+                    if (!byId.TryGetValue(id, out var t)) continue;   // already gone (an earlier run of this plan)
                     byId.Remove(id);
+                    KeepNestedPlacements(t, inScene);
                     Destroy(t.gameObject, inScene);
                     counts["delete"]++;
                 }
 
+                // Every placement's pose (relative to root) before anything moves. Updates and the restoring of every
+                // other placement then run in one pass, parents first: an update sets its planned pose, and a
+                // placement the plan does not move, or whose update is skipped, gets its old pose back when a parent's
+                // move dragged it (the update-path twin of KeepNestedPlacements).
+                var before = new Dictionary<Transform, Item>();
+                foreach (var p in Placements(root)) before[p] = ToItem(root, p);
+                var planned = new Dictionary<string, Item>();
+                foreach (var it in plan.update ?? new Item[0])
+                    if (!string.IsNullOrEmpty(it.id)) planned[it.id] = it;
                 var assets = AvailableAssets();
-                foreach (var (kind, list) in new[] { ("update", plan.update), ("create", plan.create) })
+
+                bool ApplyItem(string kind, Item it)
                 {
-                    foreach (var it in list ?? new Item[0])
+                    byId.TryGetValue(it.id, out var t);
+                    if (t == null || AssetName(t) != it.asset)
                     {
-                        byId.TryGetValue(it.id, out var t);
-                        if (t == null || AssetName(t) != it.asset)
+                        if (!assets.TryGetValue(it.asset, out var prefab)) { errors.Add($"{kind} {it.id}: no prefab called {it.asset} under {string.Join(", ", PrefabRoots)}"); return false; }
+                        if (t != null)
                         {
-                            if (!assets.TryGetValue(it.asset, out var prefab)) { errors.Add($"{kind} {it.id}: no prefab called {it.asset} under {string.Join(", ", PrefabRoots)}"); continue; }
-                            if (t == null && kind == "update") errors.Add($"update: no placement with id {it.id} (creating it)");
-                            t = Replace(root, t, prefab, it.id, inScene);
-                            byId[it.id] = t;
+                            var work = LocalChanges(t);
+                            if (work != null && !force) { errors.Add($"{kind} {it.id}: swapping {AssetName(t)} for {it.asset} would discard Unity-side changes on {NameOf(root, t)} ({work}); swap it by hand, or re-run with force: true"); return false; }
+                            KeepNestedPlacements(t, inScene);
                         }
-                        if (inScene) Undo.RecordObject(t, "Placement Sync");
-                        SetRelative(root, t, it);
-                        touched.Add(t);
-                        var tid = t.GetComponent<PlacementId>();
-                        if (tid != null) touched.Add(tid);
-                        counts[kind]++;
+                        if (t == null && kind == "update") errors.Add($"update: no placement with id {it.id} (creating it)");
+                        t = Replace(root, t, prefab, it.id, inScene);
+                        byId[it.id] = t;
                     }
+                    if (inScene) Undo.RecordObject(t, "Placement Sync");
+                    SetRelative(root, t, it);
+                    touched.Add(t);
+                    var tid = t.GetComponent<PlacementId>();
+                    if (tid != null) touched.Add(tid);
+                    counts[kind]++;
+                    return true;
                 }
+
+                void Restore(Transform t)
+                {
+                    if (t == null || !before.TryGetValue(t, out var pose) || SamePose(ToItem(root, t), pose)) return;
+                    if (inScene) Undo.RecordObject(t, "Placement Sync");
+                    SetRelative(root, t, pose);
+                    touched.Add(t);
+                }
+
+                var steps = new List<(int depth, Transform t, Item it)>();
+                foreach (var it in planned.Values)
+                    steps.Add((DepthOf(root, byId, it.id), byId.TryGetValue(it.id, out var ut) ? ut : null, it));
+                foreach (var p in before.Keys)
+                {
+                    var pid = p.GetComponent<PlacementId>();
+                    if (pid == null || string.IsNullOrEmpty(pid.id) || !planned.ContainsKey(pid.id))
+                        steps.Add((Depth(root, p), p, null));
+                }
+                foreach (var step in steps.OrderBy(s => s.depth))
+                    if (step.it == null || !ApplyItem("update", step.it)) Restore(step.t);
+                foreach (var it in plan.create ?? new Item[0])
+                    ApplyItem("create", it);
                 if (inScene)
                 {
                     // Edits to prefab instances become overrides only when recorded; left to the end of the frame they
@@ -151,12 +230,14 @@ namespace PlacementSync
                         if (o != null && PrefabUtility.IsPartOfPrefabInstance(o))
                             PrefabUtility.RecordPrefabInstancePropertyModifications(o);
                     Undo.FlushUndoRecordObjects();
+                    Undo.CollapseUndoOperations(undoGroup);
                     var scene = root.gameObject.scene;
                     EditorSceneManager.MarkSceneDirty(scene);
                     if (save)
                     {
-                        EditorSceneManager.SaveScene(scene);
-                        if (scene.isDirty)
+                        if (!EditorSceneManager.SaveScene(scene))
+                            errors.Add($"could not save {scene.path}: save it yourself");
+                        else if (scene.isDirty)
                             errors.Add($"saved {scene.path}, but Unity still reports unsaved changes in it: check and save it");
                     }
                 }
@@ -185,32 +266,92 @@ namespace PlacementSync
 
         // ---- internals ----------------------------------------------------------------------------------------
 
-        // Why applying now would save changes that are not the sync's, or null. Checked before anything is touched.
-        static string UnsavedWork(string target, bool save)
+        // Why `target` cannot be dumped (forApply false) or applied now, or null. Checked before anything is touched.
+        // force skips only the checks about the user's pending work (a dirty scene, the prefab open in Prefab Mode).
+        static string NotReady(string target, bool forApply, bool save, bool force)
         {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                return "the editor is in Play mode, whose changes are discarded when it stops: stop Play mode first";
+            if (PrefabRoots.Length == 0)
+                return $"none of the prefab roots exists ({string.Join(", ", ConfiguredRoots())}): fix PlacementSync.json or PrefabRootsOverride";
             if (target.StartsWith("prefab:"))
             {
-                // Applies to a prefab always write the asset, whatever `save` says.
                 var path = target.Substring(7);
+                if (!path.StartsWith("Assets/") || !path.EndsWith(".prefab")) return $"{path} is not an Assets/....prefab path";
                 var stage = PrefabStageUtility.GetCurrentPrefabStage();
-                return stage != null && stage.assetPath == path && stage.scene.isDirty
-                    ? $"{path} is open in Prefab Mode with unsaved changes"
-                    : null;
+                if (forApply && !force && stage != null && stage.assetPath == path)
+                    return $"{path} is open in Prefab Mode: close it first (its open copy could later be saved over the sync's changes)";
+                return null;
             }
-            if (!save) return null;
-            var name = target.StartsWith("scene:") ? target.Substring(6) : target;
-            for (int i = 0; i < SceneManager.sceneCount; i++)
-            {
-                var scene = SceneManager.GetSceneAt(i);
-                if (scene.isLoaded && scene.isDirty && scene.GetRootGameObjects().Any(g => g.name == name))
-                    return $"scene {scene.name} already has unsaved changes";
-            }
+            if (FindSceneRoot(target, out var scene, out var why) == null) return why;
+            if (forApply && save && string.IsNullOrEmpty(scene.path))
+                return $"scene {scene.name} has never been saved: save it once first (saving it would open a dialog)";
+            if (forApply && save && !force && scene.isDirty)
+                return $"scene {scene.name} already has unsaved changes: the user saves or discards them first";
             return null;
+        }
+
+        static string MissingRootsNote()
+        {
+            var missing = ConfiguredRoots().Where(r => !AssetDatabase.IsValidFolder(r)).ToArray();
+            return missing.Length == 0 ? null : $"prefab root(s) not found: {string.Join(", ", missing)}";
+        }
+
+        static bool IsMissingPrefab(string target) =>
+            target.StartsWith("prefab:") && AssetDatabase.LoadAssetAtPath<GameObject>(target.Substring(7)) == null;
+
+        // The first Apply of an ASM scope creates its prefab: one empty root named after the file, identity transform.
+        static void EnsurePrefab(string path)
+        {
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(path) != null) return;
+            EnsureFolder(Path.GetDirectoryName(path).Replace('\\', '/'));
+            var go = new GameObject(Path.GetFileNameWithoutExtension(path));
+            try
+            {
+                PrefabUtility.SaveAsPrefabAsset(go, path, out bool ok);
+                if (!ok) throw new InvalidOperationException($"[placements] could not create {path}");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(go); }
+        }
+
+        static void EnsureFolder(string folder)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) return;
+            var parent = Path.GetDirectoryName(folder).Replace('\\', '/');
+            EnsureFolder(parent);
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(folder));
         }
 
         static Config LoadConfig() => File.Exists(ConfigFile) ? JsonUtility.FromJson<Config>(File.ReadAllText(ConfigFile)) : null;
 
         static Config RequireConfig() => LoadConfig() ?? throw new FileNotFoundException($"{ConfigFile} not found in the project root");
+
+        // The one root GameObject a "scene:" target names in the loaded scenes, or null with the reason.
+        static Transform FindSceneRoot(string target, out Scene scene, out string why)
+        {
+            scene = default;
+            why = null;
+            var spec = target.StartsWith("scene:") ? target.Substring(6) : target;
+            string scenePath = null, name = spec;
+            var hash = spec.LastIndexOf('#');
+            if (hash >= 0) { scenePath = spec.Substring(0, hash); name = spec.Substring(hash + 1); }
+            var found = new List<GameObject>();
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var s = SceneManager.GetSceneAt(i);
+                if (!s.isLoaded || (scenePath != null && s.path != scenePath)) continue;
+                found.AddRange(s.GetRootGameObjects().Where(g => g.name == name));
+            }
+            if (found.Count == 1)
+            {
+                scene = found[0].scene;
+                return found[0].transform;
+            }
+            why = found.Count == 0
+                ? $"no root GameObject called {name} in the open scenes" + (scenePath != null ? $" ({scenePath} must be open)" : "")
+                : $"{found.Count} root GameObjects called {name} ({string.Join(", ", found.Select(g => g.scene.path))}): target one as scene:<scene path>#{name}";
+            return null;
+        }
 
         static void WithRoot(string target, bool write, Action<Transform> body)
         {
@@ -226,18 +367,14 @@ namespace PlacementSync
                 finally { PrefabUtility.UnloadPrefabContents(contents); }
                 return;
             }
-            var name = target.StartsWith("scene:") ? target.Substring(6) : target;
-            for (int i = 0; i < SceneManager.sceneCount; i++)
-            {
-                var scene = SceneManager.GetSceneAt(i);
-                if (!scene.isLoaded) continue;
-                var go = scene.GetRootGameObjects().FirstOrDefault(g => g.name == name);
-                if (go != null) { body(go.transform); return; }
-            }
-            throw new ArgumentException($"no root GameObject called {name} in the open scenes");
+            var root = FindSceneRoot(target, out _, out var why);
+            if (root == null) throw new ArgumentException($"[placements] {why}");
+            body(root);
         }
 
-        // Outermost prefab instances under root whose prefab sits under a prefab root. Does not descend into them.
+        // Outermost prefab instances under root whose prefab sits under a prefab root, at any depth. A piece parented
+        // under another piece is an added GameObject on that instance and still outermost; pieces that are part of an
+        // assembly instance are not outermost, so they stay with the assembly's own scope.
         public static List<Transform> Placements(Transform root)
         {
             var roots = PrefabRoots;
@@ -247,7 +384,7 @@ namespace PlacementSync
                 foreach (Transform c in t)
                 {
                     if (IsPlacement(c.gameObject, roots)) found.Add(c);
-                    else Walk(c);
+                    Walk(c);
                 }
             }
             Walk(root);
@@ -315,6 +452,28 @@ namespace PlacementSync
             };
         }
 
+        // How many levels below root the placement with this id sits (0 when it is not there yet: a create).
+        static int DepthOf(Transform root, Dictionary<string, Transform> byId, string id)
+        {
+            if (id == null || !byId.TryGetValue(id, out var t) || t == null) return 0;
+            return Depth(root, t);
+        }
+
+        static int Depth(Transform root, Transform t)
+        {
+            int d = 0;
+            for (var c = t; c != null && c != root; c = c.parent) d++;
+            return d;
+        }
+
+        static bool SamePose(Item a, Item b)
+        {
+            for (int i = 0; i < 3; i++)
+                if (Mathf.Abs(a.pos[i] - b.pos[i]) > 1e-5f || Mathf.Abs(a.scl[i] - b.scl[i]) > 1e-5f) return false;
+            float dot = a.rot[0] * b.rot[0] + a.rot[1] * b.rot[1] + a.rot[2] * b.rot[2] + a.rot[3] * b.rot[3];
+            return Mathf.Abs(dot) > 1f - 1e-7f;
+        }
+
         static void SetRelative(Transform root, Transform t, Item it)
         {
             var rs = root.lossyScale;
@@ -323,6 +482,45 @@ namespace PlacementSync
             var want = new Vector3(it.scl[0] * rs.x, it.scl[1] * rs.y, it.scl[2] * rs.z);
             var ps = t.parent != null ? t.parent.lossyScale : Vector3.one;
             t.localScale = new Vector3(want.x / ps.x, want.y / ps.y, want.z / ps.z);
+        }
+
+        // What an asset swap would throw away on this instance: components, children and overrides added in Unity
+        // (placements parented under it are moved out first, so they do not count). Null when there is nothing.
+        static string LocalChanges(Transform t)
+        {
+            var go = t.gameObject;
+            var roots = PrefabRoots;
+            var parts = new List<string>();
+            foreach (var c in PrefabUtility.GetAddedComponents(go))
+                if (!(c.instanceComponent is PlacementId)) parts.Add("added " + c.instanceComponent.GetType().Name);
+            foreach (var g in PrefabUtility.GetAddedGameObjects(go))
+                if (!IsPlacement(g.instanceGameObject, roots)) parts.Add("added child " + g.instanceGameObject.name);
+            foreach (var r in PrefabUtility.GetRemovedComponents(go))
+                parts.Add("removed " + (r.assetComponent != null ? r.assetComponent.GetType().Name : "a component"));
+            foreach (var o in PrefabUtility.GetObjectOverrides(go, false))
+                if (o.instanceObject != null && o.instanceObject != t && o.instanceObject != go)
+                    parts.Add("changed " + o.instanceObject.name);
+            return parts.Count == 0 ? null : string.Join(", ", parts.Distinct());
+        }
+
+        // Placements parented under `t` are placements in their own right: before `t` is destroyed or swapped, move the
+        // ones directly under it (no other placement in between) to t's parent, keeping their world pose.
+        static void KeepNestedPlacements(Transform t, bool inScene)
+        {
+            var roots = PrefabRoots;
+            var move = new List<Transform>();
+            foreach (var c in t.GetComponentsInChildren<Transform>(true))
+            {
+                if (c == t || !IsPlacement(c.gameObject, roots)) continue;
+                var p = c.parent;
+                while (p != t && !IsPlacement(p.gameObject, roots)) p = p.parent;
+                if (p == t) move.Add(c);
+            }
+            foreach (var c in move)
+            {
+                if (inScene) Undo.SetTransformParent(c, t.parent, "Placement Sync");
+                else c.SetParent(t.parent, true);
+            }
         }
 
         // Instantiate `prefab` in place of `old` (same parent and sibling index) or, with no old, under root.

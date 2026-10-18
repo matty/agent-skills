@@ -1,136 +1,145 @@
 ---
 name: blender-unity-placement-sync
-description: Keep a modular layout in step between Blender and Unity - every placed kit piece or assembly gets a stable id, both sides dump their placements to JSON, and a three-way merge against the last synced snapshot pushes Blender moves to Unity and Unity moves back to the MASTER or ASM .blend without losing either, with conflicts, duplicates, deletions and Unity-only additions reported instead of overwritten. Use when a Blender layout must be rebuilt in Unity as prefab instances, when someone moved, rotated, added, deleted or re-organised pieces in Unity and Blender must catch up (or the reverse), when placements were lost or reset after a re-export, or when setting up a repeatable layout round trip; for kit file structure see blender-kit-library, for Unity packaging see blender-to-unity.
+description: A Blender layout and a Unity scene disagree - pieces moved, added or deleted in Unity that Blender must get (or the reverse), a layout to rebuild in Unity as prefab instances, placements lost after a re-export, CONFLICT, BLOCKED or REFUSED in a sync report. Stable placement ids, JSON dumps, a three-way merge with safety refusals, MASTER and ASM scopes. For .blend structure see blender-kit-library, for FBX export and prefabs blender-to-unity.
 ---
 
 # Blender <-> Unity placement sync
 
-The layout (which piece goes where) lives on both sides: Blender's MASTER and ASM files place linked collection
-instances, Unity places prefab instances. Exporting geometry does not move placements, and re-exporting a layout as a
-merged FBX throws away whatever was done in Unity. This skill syncs **placements only**, both ways, and never
-silently overwrites a change.
+Sync **placements only** (which piece or assembly goes where) between a Blender file and a Unity scene or prefab, both
+ways, through stable ids and a three-way merge against the last synced snapshot. Never move a layout by re-exporting
+it as one merged FBX: that throws away whatever was done in Unity. Nothing is overwritten silently: conflicts wait
+for a decision, and mass deletions or a dump of the wrong file are refused.
 
-What it relies on (`blender-kit-library` and `blender-to-unity` cover how to set these up; this skill only needs
-them to hold):
+## Requirements
+
+Set up with `blender-kit-library` and `blender-to-unity`; this skill only needs them to hold.
 
 | Side | Requirement |
 |---|---|
-| Blender | Each piece or assembly is a collection, placed as collection instances (linked or local). The collection name is the asset name |
-| Unity | Each asset is a prefab with the **same file name** under `Assets/World/Kits/` or `Assets/World/Assemblies/` (other roots via config), its root at identity rotation and scale |
-| Export | FBX exported with -Z forward, Y up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform ("Apply Transform") on, so a piece arrives in Unity at scale 1 and rotation 0 |
+| Blender | Each piece or assembly is a collection, placed as collection instances (linked or local). The collection name is the asset name. `instance_offset` is (0, 0, 0) on every placed collection, and placements carry no constraints (the dump warns about both). 1 Blender unit = 1 m |
+| Blender, assemblies | One assembly per ASM file, named after it: `blender/asm/ASM_<Name>_<Variant>.blend` holds the one collection `ASM_<Name>_<Variant>` |
+| Unity | Each asset is a prefab with the **same file name** under `Assets/World/Kits/` or `Assets/World/Assemblies/` (other roots: `references/unity-apply.md`), its root at identity rotation and scale. An assembly's prefab is `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab` |
+| Export | FBX exported with -Z Forward, Y Up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform ("Apply Transform") on, Path Mode Strip for kit pieces, so a piece arrives in Unity at scale 1 and rotation 0. Options of `bpy.ops.export_scene.fbx` (https://docs.blender.org/api/current/bpy.ops.export_scene.html, checked 2026-10-17; Apply Transform is marked experimental there, for armatures and animation, not static pieces) |
 
 ## Files
 
 | Script | Host | Does |
 |---|---|---|
-| `scripts/export_placements.py` | Blender (bpy), headless or live | `dump` placements, `apply` a plan |
-| `scripts/placement_merge.py` | Plain Python, stdlib | `merge` (dry run: plans and report), `commit` (verify and write the snapshot) |
-| `scripts/unity/PlacementId.cs` | Unity, runtime folder | The id component (`IEditorOnly` in VRChat projects, stripped from builds) |
-| `scripts/unity/Editor/PlacementSync.cs` | Unity editor | `Dump`, `Apply`, menu `Tools > Placement Sync` |
-
-Install the Unity pair once with Unity MCP: `create_script` both files to `Assets/World/PlacementSync/PlacementId.cs`
-and `Assets/World/PlacementSync/Editor/PlacementSync.cs`, then `refresh_unity` and `read_console` for compile errors.
+| `scripts/export_placements.py` | Blender (bpy), headless or live | `dump` placements, `apply` a plan; `--collection` names the collection a scope covers |
+| `scripts/placement_merge.py` | Plain Python 3.9+, stdlib | `merge` (a dry run: plans and report), `commit` (verify both sides and write the snapshot) |
+| `scripts/unity/PlacementId.cs` | Unity, runtime folder | The id component (`IEditorOnly` in VRChat projects, so SDK validation ignores it: https://creators.vrchat.com/sdk/build-pipeline-callbacks-and-interfaces, checked 2026-10-17) |
+| `scripts/unity/Editor/PlacementSync.cs` | Unity editor | `Check`, `Dump`, `Apply`, menu `Tools > Placement Sync` |
 
 ## Scopes
 
-A **scope** is one Blender file paired with one Unity target, synced independently with its own snapshot:
+A scope is one Blender file paired with one Unity target, synced on its own with its own snapshot.
 
 | Scope | Blender | Unity target |
 |---|---|---|
-| `MASTER` | `blender/MASTER.blend` (world origin = root) | `scene:MASTER`: a root GameObject called MASTER in the world scene |
-| `ASM_ShopFront_A` | `blender/asm/ASM_ShopFront_A.blend` | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab` |
+| `MASTER` | `blender/MASTER.blend`, the whole scene (world origin = root) | `scene:MASTER`, a root GameObject called MASTER (`scene:<scene path>#MASTER` when two open scenes have one) |
+| `ASM_ShopFront_A` | `blender/asm/ASM_ShopFront_A.blend`, its collection `ASM_ShopFront_A` | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab`, created by the scope's first Apply |
 
-Sync ASM scopes before MASTER, so assembly prefabs exist when MASTER places them.
+Sync every ASM scope before MASTER, so assembly prefabs exist when MASTER places them. The Blender side of a scope is
+the collection named like the scope when the file has one, else the whole scene; `--collection NAME` names another.
+
+Everything under a scope root syncs. Unity-only copies that must never reach Blender (the duplicated static geometry of
+a switchable-light setup, one copy per lighting state, or any other Unity-only duplicate) live under a separate root
+outside the scope root, for example a root GameObject `LIGHT_STATES` beside `MASTER`. Copies left inside the scope get
+fresh ids and are created in the .blend; the merge report flags several placements of one asset at one pose.
+
+## Before the first sync
+
+1. Back up the .blend files or keep them under version control: headless applies save them.
+2. Install the Unity pair (`references/unity-apply.md`, Install).
+3. Create the Unity scope root for MASTER: an empty root GameObject called `MASTER` at identity (position 0,
+   rotation 0, scale 1) in the world scene. With no world scene yet, the agent creates one and saves it under
+   `Assets/World/Scenes/` (a scene the agent created itself, at a path it chose, is its own to save); in a scene the
+   user already works in, add the root and let the user save. Snippet: `references/unity-apply.md`, Scope roots.
+   ASM scopes need nothing: their first Apply creates the prefab.
+4. Run the round-trip test once per project, and again after changing export settings: `references/round-trip-test.md`.
 
 ## The sync loop
 
-Run all of it in one go: Unity keys in a dump are only valid until the hierarchy changes.
+Run it in one go, with nobody editing either side: Unity keys in a dump are only valid until the hierarchy changes.
+One writer per .blend: the Blender file must not be open in a live Blender session while a headless apply writes it
+(a live session's next save would overwrite the sync). If it is open there, run the Blender steps in that session
+through Blender MCP instead (`dump` and `apply` from the script's header) and save.
+
+Placeholders: `<skill>` this skill's folder, `<project>` the project root, `<p>` the absolute placements folder,
+`B` = `blender -b --factory-startup --python-exit-code 1`. MASTER shown; an ASM scope differs only in the file
+(`<project>/blender/asm/ASM_ShopFront_A.blend`), `--scope ASM_ShopFront_A`, `--libraries "../kits/*.blend"` and its
+`prefab:` target.
 
 ```
-1. dump    blender -b --factory-startup MASTER.blend --python export_placements.py -- dump --dir placements --scope MASTER
-                    --libraries "kits/*.blend" "asm/*.blend"
-           Unity MCP execute_code:
-           return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "<abs>/placements/MASTER.unity.json", "MASTER");
-2. merge   python placement_merge.py merge --dir placements --scope MASTER
-           -> read the report. Exit 2 = conflicts or blocked items: show them to the user, decide, re-run with
-              --take-id ID=blender|unity (or --take for all). Nothing has changed anywhere yet.
-3. apply   blender -b --factory-startup MASTER.blend --python export_placements.py -- apply --dir placements --scope MASTER --libraries ...
-           execute_code: return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "<abs>/placements/MASTER.plan.unity.json");
-4. dump    both sides again (step 1)
-5. commit  python placement_merge.py commit --dir placements --scope MASTER
-           -> refuses, and leaves the snapshot alone, unless both sides now match the plan.
+1. check   Unity MCP execute_code: return PlacementSync.PlacementSyncTool.Check("scene:MASTER");
+           -> must start "[placements] ready"; otherwise tell the user what it says and stop.
+2. dump    B <project>/blender/MASTER.blend --python <skill>/scripts/export_placements.py --
+               dump --dir <p> --scope MASTER --libraries "kits/*.blend" "asm/*.blend"
+           execute_code: return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "<p>/MASTER.unity.json", "MASTER");
+3. merge   python <skill>/scripts/placement_merge.py merge --dir <p> --scope MASTER
+           -> read <p>/MASTER.report.txt and act on the exit code (table below). Nothing has changed anywhere yet.
+4. apply   Unity first: execute_code: return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "<p>/MASTER.plan.unity.json");
+           -> "[placements] REFUSED" means nothing changed anywhere: fix it with the user, restart at step 1.
+5. apply   Blender: B <project>/blender/MASTER.blend --python <skill>/scripts/export_placements.py --
+               apply --dir <p> --scope MASTER --libraries "kits/*.blend" "asm/*.blend"
+6. dump    both sides again (step 2).
+7. commit  python <skill>/scripts/placement_merge.py commit --dir <p> --scope MASTER
+           -> refuses, leaving the snapshot alone, unless both sides now match the plan.
 ```
 
-`--libraries` globs are relative to the .blend file's folder (so `kits/*.blend` next to `blender/MASTER.blend`), unless
-absolute. Every `merge` rewrites the plans, `pending.json` and `report.txt`: a merge run after `commit` as a check
-replaces them with empty plans, which is harmless.
+`--libraries` globs are relative to the .blend file's folder unless absolute; they tell the merge which collections
+Blender can take, so pass them on every dump. `apply --no-save` tries a plan without writing the file (a headless run
+then discards the result).
 
-Blender must not have MASTER open and unsaved in a live session while the headless apply writes it (one writer per
-file). If MASTER is open in the live Blender, run `dump`/`apply` there through Blender MCP instead and save.
+## When a step does not end cleanly
 
-Unity `Apply` saves what it changed, so it **refuses and changes nothing** when the target scene already has unsaved
-changes, or the target prefab is open in Prefab Mode with unsaved edits: saving would write the user's unrelated work
-too. When it refuses, tell the user and let them save or discard; never save their scene for them. Then re-run, or
-pass `save: false` (scenes only: apply, leave the scene unsaved for them to review and save) or `force: true` (they
-confirmed the pending changes are safe to save). Editor extensions such as Bakery can mark a scene dirty without changing it; that
-still refuses, by design.
+| You see | Do |
+|---|---|
+| Blender dump exits 1, or Unity Dump throws | Stop, and never merge after a failed dump. Both scripts delete their old dump before writing, but a wrong .blend path makes Blender exit before the script runs, leaving the previous file. Fix the cause (the .blend path, `--collection`, Play mode, the scope root) and dump again |
+| merge exit 2, `CONFLICT` lines | Show them to the user. Re-run merge with `--take-id ID=blender` or `--take-id ID=unity` per conflict (`--take blender` or `--take unity` for all). The rest of the plan is ready either way |
+| merge exit 3, only `BLOCKED` lines | The receiving side has no such asset yet; each line says which case (table in `references/merge-rules.md`). A new piece, or a placement swapped to a piece the other side lacks: export and package it (`blender-to-unity`), or add it as a KIT piece; never rename the old asset, other placements still use it. An assembly: sync its ASM scope first. A rename made on one side only (the old asset is gone from that side): finish (or undo) the rename on the other side (`blender-kit-library` has the rename procedure; an assembly: `references/merge-rules.md`, Renaming an assembly). You may apply and commit now: blocked items stay pending and the next merge retries them |
+| merge exit 4, `REFUSED` | Too many deletions, an empty side, or a dump from another file, collection or Unity target than this scope's. Check the dumps (right file and scene, prefab roots). Only if the user confirms the deletions are real: `--allow-deletes`; a scope that really moved: `--accept-source` |
+| merge exit 1 | Bad input (a missing or swapped dump, a malformed `--take-id`): fix it and re-run |
+| Unity Apply returns `REFUSED` | Nothing changed. Tell the user why (Play mode, an unsaved or never-saved scene, Prefab Mode open, an ambiguous root) and restart at step 1 once they fixed it. Never save the user's scene for them; `save: false` and `force: true` are in `references/unity-apply.md` |
+| Unity Apply lists `ERRORS` | `references/unity-apply.md` has each one. A stale key or changed object: restart at step 1. A swap that would discard Unity-side changes: ask the user, then take one of three ways out (otherwise every loop plans the same swap again): **force**, re-run Apply on the same plan with `force: true`, then step 5; **swap by hand** in Unity, keeping the `PlacementId` component on the new instance, then step 5; **keep the old piece**, re-point that Blender instance back to the old collection (`blender-kit-library`), then restart at step 2 |
+| Blender apply exits 1 | It printed `ERROR` lines (a missing collection, an object changed since the dump) and still saved what did apply. Fix the cause and restart at step 1 |
+| commit exit 2 | The sides do not match the plan: restart at step 2. Never edit the snapshot by hand |
 
 ## Merge rules
 
-Against the snapshot (`<scope>.synced.json`); positions within 1 mm, rotations within 0.01 deg and scale within 0.01%
-count as unchanged, so float noise from the round trip never shows up as an edit.
+Full table, id handling, exit codes and file formats: `references/merge-rules.md`. In short:
 
-| Blender | Unity | Result |
-|---|---|---|
-| changed | same | Unity updated |
-| same | changed | Blender updated |
-| changed | changed (to the same) | nothing to do |
-| changed | changed (differently) | **conflict**, both left alone |
-| deleted | same | deleted in Unity |
-| same | deleted | deleted in Blender |
-| deleted | changed (or the reverse) | **conflict** |
-| new | - | created in Unity (or **blocked** until its prefab exists) |
-| - | new prefab instance | created in Blender, if Blender has that collection; otherwise kept as **unity-only** and left to Unity |
+- One side changed and the other did not: the change goes across. Both changed the same way: nothing to do. Both
+  changed differently, or deleted on one side and changed on the other: a conflict, left alone until decided.
+- Deleted on one side, unchanged on the other: deleted there too.
+- New in Blender: created in Unity, or BLOCKED until its prefab exists. New in Unity: created in Blender when Blender
+  has the collection, else kept unity-only until it does.
+- "Changed" covers position, rotation, scale and the asset itself (a piece swapped for another). Positions within
+  1 mm, rotations within 0.01 deg and scale within 0.01% count as unchanged.
 
-"Changed" covers position, rotation, scale and the asset itself (a prefab or collection swapped for another piece).
-An unresolved conflict keeps its previous snapshot entry, so it is reported again on the next merge until decided.
-
-## Why it is stable
+## What keeps placements stable
 
 - **Ids sit on the object, not in its name**: custom property `placement_id` on the Blender empty, a `PlacementId`
-  component on the Unity prefab instance root. Renaming, re-parenting, moving into folders or collections, and
-  re-organising the hierarchy never lose a placement. Unity transforms are compared relative to the scope root, not
-  the parent, so grouping pieces under new empties is not an edit.
-- **Duplicates**: duplicating an object copies its id. The merge keeps the id on the copy closest to the snapshot
-  (the original) and issues a fresh id for the rest, which then sync as new placements.
-- **Nothing outside the kit counts**: only collection instances (Blender) and outermost instances of prefabs under
-  `Assets/World/Kits` and `Assets/World/Assemblies` (Unity) are placements. Lights, Udon objects and folder empties
-  under the root are ignored.
-- **Snapshot safety**: `merge` changes nothing. `commit` writes `<scope>.synced.json` only after fresh dumps of both
+  component on the Unity instance root. Renaming, moving into folders or collections, and parenting a piece under
+  another piece never lose a placement. Unity transforms are compared relative to the scope root, not the parent.
+  When a sync deletes or moves a placement that others are parented under, both appliers keep those children's world
+  pose (a deleted parent's children move to its parent); updates go parents first.
+- **Duplicates** copy the id: the merge keeps it on the copy closest to the snapshot and gives the others fresh ids,
+  which then sync as new placements. An object that lost its id takes it back when it still matches its placement.
+- **Only the kit counts**: collection instances (Blender) and outermost instances of prefabs under the prefab roots
+  (Unity) are placements. Lights, Udon objects and folder empties are ignored. Pieces inside an assembly instance
+  belong to the assembly's own scope: edit the assembly prefab, not the instance in the MASTER scene.
+- **These break identity, so avoid them**: in Blender, a library override of a placed instance (it replaces the
+  instance: the dump skips overrides and warns; make a variant piece instead); in Unity, Overrides > Apply All or
+  Revert All on a placement, Unpack Prefab, or moving a kit prefab out of the prefab roots
+  (`references/unity-apply.md`).
+- **Snapshot safety**: merge changes nothing. commit writes `<scope>.synced.json` only after fresh dumps of both
   sides match the plan, keeps the previous one as `<scope>.synced.prev.json`, and writes through a temp file.
-- **Undo**: Unity edits in a scene go through `Undo`, so `Ctrl+Z` reverses an apply, and an apply never saves
-  unsaved changes it did not make (see the sync loop). Blender headless applies save the file. Keep MASTER under
-  version control or back it up before the first sync.
 
 ## Coordinates
 
-JSON is in Unity space (left-handed, Y up, metres). Blender to Unity is `(-x, z, -y)`, matching the export
-settings above: a piece placed in Blender at
-`(2, 3, 0)`, rotated +90 deg about Z, appears in Unity at `(-2, 0, -3)`, rotated -90 deg about Y. The conversion
-assumes the prefab root has identity rotation. If pieces arrive mirrored or turned, check the FBX axis settings
-before touching the matrix in `export_placements.py`.
-
-## Round-trip test (run once per project, and after changing export settings)
-
-1. Two KIT pieces, one asymmetric (an L-shaped wall), exported and packaged as prefabs.
-2. In MASTER: place three instances, one rotated 90 deg, sync: Unity must show them where Blender does (compare a
-   `look` render with a Unity screenshot from the same viewpoint).
-3. Move one in Unity, a different one in Blender, sync: both sides end up with both moves.
-4. Move the same one differently on both sides: merge exits 2 with one conflict; resolve it with `--take-id`.
-5. Duplicate one in Unity and move the copy: the copy becomes a new placement in Blender; the original keeps its id.
-6. Delete one in Blender: it disappears in Unity. Commit after each step must succeed.
-
-Last full pass: 2026-10-14, Blender 5.2.2 and Unity 2022.3.22f1 (a VRChat world project), including a re-parent
-into a folder in Unity (not an edit) and a duplicate made with Ctrl+D after a script reload.
-2026-10-16: a first sync of 18 placements into a new scene, and a create-then-update test confirming Apply leaves
-the scene saved and clean (it records prefab-instance overrides before saving).
+JSON is in Unity space (left-handed, Y up, metres). Blender to Unity is `(-x, z, -y)`, matching the export settings
+above: a piece placed in Blender at `(2, 3, 0)`, rotated +90 deg about Z, appears in Unity at `(-2, 0, -3)`, rotated
+-90 deg about Y. Scale maps the same way: Blender `(sx, sy, sz)` is Unity `(sx, sz, sy)`. The conversion assumes the
+prefab root has identity rotation. If pieces arrive mirrored or turned, check the FBX axis settings before touching
+the matrix in `scripts/export_placements.py`.
