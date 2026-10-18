@@ -3,9 +3,10 @@
 Skills in this repo are independent (see AGENTS.md), so a few facts live in more than one skill: the kit piece,
 assembly and material naming patterns, the VRChat platform budgets and limits, the FBX export settings, the
 Blender -> Unity axis conversion, the VR texel-density classes, the lightmap planning constants, the kit_status
-values, the required Unity version, and one script shipped identically in two skills. This finds every copy and
-fails if any disagrees with the canonical value below. When a fact changes, change CANON here and every copy it
-lists. FORBIDDEN lists statements a review found wrong, so they cannot creep back in.
+values, the required Unity version, the PBR base-colour range, and two scripts each shipped identically in two
+skills (kit_library.py, pbr_check.py). This finds every copy and fails if any disagrees with the canonical value
+below. When a fact changes, change CANON here and every copy it lists. FORBIDDEN lists statements a review found
+wrong, so they cannot creep back in.
 
 Host: plain Python 3.9+, standard library. Run from anywhere:
     python tools/check_conventions.py          # exit 1 on any mismatch
@@ -31,7 +32,15 @@ CANON = {
     "kit_status": ["grey", "modelled", "uv", "textured", "exported"],
     "axis_text": "(-x, z, -y)",
     "texel_rule": "1150 / d",
-    "texel_classes": [("512", "0-3"), ("256", "3-6"), ("128", "6-12"), ("64", "> 12")],
+    # each class gives at least two thirds of what a 20 ppd headset resolves (1150 / d) at the near edge of its band
+    "texel_classes": [("2048", "< 0.75"), ("1024", "0.75-1.5"), ("512", "1.5-3"), ("256", "3-6"), ("128", "6-12"),
+                      ("64", "> 12")],
+    # the same classes as (px per m, nearest viewing distance in m from which the class applies), for scripts
+    "texel_class_edges": [(2048, 0.0), (1024, 0.75), (512, 1.5), (256, 3.0), (128, 6.0), (64, 12.0)],
+    # dielectric base-colour luma range in sRGB codes: Adobe's PBR Guide part 2 (tolerant dark limit, bright limit),
+    # held by pbr_check.py (pbr-texturing and vrchat-world-qa) and the spec validator's look.materials targets
+    "pbr_albedo_srgb": [30, 240],
+    "pbr_albedo_text": "30-240",
     "material_re": r"^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$",
     "unity_version": "2022.3.22f1",
     # Other full Unity versions a skill may name, and why (anything else is a stale version).
@@ -47,6 +56,7 @@ CANON = {
                      "generateSecondaryUV": "false", "importCameras": "false", "importLights": "false",
                      "importVisibility": "false", "importBlendShapes": "false", "addCollider": "false",
                      "importNormals": "ModelImporterNormals.Import", "animationType": "ModelImporterAnimationType.None",
+                     "meshCompression": "ModelImporterMeshCompression.Off",
                      "importAnimation": "false",
                      "materialImportMode": "ModelImporterMaterialImportMode.ImportViaMaterialDescription",
                      "materialLocation": "ModelImporterMaterialLocation.InPrefab"},
@@ -115,7 +125,12 @@ CONSTANTS = [
     ("vrchat-world-qa/scripts/qa_measure.py", "UV2_BOX_FILL_NOTE", ("uv2_box_fill_note",)),
     ("uv-unwrapping/scripts/uv_audit.py", "TOPOLOGY_TYPES", ("topology_types",)),
     ("blender-mesh-topology/scripts/hard_surface.py", "TOPOLOGY_TYPES", ("topology_types",)),
+    ("blender-mesh-topology/scripts/detail_scale.py", "TEXEL_CLASSES", ("texel_class_edges",)),
+    ("vrchat-world-orchestration/scripts/spec_validate.py", "ALBEDO_SRGB", ("pbr_albedo_srgb",)),
 ]
+
+# The PBR checker ships identically in these skills (texturing self-checks, QA's X8 runs the same code).
+PBR_CHECK_COPIES = ("pbr-texturing/scripts/pbr_check.py", "vrchat-world-qa/scripts/pbr_check.py")
 
 # Text a file must contain because it states that fact: (CANON key, files).
 TEXT_PRESENT = [
@@ -131,6 +146,8 @@ TEXT_PRESENT = [
                           "vrchat-world-qa/references/checklists.md"]),
     ("astc_background_text", ["vrchat-texture-and-vram/SKILL.md", "vrchat-world-qa/references/checklists.md"]),
     ("astc_normal_text", ["vrchat-texture-and-vram/SKILL.md", "vrchat-world-qa/references/checklists.md"]),
+    ("pbr_albedo_text", ["vrchat-world-qa/references/checklists.md", "vrchat-world-orchestration/references/world-spec.md",
+                         "vrchat-world-orchestration/references/stages.md"]),
 ]
 
 # A documented headless Blender run that executes Python must fail loudly: without --python-exit-code 1 an uncaught
@@ -201,6 +218,17 @@ FORBIDDEN = [
      "Polycount's https host refuses connections (checked 2026-10-17): cite http://wiki.polycount.com/..."),
     (r"(?i)reads? about (twice|double)",
      "the Profiler's runtime size can read up to twice the storage size (2x on 2026-10-16, 1.00-1.01x on 2026-10-17)"),
+    # found wrong in the 2026-10-18 asset-quality review
+    (r"(?i)mesh compression\W+low or medium|low or medium at ship time",
+     "kit pieces keep Mesh Compression Off: Medium stepped tiling UVs 0.6 px at a joint and cut 2-texel UV2 gaps to "
+     "1.8 texels (Unity 2022.3.22f1, measured 2026-10-18)"),
+    (r"(?i)painter has no automation",
+     "Painter 11.1's Python API bakes, layers smart materials and exports; an agent reaches it through a bridge"),
+    (r"(?i)Lightmap Compression Normal Quality",
+     "Lightmap Compression High Quality: on Windows Low, Normal and High store BC6H at the same size (measured "
+     "2026-10-18)"),
+    (r"(?i)T512 \(0-3 m\)|512 px/m at 0-3",
+     "texel classes: T2048 under 0.75 m, T1024 0.75-1.5 m, T512 1.5-3 m (CANON texel_classes)"),
 ]
 
 # Row labels (regex, case-insensitive) for the budget tables in markdown.
@@ -311,12 +339,24 @@ def check_budget_py(rel):
 
 
 def check_budget_template(rel):
+    """Each budget is one number no looser than the Quest target (it binds every platform), or a one-line
+    per-platform mapping ({pc: 500000, quest: 250000}) whose values are no looser than each platform's target."""
     text = read(rel)
-    q = CANON["budgets"]["quest"]
     for key in ("world_tris", "view_tris", "materials", "setpass", "batches", "texture_vram_mb"):
-        m = re.search(r"^\s*%s:\s*(\d+)" % key, text, re.M)
-        if not m or int(m.group(1)) > q[key]:
-            fail(rel, "template budgets.%s missing or looser than quest %d" % (key, q[key]))
+        m = re.search(r"^\s*%s:\s*(\d+|\{[^}\n]*\})" % key, text, re.M)
+        if not m:
+            fail(rel, "template budgets.%s missing" % key)
+            continue
+        if m.group(1).startswith("{"):
+            values = {p: int(v) for p, v in re.findall(r"(\w+):\s*(\d+)", m.group(1))}
+            if "quest" not in values:
+                fail(rel, "budgets.%s per platform has no quest value" % key)
+        else:
+            values = {"quest": int(m.group(1))}
+        for plat, v in values.items():
+            want = CANON["budgets"].get("quest" if plat == "ios" else plat, {}).get(key)
+            if want is None or v > want:
+                fail(rel, "budgets.%s.%s = %d is looser than the %s target %s" % (key, plat, v, plat, want))
 
 
 # ---- export settings, axes, kit_status, shared scripts -------------------------------------------------------------
@@ -610,8 +650,9 @@ def main():
         if CANON["texel_rule"] not in text:
             fail(rel, "does not state the texel rule %s" % CANON["texel_rule"])
         if rel.endswith("rizomuv-uv-pipeline/SKILL.md"):
-            if "512 / 256 / 128 / 64" not in text:
-                fail(rel, "texel classes are not 512 / 256 / 128 / 64")
+            listed = " / ".join(px for px, _dist in CANON["texel_classes"])
+            if listed not in text:
+                fail(rel, "texel classes are not %s" % listed)
             continue
         for px, dist in CANON["texel_classes"]:
             # the class and its distance band appear together on one line (a table row or a sentence)
@@ -620,7 +661,18 @@ def main():
 
     check_identical("blender-kit-library/scripts/kit_library.py",
                     "vrchat-world-orchestration/scripts/kit_library.py")
+    check_identical(*PBR_CHECK_COPIES)
+    for rel in PBR_CHECK_COPIES:
+        limits = module_constant(rel, "PBR_LIMITS")
+        if limits is MISSING or list(limits.get("albedo_srgb", ())) != CANON["pbr_albedo_srgb"]:
+            fail(rel, "PBR_LIMITS albedo_srgb is not %r" % (CANON["pbr_albedo_srgb"],))
 
+    edges = CANON["texel_class_edges"]
+    bands = ["< %g" % edges[1][1]] + ["%g-%g" % (a[1], b[1]) for a, b in zip(edges[1:], edges[2:])] \
+        + ["> %g" % edges[-1][1]]
+    if [(str(px), band) for (px, _d), band in zip(edges, bands)] != CANON["texel_classes"]:
+        fail("../tools/check_conventions.py", "CANON texel_classes %r and texel_class_edges %r disagree"
+             % (CANON["texel_classes"], edges))
     if abs(CANON["lod_lightmap_cost"] - CANON["lod_lightmap_scale"] ** 2) > 1e-12:
         fail("../tools/check_conventions.py", "CANON lod_lightmap_cost %r is not lod_lightmap_scale %r squared"
              % (CANON["lod_lightmap_cost"], CANON["lod_lightmap_scale"]))
