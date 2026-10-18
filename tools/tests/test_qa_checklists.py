@@ -22,8 +22,8 @@ try:
 except ImportError:
     yaml = None
 
-# The ids this round fixed (A5 retired; M9, X6, N8 new): letter -> count.
-EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 7, "M": 9, "U": 6, "X": 7, "A": 4, "E": 4, "N": 8, "L": 6, "I": 4,
+# The ids this round fixed (A5 retired; M9, X6, N8 new; X8 and L7 added 2026-10-18): letter -> count.
+EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 7, "M": 9, "U": 6, "X": 8, "A": 4, "E": 4, "N": 8, "L": 7, "I": 4,
             "O": 5}
 ID = r"[GCSPBMUXAENLIO][1-9]"
 # flags of other tools the documents quote (uv_audit, Blender itself, git, a Chromium screenshot)
@@ -183,6 +183,43 @@ class Rules(unittest.TestCase):
         for cid in ("U4", "L6"):
             self.assertIn("lighting_states", re.search(r"^\| %s \|.*$" % cid, CHECKLISTS, re.M).group(0), cid)
         self.assertIn("LIGHT_STATES", section(CHECKLISTS, "Stage 11 - Lighting and bake"))
+
+
+class LookAndPbr(unittest.TestCase):
+    """X5 judges materials under look-dev light, X8 runs the shared PBR check, L7 judges the lit Unity views."""
+
+    def row(self, cid):
+        return re.search(r"^\| %s \|.*$" % cid, CHECKLISTS, re.M).group(0)
+
+    def test_x5_needs_lookdev(self):
+        x5 = self.row("X5")
+        self.assertIn("--light lookdev", x5)
+        self.assertIn("ignores roughness, metallic and normal maps", x5)
+        for field in ("look.references", "look.materials.<M>.ref", "look.wear"):
+            self.assertIn(field, x5)
+        self.assertIn('LIGHTS = {"studio": "STUDIO", "flat": "FLAT", "lookdev": None}', SCRIPT)
+
+    def test_x8_runs_the_shared_pbr_check(self):
+        x8 = self.row("X8")
+        for part in ("--pbr", "--map-px", "--pbr-targets", "30-240", "180", "look.materials", "OpenGL"):
+            self.assertIn(part, x8)
+        self.assertTrue((SKILL / "scripts" / "pbr_check.py").is_file(), "pbr_check.py must ship beside qa_measure.py")
+        self.assertIn('"pbr_check.py"', SCRIPT)
+        mapped = re.search(r"^\|[^|]*\| `T-TEX-<FAMILY>` \|([^|]*)\|", CHECKLISTS, re.M).group(1)
+        self.assertIn("X8", expand(mapped))
+
+    def test_l7_renders_every_state_in_unity(self):
+        l7 = self.row("L7")
+        for part in ("lighting state", "look.lighting_mood", "RenderTexture", "--image-stats", "clipped", "crushed"):
+            self.assertIn(part, l7)
+        self.assertIn("L7", section(CHECKLISTS, "Stage 11 - Lighting and bake").split("| Id |")[0])
+        mapped = re.search(r"^\|[^|]*\| `T-LIGHT` \|([^|]*)\|", CHECKLISTS, re.M).group(1)
+        self.assertEqual(expand(mapped), ["L%d" % n for n in range(1, 8)])
+
+    def test_g4_judges_piece_detail(self):
+        g4 = self.row("G4")
+        for part in ("`ref` images", "`detail` list", "eye height"):
+            self.assertIn(part, g4)
 
 
 class VerdictContract(unittest.TestCase):

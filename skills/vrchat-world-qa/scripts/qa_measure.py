@@ -28,21 +28,29 @@ it, or without its JSON, did not finish.
             --view 2 1.8 1.7 3 4.4 0.9 24 --png view.png --hide-collection REF --color texture --light flat
     blender -b --factory-startup KIT_Arch_Exterior.blend --python-exit-code 1 --python qa_measure.py -- --module 1.0
             --isolate EXT_Door_2x3_A --view 3 -3 2.5 1 0.15 1.5 35 --png door.png --wire   # one piece, wireframe
+    blender -b --factory-startup MASTER.blend --python-exit-code 1 --python qa_measure.py -- --module 1.0
+            --view 2 1.8 1.7 3 4.4 0.9 24 --png look.png --hide-collection REF --light lookdev   # materials (X5)
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --image-stats dark.png --gain 4
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --tile-seam T_EXT_Brick_BaseColor.png
+    blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --pbr "blender/textures/EXT/*.png"
+            --map-px 1024 --pbr-targets '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "metal": false}}'   # X8
 
 Renders leave out collision shells (*_COL) and every LOD but LOD0 (*_LOD1, *_LOD2...), in the file and inside
 collection instances: --lod n shows LOD n instead, --show-collision shows the shells, --hide-object hides more by
-name (globs), --isolate shows one collection only (every KIT piece sits at the origin).
+name (globs), --isolate shows one collection only (every KIT piece sits at the origin). --light flat and studio are
+Workbench (base colour only); --light lookdev is EEVEE with each material's own nodes (roughness, metallic and normal
+maps), a grey world, the scene's lights hidden and one key light 45 deg above, behind the camera's left (LOOKDEV).
 
 File role, from the file name or --role: KIT_* kit, ASM_* asm, MASTER* master; --import-fbx makes it fbx. A MASTER or
 ASM file must hold no local piece collection; MASTER no local assembly; an ASM file exactly the one assembly named
 after the file. With no .blend open and no --import-fbx (a blank session), the scene is not measured.
 
 From a live Blender (Blender MCP execute_blender_code), without saving:
-    ns = {}; exec(open(r"<skill>/scripts/qa_measure.py", encoding="utf-8").read(), ns)
+    ns = {"__file__": r"<skill>/scripts/qa_measure.py"}     # pbr() finds pbr_check.py beside it through __file__
+    exec(open(ns["__file__"], encoding="utf-8").read(), ns)
     rep = ns["measure"](module=1.0)                  # dict, fields below
     ns["problems"](rep, piece_tris={"EXT": 800}, expect_status="modelled")
+    ns["pbr"](["T_EXT_Brick_BaseColor.png", "T_EXT_Brick_Normal.png"], map_px=1024)
 
 Report fields. File: file, role, module, sub_module, libraries [{path, relative, found}], unnamed_collections,
 local_assemblies, local_assembly_offsets {name: [x, y, z]}, images [{image, filepath, relative, packed, missing,
@@ -52,8 +60,10 @@ scale_ok, on_grid, right_angle}], appended, shadowing_linked, ref_meshes, stray_
 LOD0 footprints under 64 px, where only a Free PROP or FOL piece is told to become probe-lit; UV2 box fill under 0.5
 at a footprint of 64 px or more),
 linked_assembly_offsets {name: [x, y, z]}; optional fbx_folded_materials, placement_changes (matched by placement id
-first; an id that vanished or changed is listed), tile_seam, image_stats, renders [{image, size, mean, min, max,
-coverage}].
+first; an id that vanished or changed is listed), tile_seam, image_stats and renders [{image, size, mean, min, max,
+luma_p1, luma_p50, luma_p99, clipped_share, crushed_share, coverage}], pbr (one entry per material from pbr_check.py:
+material, maps, base_color, metallic_smoothness, normal, problems, notes; its problems also go into problems, as
+"pbr <material>: ...", and its notes into notes).
 Per piece (pieces[]): piece, kit_status, instance_offset, transform_issues, lod0_tris, has_collision,
 coplanar_overlaps, coplanar_overlap_examples, bad_materials, bounds_m, extent_modules, size_ok and pivot_ok (grid
 pieces), free_pivot (Free pieces), objects, a dict keyed by object name: {tris, ngons, edges_over_2_faces,
@@ -799,8 +809,10 @@ def tile_seam(path):
 
 
 def image_stats(path, gain=None):
-    """Mean, min and max of an image's RGB channels on the 0-255 scale (fully transparent pixels left out), and the
-    share of pixels at least half opaque (coverage), for judging dark renders by number: an image viewer may
+    """Mean, min and max of an image's RGB channels on the 0-255 scale (fully transparent pixels left out), luma
+    percentiles (Rec. 709 weights on the stored values: p1, p50, p99), the share of pixels with any channel at
+    CLIPPED_CODE or more (clipped_share) and with luma at CRUSHED_LUMA or less (crushed_share), and the share of pixels
+    at least half opaque (coverage), for judging dark renders and final looks by number: an image viewer may
     auto-level them. With gain, a brightened copy is saved next to it as <name>_x<gain>.png to judge seams and leaks
     on. Works on any PNG, Unity renders included."""
     import numpy as np
@@ -812,10 +824,19 @@ def image_stats(path, gain=None):
         im.pixels.foreach_get(px)
         a = px.reshape(-1, 4)
         rgb = a[a[:, 3] > 0.0][:, :3]
+        lum = (rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)) * 255.0 if rgb.size else rgb
+
+        def pct(q):
+            return round(float(np.percentile(lum, q)), 1) if rgb.size else None
+
         out = {"image": path, "size": [w, h],
                "mean": round(float(rgb.mean()) * 255.0, 1) if rgb.size else None,
                "min": round(float(rgb.min()) * 255.0, 1) if rgb.size else None,
                "max": round(float(rgb.max()) * 255.0, 1) if rgb.size else None,
+               "luma_p1": pct(1), "luma_p50": pct(50), "luma_p99": pct(99),
+               "clipped_share": round(float((rgb.max(axis=1) * 255.0 >= CLIPPED_CODE - 1e-3).mean()), 4)
+               if rgb.size else None,
+               "crushed_share": round(float((lum <= CRUSHED_LUMA + 1e-3).mean()), 4) if rgb.size else None,
                "coverage": round(float((a[:, 3] >= 0.5).mean()), 4) if a.size else 0.0}
         if gain:
             g = a.copy()
@@ -833,6 +854,33 @@ def image_stats(path, gain=None):
         return out
     finally:
         bpy.data.images.remove(im)
+
+
+def _pbr_module():
+    """pbr_check.py from this script's own folder (shipped identically in the pbr-texturing skill), loaded without
+    writing a __pycache__ into the skill. Code run through exec has no __file__ of its own: the live route sets
+    ns["__file__"] to this script's path first."""
+    import importlib.util
+    here = globals().get("__file__")
+    if not here:
+        raise RuntimeError("the PBR check needs this script's path: set ns['__file__'] to qa_measure.py before exec")
+    path = os.path.join(os.path.dirname(os.path.abspath(here)), "pbr_check.py")
+    keep = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec = importlib.util.spec_from_file_location("qa_pbr_check", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    finally:
+        sys.dont_write_bytecode = keep
+
+
+def pbr(paths, map_px=None, targets=None):
+    """X8: the PBR value checks of texture maps paired by name (T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness,
+    _Normal), one dict per material with its stats, "problems" (blocking) and "notes" (advisory). targets: the spec's
+    look.materials, {material: {albedo_srgb, roughness, metal}}."""
+    return _pbr_module().check_files(paths, map_px=map_px, targets=targets)
 
 
 def compare_placements(rep, prev):
@@ -1077,7 +1125,13 @@ VIEWS = {
     "right": ((-1, 0, 0), (0, 0, 1)), "left": ((1, 0, 0), (0, 0, 1)),
 }
 COLORS = {"random": "RANDOM", "texture": "TEXTURE", "material": "MATERIAL"}
-LIGHTS = {"studio": "STUDIO", "flat": "FLAT"}
+LIGHTS = {"studio": "STUDIO", "flat": "FLAT", "lookdev": None}    # lookdev is EEVEE, not a Workbench light
+# --light lookdev (house settings): a neutral grey world (linear grey, strength 1), one sun of this strength (W/m2) at
+# this elevation and azimuth from behind the camera's left, EEVEE render samples. A mid-grey dielectric facing the
+# camera renders about mid-tone at exposure 0 under the Standard view transform.
+LOOKDEV = {"world": 0.25, "sun": 2.5, "elevation": 45.0, "azimuth": 45.0, "samples": 16}
+CLIPPED_CODE = 250     # image_stats: a pixel with any channel at this code or more is clipped (L7)
+CRUSHED_LUMA = 5       # image_stats: a pixel at this luma or less is crushed to black (L7)
 
 
 def render_hidden(lod=0, show_collision=False, hide_objects=(), isolate=None, hide_collections=()):
@@ -1172,28 +1226,84 @@ def _wire_copies(thickness):
     return made
 
 
+def _eevee_id(scene):
+    """EEVEE's render engine identifier in this Blender. RenderSettings' enum_items under-reports (Blender 5.2.2 lists
+    only BLENDER_EEVEE, measured 2026-10-18), so the full list comes from the TypeError an unknown name raises; the
+    failed assignment leaves the engine as it was."""
+    ids = [i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
+    try:
+        scene.render.engine = "QA_NO_SUCH_ENGINE"
+    except TypeError as exc:
+        ids += re.findall(r"'([A-Za-z0-9_]+)'", str(exc).split("not found in", 1)[-1])
+    eevee = next((i for i in ids if "EEVEE" in i.upper()), None)
+    if eevee is None:
+        raise RuntimeError("--light lookdev needs EEVEE; this Blender offers %s" % ", ".join(dict.fromkeys(ids)))
+    return eevee
+
+
+def _lookdev_rig(scene, matrix, saved):
+    """For --light lookdev: EEVEE, a neutral grey world, the scene's own lights hidden from the render (lights inside
+    collection instances stay on) and one sun from behind the camera's left (LOOKDEV), so every material reads under
+    the same light with its own nodes (roughness, metallic and normal maps included, which Workbench ignores). Changes
+    go through _set into saved; returns the sun object, its light data and the world, for removal once saved is
+    restored."""
+    import warnings
+    _set(scene.render, "engine", _eevee_id(scene), saved)
+    world = bpy.data.worlds.new("qa_lookdev_world")
+    g = LOOKDEV["world"]
+    world.color = (g, g, g)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)    # use_nodes is deprecated in Blender 5.x
+        try:
+            world.use_nodes = True
+        except (AttributeError, TypeError):
+            pass
+    bg = next((n for n in world.node_tree.nodes if n.type == "BACKGROUND"), None) if world.node_tree else None
+    if bg is not None:
+        bg.inputs[0].default_value = (g, g, g, 1.0)
+        bg.inputs[1].default_value = 1.0
+    _set(scene, "world", world, saved)
+    for ob in scene.objects:
+        if ob.type == "LIGHT" and not ob.hide_render:
+            _set(ob, "hide_render", True, saved)
+    sun_data = bpy.data.lights.new("qa_lookdev_sun", "SUN")
+    sun_data.energy = LOOKDEV["sun"]
+    sun = bpy.data.objects.new("qa_lookdev_sun", sun_data)
+    scene.collection.objects.link(sun)
+    el, az = math.radians(LOOKDEV["elevation"]), math.radians(LOOKDEV["azimuth"])
+    # towards the light in camera space (x right, y up, z back towards the viewer), then in world space
+    to_light = matrix.to_3x3() @ Vector((-math.cos(el) * math.sin(az), math.sin(el), math.cos(el) * math.cos(az)))
+    sun.matrix_world = to_light.normalized().to_track_quat("Z", "Y").to_matrix().to_4x4()   # it shines along -Z
+    _set(scene.eevee, "taa_render_samples", LOOKDEV["samples"], saved)
+    return sun, sun_data, world
+
+
 def _render(path, cam_data, matrix, size, color="random", light="studio", wire=None):
     """Workbench render to a PNG. random: each object its own colour with cavity and outlines, so pieces, openings
     and seams read (the default flat grey hides every edge between same-coloured faces). texture: each mesh's image
     textures through the UV layer _set_render_uv makes active (Workbench samples the ACTIVE layer), for judging
     materials; flat light shows albedo as stored, studio a
-    neutral light. wire: light surfaces with near-black edges (object colours). Standard view transform, 8-bit PNG.
-    Restores the scene."""
+    neutral light. wire: light surfaces with near-black edges (object colours). light lookdev instead renders through
+    EEVEE with each material's own nodes under _lookdev_rig (color and wire do not apply). Standard view transform,
+    exposure 0, 8-bit PNG. Restores the scene."""
     scene = bpy.context.scene
     cam = bpy.data.objects.new("qa_cam", cam_data)
     scene.collection.objects.link(cam)
     cam.matrix_world = matrix
-    saved, wires = [], []
+    saved, wires, rig = [], [], None
     shading, img, vs = scene.display.shading, scene.render.image_settings, scene.view_settings
     try:
         if wire:
             wires = _wire_copies(wire)
         _set(scene, "camera", cam, saved)
-        _set(scene.render, "engine", "BLENDER_WORKBENCH", saved)
-        _set(shading, "color_type", "OBJECT" if wire else COLORS[color], saved)
-        _set(shading, "light", LIGHTS[light], saved)
-        _set(shading, "show_cavity", color == "random" and not wire, saved)
-        _set(shading, "show_object_outline", color == "random" and not wire, saved)
+        if light == "lookdev":
+            rig = _lookdev_rig(scene, matrix, saved)
+        else:
+            _set(scene.render, "engine", "BLENDER_WORKBENCH", saved)
+            _set(shading, "color_type", "OBJECT" if wire else COLORS[color], saved)
+            _set(shading, "light", LIGHTS[light], saved)
+            _set(shading, "show_cavity", color == "random" and not wire, saved)
+            _set(shading, "show_object_outline", color == "random" and not wire, saved)
         _set(vs, "view_transform", "Standard", saved)
         if not _set(vs, "look", "NONE", saved, quiet=True):      # "NONE" in Blender 5.x, "None" before
             _set(vs, "look", "None", saved)
@@ -1219,6 +1329,11 @@ def _render(path, cam_data, matrix, size, color="random", light="studio", wire=N
                 pass
         for dup in wires:
             bpy.data.objects.remove(dup)
+        if rig is not None:                          # after saved is restored: the scene no longer uses the world
+            sun, sun_data, world = rig
+            bpy.data.objects.remove(sun)
+            bpy.data.lights.remove(sun_data)
+            bpy.data.worlds.remove(world)
         bpy.data.objects.remove(cam)
         bpy.data.cameras.remove(cam_data)
     return path
@@ -1281,6 +1396,12 @@ def _set_render_uv(layer=None):
     return saved
 
 
+def _stats_text(s):
+    return ("mean %s, min %s, max %s (0-255), luma p1/p50/p99 %s/%s/%s, clipped %s, crushed %s, coverage %s"
+            % (s["mean"], s["min"], s["max"], s["luma_p1"], s["luma_p50"], s["luma_p99"], s["clipped_share"],
+               s["crushed_share"], s["coverage"]))
+
+
 def _expand(ap, flag, args):
     """Expand globs here, so the same command works in PowerShell, cmd and bash."""
     out = []
@@ -1338,7 +1459,8 @@ def _args(argv):
     ap.add_argument("--uv-layer", metavar="NAME|INDEX", help="texture renders: the UV layer to draw through (Workbench "
                     "samples each mesh's ACTIVE layer); default each mesh's active render layer, restored afterwards")
     ap.add_argument("--light", choices=sorted(LIGHTS), default="studio", help="flat: albedo as stored; studio: "
-                    "neutral light")
+                    "neutral light (both Workbench, which draws base colour only); lookdev: EEVEE with each "
+                    "material's own nodes (roughness, metallic and normal maps), a grey world and one key light")
     ap.add_argument("--wire", nargs="?", type=float, const=-1.0, metavar="M", help="wireframe render: light surfaces, "
                     "near-black edges M metres thick (default about 1.5 px)")
     ap.add_argument("--lod", type=int, default=0, help="render this LOD; the others are hidden (default 0)")
@@ -1351,7 +1473,14 @@ def _args(argv):
     ap.add_argument("--overlay", help="ortho: SVG (spec_to_svg) or PNG to lay over the render")
     ap.add_argument("--overlay-out", help="overlay SVG path; default <png>.overlay.svg")
     ap.add_argument("--tile-seam", nargs="+", metavar="PNG", help="seam metric for tiling textures (X4)")
-    ap.add_argument("--image-stats", nargs="+", metavar="PNG", help="pixel mean, min, max and coverage of images")
+    ap.add_argument("--image-stats", nargs="+", metavar="PNG", help="pixel mean, min, max, luma percentiles, clipped "
+                    "and crushed shares and coverage of images")
+    ap.add_argument("--pbr", nargs="+", metavar="PNG", help="PBR value checks of texture maps (X8), paired by name: "
+                    "T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness and _Normal; globs are expanded here")
+    ap.add_argument("--map-px", type=int, metavar="PX", help="with --pbr: the family's map_px, the same number as "
+                    "--texel-map (a larger map is a PROBLEM)")
+    ap.add_argument("--pbr-targets", metavar="JSON", help="with --pbr: the spec's look.materials as JSON, e.g. "
+                    '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "roughness": [0.6, 0.95], "metal": false}}')
     ap.add_argument("--gain", type=float, help="with --image-stats or a render: also save a copy brightened this "
                     "many times as <name>_x<gain>.png")
     a = ap.parse_args(argv)
@@ -1379,9 +1508,22 @@ def _args(argv):
     a.probe_lit = [p.strip() for p in a.probe_lit.split(",") if p.strip()] if a.probe_lit else None
     if a.uv_layer is not None and a.color != "texture":
         ap.error("--uv-layer works with --color texture only")
+    if a.light == "lookdev" and a.wire is not None:
+        ap.error("--wire works with the Workbench lights only (--light flat or studio)")
     a.import_fbx = _expand(ap, "--import-fbx", a.import_fbx)
     a.tile_seam = _expand(ap, "--tile-seam", a.tile_seam)
     a.image_stats = _expand(ap, "--image-stats", a.image_stats)
+    a.pbr = _expand(ap, "--pbr", a.pbr)
+    if (a.map_px or a.pbr_targets) and not a.pbr:
+        ap.error("--map-px and --pbr-targets work with --pbr only")
+    if a.pbr_targets:
+        try:
+            a.pbr_targets = json.loads(a.pbr_targets)
+            if not isinstance(a.pbr_targets, dict) or not all(isinstance(v, dict) for v in a.pbr_targets.values()):
+                raise ValueError
+        except ValueError:
+            ap.error('--pbr-targets takes JSON {material: {"albedo_srgb": [lo, hi], "roughness": [lo, hi], '
+                     '"metal": true or false}}')
     if a.render and not (a.png and a.center and a.extent):
         ap.error("--render needs --png, --center and --extent")
     if a.view and not a.png:
@@ -1457,11 +1599,30 @@ def _main():
     if a.image_stats:
         rep["image_stats"] = [image_stats(p, a.gain) for p in a.image_stats]
         for s in rep["image_stats"]:
-            print("[qa] pixels %s: mean %s, min %s, max %s (0-255), coverage %s%s" % (
-                os.path.basename(s["image"]), s["mean"], s["min"], s["max"], s["coverage"],
-                ("; brightened copy " + s["gain_copy"]) if s.get("gain_copy") else ""))
+            print("[qa] pixels %s: %s%s" % (os.path.basename(s["image"]), _stats_text(s),
+                                            ("; brightened copy " + s["gain_copy"]) if s.get("gain_copy") else ""))
+    if a.pbr:
+        rep["pbr"] = pbr(a.pbr, a.map_px, a.pbr_targets)
+        for r in rep["pbr"]:
+            name = r["material"] or r["key"]
+            bc, ms, nm = r.get("base_color") or {}, r.get("metallic_smoothness") or {}, r.get("normal") or {}
+            parts = ["maps %s" % (", ".join(sorted(r.get("maps") or {})) or "none judged")]
+            if bc:
+                parts.append("luma p1/p50/p99 %s/%s/%s" % (bc.get("dielectric_luma_p1"), bc.get("dielectric_luma_p50"),
+                                                            bc.get("dielectric_luma_p99")))
+            if ms:
+                parts.append("metal %.0f%%, grey %.1f%%" % (100 * ms["metal_share"], 100 * ms["metallic_mid_share"]))
+            if nm:
+                parts.append("normal |n| %s, %s" % (nm["length_mean"], nm["convention"]))
+            print("[qa] pbr %s: %s" % (name, "; ".join(parts)))
+            for msg in r["problems"]:
+                rep["problems"].append("pbr %s: %s" % (name, msg))
+                print("[qa] PROBLEM pbr %s: %s" % (name, msg))
+            for msg in r["notes"]:
+                rep.setdefault("notes", []).append("pbr %s: %s" % (name, msg))
+                print("[qa] NOTE pbr %s: %s" % (name, msg))
     hidden, uv_saved = [], []
-    if (a.view or a.render) and a.color == "texture":
+    if (a.view or a.render) and a.color == "texture" and a.light != "lookdev":
         uv_saved = _set_render_uv(a.uv_layer)
     if a.view or a.render:
         try:
@@ -1480,16 +1641,18 @@ def _main():
         if a.wire is not None:
             wire = a.wire if a.wire > 0 else (1.5 / a.px_per_m if a.render else
                                               0.0025 * (Vector(a.view[3:6]) - Vector(a.view[0:3])).length)
-        if a.view:
-            render_view(a.png, a.view[0:3], a.view[3:6], a.view[6], color=a.color, light=a.light, wire=wire)
-        elif a.render:
-            render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m, clip=a.clip, color=a.color, light=a.light,
-                         wire=wire)
+        try:
+            if a.view:
+                render_view(a.png, a.view[0:3], a.view[3:6], a.view[6], color=a.color, light=a.light, wire=wire)
+            elif a.render:
+                render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m, clip=a.clip, color=a.color,
+                             light=a.light, wire=wire)
+        except RuntimeError as exc:                  # no EEVEE for --light lookdev
+            sys.exit("[qa] %s" % exc)
         if a.view or a.render:
             stats = image_stats(a.png, a.gain)
             rep["renders"] = [stats]
-            print("[qa] rendered %s: mean %s, min %s, max %s (0-255), coverage %s" % (
-                a.png, stats["mean"], stats["min"], stats["max"], stats["coverage"]))
+            print("[qa] rendered %s: %s" % (a.png, _stats_text(stats)))
         if a.render and a.overlay:
             size = (max(16, int(round(a.extent[0] * a.px_per_m))), max(16, int(round(a.extent[1] * a.px_per_m))))
             print("[qa] overlay " + overlay_svg(a.png, a.overlay, a.overlay_out or a.png + ".overlay.svg",

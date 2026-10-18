@@ -25,14 +25,14 @@ G1-G5 apply to every task. Run the rest for the task you are checking (`<FAMILY>
 | 5 | `T-MOD-MASTER` | M9 |
 | 6 | `T-UV-<FAMILY>` | U1-U6 |
 | 7 | `T-TEX-TRIM-LAYOUT` | X6 |
-| 7 | `T-TEX-<FAMILY>` | X1-X5, X7 |
+| 7 | `T-TEX-<FAMILY>` | X1-X5, X7, X8 |
 | 8 | `T-ASM-<name>` (its ASM file), `T-DRESS-<zone>` (MASTER) | A1-A4, M9 |
 | 9 | `T-EXP-<FAMILY>` | E1-E4 |
 | 10 | `T-UNITY-IMPORT` | N1-N3 |
 | 10 | `T-UNITY-SYNC-<scope>` | N4, N5 |
 | 10 | `T-UNITY-SETUP` | N6, N7 |
 | 10 | `T-UNITY-PLATFORM` | N8 |
-| 11 | `T-LIGHT` | L1-L6 |
+| 11 | `T-LIGHT` | L1-L7 |
 | 12 | `T-UDON-<id>` | I1-I4 |
 | 13 | `T-OPT` | O1-O4 |
 | 13 | `T-BUILD-<platform>` | O5 |
@@ -62,7 +62,7 @@ skills the user declined, from the ledger's `intake.skills_declined`):
 
 | Name in the checks | What | Where |
 |---|---|---|
-| `qa_measure` | Blender-side measurements (fields below) and review renders: orthographic plans and elevations with SVG overlays (`--render`, `--overlay`), perspective spec views (`--view`), textured renders (`--color texture --light flat` or `studio`), wireframes (`--wire`), one piece or LOD at a time (`--isolate`, `--lod`, `--show-collision`, `--hide-object`), pixel statistics and brightened copies (`--image-stats`, `--gain`), FBX re-imports (`--import-fbx`), the tiling-seam metric (`--tile-seam`), placement diffs (`--compare-placements`), lightmap footprints (`--lightmap-texels`), UV0 texel density (`--texel-map`) | `scripts/qa_measure.py`; its header lists every command |
+| `qa_measure` | Blender-side measurements (fields below) and review renders: orthographic plans and elevations with SVG overlays (`--render`, `--overlay`), perspective spec views (`--view`), textured renders (`--color texture --light flat` or `studio`, Workbench: base colour only), look-dev renders through EEVEE with each material's own nodes (`--light lookdev`), wireframes (`--wire`), one piece or LOD at a time (`--isolate`, `--lod`, `--show-collision`, `--hide-object`), pixel statistics and brightened copies (`--image-stats`, `--gain`), FBX re-imports (`--import-fbx`), the tiling-seam metric (`--tile-seam`), the PBR value check of texture maps (`--pbr`, with `--map-px` and `--pbr-targets`; it runs `scripts/pbr_check.py`, shipped identically in `pbr-texturing`), placement diffs (`--compare-placements`), lightmap footprints (`--lightmap-texels`), UV0 texel density (`--texel-map`) | `scripts/qa_measure.py`; its header lists every command |
 | `look` | The scene seen from a chosen camera | The Blender MCP `look` when it is connected; headless, `qa_measure --view <px py pz tx ty tz lens>` (any camera) or `--render` (orthographic) |
 | UV audit | Distortion, texel density, padding, overlap, seams vs hard edges | Load `uv-unwrapping` (or `rizomuv-uv-pipeline` for its metrics) |
 | Topology audit | Closed islands, joint matching between pieces, shading review renders | Load `blender-mesh-topology` |
@@ -98,6 +98,8 @@ prints is a failure of the check listed here; NOTE lines are advisory. `objects`
 | `placements[]`: `kind`, `id`, `pos`, `rot_z`, `on_grid`, `right_angle`, `rot_xy_ok`, `scale_ok`; `placement_changes` | Where every instance sits (grid rules print PROBLEM lines for `kind` grid only; TRIM on `--sub-module`); what changed since a previous report, matched by placement id first (an id that vanished or changed is listed) | B4, A3, M9, N5 |
 | `fbx_folded_materials` | Materials the importer copied as `<name>.NNN` because an earlier file brought them, folded back | E4 |
 | `tile_seam`, `image_stats`, `renders` | Seam ratios; pixel mean, min and max on the 0-255 scale, and coverage | X4, L3, G4 |
+| `luma_p1`, `luma_p50`, `luma_p99`, `clipped_share`, `crushed_share` | In each `image_stats` and `renders` entry: luma percentiles (Rec. 709 weights, 0-255) and the shares of pixels with any channel at 250 or more (clipped) and with luma 5 or less (crushed) | L7, X5, L3 |
+| `pbr` | One entry per material from `--pbr`: its maps, the base-colour, metallic-smoothness and normal-map statistics, and its problems and notes; each problem is also in `problems` as `pbr <material>: ...`, each note in `notes` | X8 |
 
 ## General checks (every task)
 
@@ -106,7 +108,7 @@ prints is a failure of the check listed here; NOTE lines are advisory. `objects`
 | G1 | Outputs listed in the brief exist and are where it said, including the `kit_status` the stage sets on every piece it touched (`grey` at stage 4, `modelled` 5, `uv` 6, `textured` 7, `exported` 9) | List files; `qa_measure --expect-status <status>` |
 | G2 | Nothing outside the brief's writable files changed (edits the QA brief lists as the master's do not count) | Below |
 | G3 | Names follow the convention at every stage: pieces `<FAMILY>_<Type>_<Size>_<Variant>`, assemblies `ASM_<Name>_<Variant>` (one per ASM file, named after it), materials `M_<FAMILY>_<Name>` (the name part may hold underscores: `M_EXT_Brick_Dark`; the check catches `Material.001` or `wood`) | Blender files: `qa_measure` `unnamed_collections` empty, no `bad_materials`, and in KIT files no `stray_meshes`; the spec's names: spec validator; Unity: asset names through Unity MCP |
-| G4 | Matches the approved mockup, plan, elevation and spec views (planning stages: the diagrams match the spec and the spec matches the brief). A stage's own visual checks (B4, B7, X5) are G4's evidence there; a task that writes only a KIT file is judged piece by piece (`references/visual-review.md`, "One KIT piece") against each piece's `desc` and Size | `references/visual-review.md` |
+| G4 | Matches the approved mockup, plan, elevation and spec views (planning stages: the diagrams match the spec and the spec matches the brief). A stage's own visual checks (B4, B7, X5, L7) are G4's evidence there; a task that writes only a KIT file is judged piece by piece (`references/visual-review.md`, "One KIT piece") against each piece's `desc` and Size and, where the spec gives them, its `ref` images and `detail` list: every listed feature modelled at its stated size (within 10%, house guidance), seen close up and from the piece's nearest walkable viewing distance at eye height (1.6-1.7 m) | `references/visual-review.md` |
 | G5 | The builder's report block is complete and its claims match what you measured | Compare |
 
 ### G2: what changed, and what never counts
@@ -210,9 +212,10 @@ U5: those parts are `not-run` with `needs: uv-unwrapping`, their owner by the ru
 | X2 | Every image a material uses loads, at no more than the family's `map_px` (and the PC maximum: 2048, or 4096 for one hero surface); the 1024 cap for Android and iOS is N8's import override, not a source size | `qa_measure` `images[]` (`size`, `missing`) |
 | X3 | Channel packing for Unity's Standard shader: `_MetallicGlossMap` R = metallic, A = smoothness (1 - roughness), G and B unused; occlusion, if any, its own map (Standard reads its G); never a glTF-style ORM map. Base colour sRGB; metallic-smoothness, occlusion and normal maps linear (Non-Color in Blender); normal maps OpenGL (Y+), as Blender bakes them | `qa_measure` `images[]` (`channels`, `colorspace`, `alpha_mode`); the channel values with Blender's image API (`pixels.foreach_get`) |
 | X4 | Tiling materials tile without visible seams at 3 repeats | `qa_measure --tile-seam <png>...`: `ratio_x` and `ratio_y` at or below about 1 pass; above, look at a 3 x 3 composite (a feature crossing the edge, or a smooth gradient whose steepest step falls on the edge, can raise it to about 1.6 legitimately) |
-| X5 | Colour and value match the mockups (without mockups, `world.style` and the piece `desc`s) under neutral light | `qa_measure --view <spec view> --color texture --light flat` (albedo as stored) and `--light studio`; `references/visual-review.md` |
+| X5 | Materials read as intended, against the mockups, the spec's `look.references` and `look.materials.<M>.ref` (without any of them, `world.style` and the piece `desc`s): colour and value under flat and studio light (albedo as stored); roughness, metal and relief under look-dev light (a glossy surface shows a tight highlight and a rough one a broad, soft one; metal reflects its surroundings, tinted by its base colour, with no diffuse shading; relief lit from above reads raised, not dented); wear at the level `look.wear` names | `qa_measure --view <spec view> --color texture --light flat` and `--light studio` (Workbench: base colour only, it ignores roughness, metallic and normal maps), plus `--light lookdev` from the same views and one close-up per material (`--isolate <Piece> --view ...`): EEVEE with each material's own nodes under a fixed neutral light; `references/visual-review.md`. These renders are what the pipeline's look gate shows the user |
 | X6 | Trim layout (`T-TEX-TRIM-LAYOUT`, before the trim family's UVs): `blender/substance/<FAMILY>/layout.md` (the trim family's code) names every strip with its pixel rows and the trim pieces that use it; the strips fit the family's `map_px` without overlapping; each strip's height is its trim's real height at the family's `texel_density`, within 10%; the trim family's UV brief cites the file | Read the layout; sum the rows against `map_px`; heights against the spec's trim pieces |
 | X7 | Source files saved (`.sbs`, `.spp` or the node-setup `.blend`) next to the exports, so a map can be remade | List files |
+| X8 | PBR values: every map of the family passes the PBR check. Base colour: dielectric luma within 30-240 sRGB at its 1st and 99th percentiles (under 50 is a note), raw metal at least 160 at its 5th (under the guide's 180 is a note: measured titanium is 171); metallic binary (more than 10% of the map between 0.1 and 0.9 fails, over 2% is a note); smoothness in the metallic-smoothness map's A channel; normal maps unit-length, not pointing into the surface and OpenGL (Y+, from the correlation of their mixed derivatives); every map a power of two and no larger than `map_px`; inside the spec's `look.materials` targets (`albedo_srgb`, `roughness`, `metal`) where it gives them. NOTE lines are advisory | `qa_measure --pbr "blender/textures/<FAMILY>/*.png" --map-px <map_px> --pbr-targets '<look.materials as JSON>'` (the trim family's maps too): each `[qa] PROBLEM pbr ...` line fails X8, each `[qa] NOTE pbr ...` line goes in `notes`; the `pbr` field is the evidence. A map whose name does not end in `_BaseColor`, `_MetallicSmoothness` or `_Normal` is not judged: say so in `notes` |
 
 ## Stage 8 - Assemblies and master dressing
 
@@ -258,7 +261,8 @@ original's pose; every original active, at its placement, with its colliders and
 draws over its copy) and looks at each state in turn without editing the real objects: switch states in Play mode
 with the world's own switch, or use hidden temporary objects in the editor (`references/visual-review.md`), never by
 toggling or moving the real copies; reopen the scene from disk afterwards. L4's probes serve every state, so avatars
-and probe-lit props do not change with the switch.
+and probe-lit props do not change with the switch. L7 renders every state from every spec view, switching states the
+same way.
 
 | Id | Check | How |
 |---|---|---|
@@ -268,6 +272,7 @@ and probe-lit props do not change with the switch.
 | L4 | Avatars lit correctly: light probes cover every walkable area at standing and head height. Probes are always required; VRC Light Volumes add to them for shaders that read Light Volumes, while Standard, the VRChat mobile shaders and every mobile (Android and iOS) avatar read only probes | Read-only: temporary capsules with `HideFlags.HideAndDontSave`, rendered and destroyed (the scene stays clean), plus `LightProbes.GetInterpolatedProbe` at test points for numbers |
 | L5 | Realtime lights: a world with `quest` or `ios` keeps every light Baked, in one bake shared by every platform (VRChat documents its mobile shaders, Standard Lite and Lightmapped, as not supporting real-time lighting); a PC-only world has at most one realtime per-pixel light on static geometry at a time (a switchable light passes while only one is on at once) | Scene query through Unity MCP |
 | L6 | Every lightmapped renderer, LOD1+ included (each LOD has its own atlas space, at 0.5^n of LOD0's scale), keeps its UV2 gaps at 2 texels or more at the footprint Unity gave it: gap texels = authored gap in UV units x footprint px (footprint = `lightmapScaleOffset.x` x lightmap width). Under 64 px at LOD0 (house guidance; LOD0's footprint decides for the whole piece): a Free prop (a Free-sized PROP or FOL piece) is probe-lit instead (Contribute GI on, Receive Global Illumination = Light Probes), except in a zone with `lighting_states` above 1, where it changes with the switch and stays lightmapped in every state copy; every other piece stays lightmapped, noted to raise its Scale In Lightmap or `texels_per_m`. LOD1+ follow their piece (lightmapped at 0.5^n), unless the spec sets `lod_lightmap: false` (then their Receive Global Illumination is Light Probes). Scale In Lightmap never below what U4 packed the gaps for | Unity MCP: each lightmapped renderer's `lightmapScaleOffset` (with lighting states, every state copy's, as the stage intro says) against its UV2 gap (U4's evidence) |
+| L7 | Final look: every spec view, in every lighting state, rendered in Unity matches the mockups, the spec's `look.references` and `look.lighting_mood` (palette, light colour, contrast and mood; without them, `world.style`), judged like G4 and blocking like it. Record each render's luma p1, p50 and p99 and its clipped and crushed shares: more than 1% clipped or 5% crushed is a note to look at where (house guidance: a lamp or a window may clip on purpose, a corner may be meant dark) | Unity MCP `execute_code`: a temporary camera at each view's transform (Blender `(x, y, z)` is Unity `(-x, z, -y)`; vertical FOV `2 * atan(18 / lens * h / w)` degrees) rendered to a RenderTexture, read back, saved outside the project and destroyed afterwards (`references/visual-review.md`, "Blender vs Unity"); in a PC world whose reference camera carries post-processing, the temporary camera gets a copy of its post-processing layer so the render shows the graded look (say in `notes` when it cannot); each lighting state switched in Play mode with the world's own switch, the scene reopened from disk afterwards; then `qa_measure --image-stats <png>...` for the numbers |
 
 ## Stage 12 - Interactivity
 
@@ -337,5 +342,14 @@ these over time.
   called by reflection, and the Editor.log overlap message: Unity 2022.3.22f1, 2026-10-16.
 - `qa_measure` behaviour (FBX re-import axes and material copies, Workbench renders, hiding linked objects, image
   statistics; Workbench texture renders sample the mesh's active UV layer, not its active render layer): Blender
-  5.2.2, measured 2026-10-17. Its UV2 footprints on the dry run's KIT (wall 243.5, door 237.3, floor 200.5, desk
+  5.2.2, measured 2026-10-17.
+- Base-colour ranges (dielectrics 30 sRGB tolerant, 50 strict, 240 at most; raw metals 180-255) and the binary
+  metallic map, X8: Adobe, "The PBR Guide, Part 2", https://www.adobe.com/learn/substance-3d-designer/web/the-pbr-guide-part-2,
+  checked 2026-10-18. The percentiles, the grey-metal shares and the normal-map rules are house rules.
+- `--light lookdev`, Blender 5.2.2, measured 2026-10-18: EEVEE renders headless (`-b`); a 1280 x 720 look-dev view at
+  16 samples took about 1.3 s a run, start-up included. Workbench ignores the material's node roughness: two grey
+  spheres with node roughness 0.1 and 0.9 peaked at luma 187.6 and 191.6 under `--light studio`, 255 and 193 under
+  `--light lookdev`. RenderSettings' engine list (`bl_rna` enum items) names only `BLENDER_EEVEE`, while the error an
+  unknown engine raises names `BLENDER_EEVEE`, `BLENDER_WORKBENCH` and `CYCLES`, so the look-dev rig reads EEVEE's id
+  from that error. Its UV2 footprints on the dry run's KIT (wall 243.5, door 237.3, floor 200.5, desk
   144.2 px at 60 texels/m) match the footprints Unity gave (242.8, 236.7, 200.3, 143.4 px).
