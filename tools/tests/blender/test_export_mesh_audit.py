@@ -14,6 +14,7 @@ Prints PASS <case> / FAIL <case>: <why>, and raises if any case failed.
 import contextlib
 import io
 import math
+import shutil
 import tempfile
 import traceback
 from pathlib import Path
@@ -24,6 +25,13 @@ import bpy
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "skills" / "blender-to-unity" / "scripts" / "mesh_audit.py"
 RESULTS = []
+TMP_DIRS = []                                                  # removed at the end unless a case failed
+
+
+def tmp_dir(prefix):
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    TMP_DIRS.append(d)
+    return d
 
 
 def case(fn):
@@ -163,7 +171,7 @@ def test_master_flags_linked_instanced_pieces_and_reports_skipped_instancers():
     mesh_object("STR_Column_1x1x3_A_LOD0", CUBE_V, [], CUBE_F, column)
     mesh_object("STR_Column_1x1x3_A_LOD1", CUBE_V, [], CUBE_F, column, uv_layers=1)     # no UV2
     mesh_object("STR_Column_1x1x3_A_COL", CUBE_V, [], CUBE_F, column, uv_layers=0)      # exempt
-    kit = Path(tempfile.mkdtemp(prefix="mesh_audit_master_")) / "KIT_Test.blend"
+    kit = tmp_dir("mesh_audit_master_") / "KIT_Test.blend"
     bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_as_mainfile(filepath=str(kit))
 
@@ -276,7 +284,7 @@ def test_master_with_hidden_zones_counts_what_blender_shows():
     solid("INT_Crate_Free_A_COL", "cube", crate, uvs=0)
     solid("INT_Lamp_Free_A_LOD0", "cyl", lamp, segs=16)                        # 64
     solid("INT_Lamp_Free_A_LOD1", "cyl", lamp, segs=8)
-    kit = Path(tempfile.mkdtemp(prefix="mesh_audit_zones_")) / "KIT_Test.blend"
+    kit = tmp_dir("mesh_audit_zones_") / "KIT_Test.blend"
     bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_as_mainfile(filepath=str(kit))
 
@@ -350,6 +358,10 @@ for fn in (test_flags_and_counts, test_instances_count_into_render_triangles,
            test_master_with_hidden_zones_counts_what_blender_shows, test_main_prints_a_table):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
-print("%d passed, %d failed" % (len(RESULTS) - len(failed), len(failed)))
+if not failed:
+    for d in TMP_DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+print("%d passed, %d failed%s" % (len(RESULTS) - len(failed), len(failed),
+                                  " (fixtures kept in %s)" % ", ".join(map(str, TMP_DIRS)) if failed else ""))
 if failed:
     raise SystemExit("FAILED: " + ", ".join(r[1] for r in failed))

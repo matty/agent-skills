@@ -16,6 +16,7 @@ Prints PASS <case> / SKIP <case>: <why> / FAIL <case>: <why>, and raises if any 
 import math
 import os
 import re
+import shutil
 import tempfile
 import traceback
 from pathlib import Path
@@ -941,7 +942,10 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_review_render_headless_wire_follows_modifiers):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
-print("%d passed, %d skipped, %d failed (fixtures in %s)" % (sum(r[0] == "PASS" for r in RESULTS),
-                                                             sum(r[0] == "SKIP" for r in RESULTS), len(failed), TMP))
+if not failed:
+    shutil.rmtree(TMP, ignore_errors=True)                     # keep the fixtures only when a case failed
+print("%d passed, %d skipped, %d failed%s" % (sum(r[0] == "PASS" for r in RESULTS),
+                                              sum(r[0] == "SKIP" for r in RESULTS), len(failed),
+                                              " (fixtures kept in %s)" % TMP if failed else ""))
 if failed:
     raise SystemExit("FAILED: " + ", ".join(r[1] for r in failed))

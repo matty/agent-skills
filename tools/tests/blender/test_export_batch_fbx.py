@@ -15,6 +15,7 @@ import contextlib
 import io
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import traceback
@@ -298,6 +299,9 @@ for fn in (test_kit_export_writes_every_member_and_restores_visibility,
            test_custom_normals_survive_when_triangulated_in_the_stack):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
-print("%d passed, %d failed (fixtures in %s)" % (len(RESULTS) - len(failed), len(failed), TMP))
+if not failed:
+    shutil.rmtree(TMP, ignore_errors=True)                     # keep the fixtures only when a case failed
+print("%d passed, %d failed%s" % (len(RESULTS) - len(failed), len(failed),
+                                  " (fixtures kept in %s)" % TMP if failed else ""))
 if failed:
     raise SystemExit("FAILED: " + ", ".join(r[1] for r in failed))
