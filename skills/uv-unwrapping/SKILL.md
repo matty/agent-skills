@@ -102,7 +102,8 @@ objects, or the odd one out looks blurry or oversharp.
 
 - Targets: about 1024 px/m for first-person games, 512 for third-person (Maxon, checked 2026-10-17,
   https://help.maxon.net/c4d/en-us/Content/html/Texel_Density.html). In VR a headset resolves about 1150 / d px/m at
-  nearest viewing distance d: classes T512 (0-3 m), T256 (3-6 m), T128 (6-12 m), T64 (> 12 m), `texel-density.md`.
+  nearest viewing distance d: T2048 (< 0.75 m, handheld), T1024 (0.75-1.5 m), T512 (1.5-3 m), T256 (3-6 m),
+  T128 (6-12 m), T64 (> 12 m); walls players walk up to get a detail map instead (`texel-density.md`).
 - Tolerance: tiling, trim and shared materials within 10% (0.9-1.1x) of the target; unique and atlas textures within
   0.8-1.25x of their class; inside a piece `texel_cv` <= 0.15. The audit checks the mean and every unmarked island.
 - Blender has no texel-density tool (5.2; Average Islands Scale only evens islands): `ua.layout(..., px_per_m=...)`,

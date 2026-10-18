@@ -20,19 +20,34 @@ distance d spans 57.3 / d degrees, so at 20 ppd the screen shows about
 
 ## Classes by viewing distance
 
-Quantise to powers of two so textures and trims line up:
+Quantise to powers of two so textures and trims line up. Each class gives at least two thirds of what the headset
+resolves at the near edge of its band (512 px/m at 1.5 m, where 770 would be needed); closer than its band, a
+surface looks soft.
 
 | Class | Nearest viewing distance | Target | Typical surfaces |
 |---|---|---|---|
-| T512 | 0-3 m | 512 px/m | anything within arm's reach of a seat or a walkway, the vehicle itself, door reveals |
+| T2048 | < 0.75 m | 2048 px/m | pickups and anything held to the face: small unique surfaces, never a wall |
+| T1024 | 0.75-1.5 m | 1024 px/m | what players lean over or handle: desk and counter tops, switches, door handles, a seat's arms |
+| T512 | 1.5-3 m | 512 px/m | surfaces seen from a couple of metres: the far side of a desk, door reveals, a ride vehicle |
 | T256 | 3-6 m | 256 px/m | the far side of a room, upper walls, most ceilings |
 | T128 | 6-12 m | 128 px/m | back walls of large halls, beds beyond a hedge, a facade seen across a garden |
 | T64 | > 12 m | 64 px/m | skyline, treeline cards, the sky dome |
 
+The bands assume about 20 pixels per degree (Quest 2 and 3S). Quest 3 resolves 1.25 times more and Bigscreen Beyond
+1.4 times: the same classes look slightly softer there. Budgets, not the headset, cap the classes.
+
 When viewers follow a fixed path (a ride), measure it: sample eye points along the path for every seat, take the
 shortest distance from any of them to each placed instance, and assign its class automatically. In a walkable
-world, use the nearest point a player can stand, at eye height. A prop used in several places takes the class
-of its nearest instance.
+world, use the distance players normally look at a surface from, at eye height; a prop used in several places takes
+the class of its nearest instance.
+
+**Surfaces players can walk right up to** (walls and floors along a walkway, at 0.5-1 m) are the exception: by
+distance alone they would be T1024 or T2048 across the whole world, four to sixteen times the texels of T512. Keep
+them at the world's shared tiling or trim density (T512 in most worlds) and add a **detail map** for the close look:
+a small, finely tiled albedo and normal that the shader multiplies in (Unity's Standard: Detail Albedo x2 and Detail
+Normal Map, masked by a Detail Mask, `engine-notes.md`). It adds close-range texels for one small texture per
+material. Give a surface its own higher class only where players are meant to inspect it (a mural, a noticeboard,
+a control panel).
 
 ## Shared trims and tiling materials
 
