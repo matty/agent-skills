@@ -1,5 +1,6 @@
 """Off-screen review renders for topology work: close-up wire, studio and reflective matcap, and contact sheets.
 
+Host: Blender (bpy, gpu, numpy; tested on 5.2.2), live or headless.
 Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/review_render.py", encoding="utf-8").read(), ns)
 
     ns["render"](r"C:/.../corner-matcap.png", eye=(0, 2, -3), target=(0, 5, -1), light="MATCAP",
@@ -7,10 +8,14 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/review_render.py", encodi
     with ns["isolate"](["MyPiece"], hide=["OldPiece"]): ns["render"](...)     # temporary visibility, restored after
     ns["contact_sheet"]([a.png, b.png, c.png, d.png], r"C:/.../sheet.png", cols=2)
 
-Works while Blender's window is minimised (it draws through gpu.types.GPUOffScreen, not a screenshot), using a 3D
-viewport in the current screen; its shading/overlay settings are changed only for the render and restored.
-Headless (blender -b --factory-startup ... --python ...), where there is no viewport, it falls back to a Workbench
-scene render: the same camera, light and matcap, with wire drawn by temporary Wireframe-modifier copies.
+Pass absolute output paths. Live, it works while Blender's window is minimised (it draws through
+gpu.types.GPUOffScreen, not a screenshot) using a 3D viewport in the current screen, switched to Solid shading with
+the requested light for the render; its shading and overlay settings are restored afterwards.
+Headless (blender -b --factory-startup file.blend --python-exit-code 1 --python your_script.py), where there is no
+viewport, it falls back to a Workbench scene render: the same camera, light and matcap, with wire drawn by temporary
+Wireframe-modifier copies that keep every modifier except subdivision. Objects inside collection instances render but
+get no wire there: review a piece in its KIT file. Matcap names are Blender's (check_reflection_horizontal.exr ships
+with 5.2.2).
 A matcap shows curved bands across flat faces in a perspective view: that is the matcap, not smooth shading.
 """
 
@@ -50,9 +55,11 @@ def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO
             bpy.data.cameras.remove(cd)
     area, region, sp = _view3d()
     sh, ov = sp.shading, sp.overlay
+    keep_type = sh.type
     keep = (sh.light, sh.studio_light, ov.show_overlays, ov.show_wireframes, ov.wireframe_threshold, ov.show_floor,
             ov.show_axis_x, ov.show_axis_y, ov.show_cursor, ov.show_object_origins)
     try:
+        sh.type = 'SOLID'                     # the light settings below apply to Solid shading only
         sh.light = light
         if matcap:
             sh.studio_light = matcap
@@ -74,6 +81,7 @@ def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO
     finally:
         (sh.light, sh.studio_light, ov.show_overlays, ov.show_wireframes, ov.wireframe_threshold, ov.show_floor,
          ov.show_axis_x, ov.show_axis_y, ov.show_cursor, ov.show_object_origins) = keep
+        sh.type = keep_type
         bpy.data.objects.remove(cam)
         bpy.data.cameras.remove(cd)
     return path
@@ -82,7 +90,8 @@ def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO
 def _render_scene(path, cam, w, h, light, matcap, wire, distance):
     """Headless path (blender -b has no 3D viewport or GPU context for GPUOffScreen): a Workbench scene render.
     Wireframe overlays do not exist in a render, so wire=True adds temporary copies of the visible meshes with a
-    Wireframe modifier, drawn dark, and removes them afterwards. Nothing is saved."""
+    Wireframe modifier after their own modifiers (subdivision dropped, so the wire is the cage the viewport shows),
+    drawn dark, and removes them afterwards. Nothing is saved."""
     scene = bpy.context.scene
     sh = scene.display.shading
     keep_scene = (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
@@ -108,7 +117,8 @@ def _render_scene(path, cam, w, h, light, matcap, wire, distance):
             thickness = max(0.0015, distance * 0.0012)
             for ob in shown:
                 dup = ob.copy()                 # shares the mesh data; only the copy gets the modifier
-                dup.modifiers.clear()
+                for m in [m for m in dup.modifiers if m.type in {'SUBSURF', 'MULTIRES'}]:
+                    dup.modifiers.remove(m)     # keep mirror, array, bevel...: the wire must match the surface
                 mod = dup.modifiers.new("_review_wire", 'WIREFRAME')
                 mod.thickness, mod.use_even_offset, mod.use_replace = thickness, True, True
                 dup.color = (0.02, 0.02, 0.02, 1.0)

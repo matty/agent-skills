@@ -1,9 +1,11 @@
 """Building blocks for hand-designed grid topology (see ../references/grid-layout.md).
 
+Host: Blender (mathutils; bmesh for flat_fill and PointCache; tested on 5.2.2). thin_plate_heights needs numpy, which
+Blender bundles, and uses scipy only when it can be imported (Blender does not bundle it).
 Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/grid_topology.py", encoding="utf-8").read(), ns)
 
 Faces are made through a `face(verts)` callable you pass in (for example `lambda vs: bm.faces.new(vs)`), so the helpers
-work with plain bmesh or with a generator's own mesh wrapper. Points are mathutils.Vector.
+work with plain bmesh or with a generator's own mesh wrapper. Points are mathutils.Vector; verts have a `.co`.
 """
 
 import math
@@ -11,9 +13,14 @@ import math
 from mathutils import Vector
 
 
+def _cross2(a, b):
+    """z of the cross product of two 2-D vectors (numpy 2.5+ refuses np.cross on 2-element vectors)."""
+    return a[0] * b[1] - a[1] * b[0]
+
+
 def arc_segments(radius, span_deg, tol, max_edge=None):
-    """Segments for an arc of `radius` over `span_deg`: enough to keep the chord sag within `tol`, and (if given) no
-    segment longer than `max_edge`."""
+    """Segments for an arc of `radius` over `span_deg`: enough to keep the chord sag r(1 - cos(step/2)) within `tol`,
+    and (if given) no segment longer than `max_edge`."""
     step = 2.0 * math.degrees(math.acos(max(-1.0, 1.0 - tol / radius)))
     n = max(1, math.ceil(span_deg / step))
     if max_edge:
@@ -23,8 +30,9 @@ def arc_segments(radius, span_deg, tol, max_edge=None):
 
 def zone_stations(breaks, step, floors=None, multiple=None, adjust=None):
     """Stations from breaks[0] to breaks[-1], evenly spaced inside each zone between consecutive breaks, about `step`
-    apart. floors: {zone index: minimum segments}. multiple: make the total segment count a multiple of this by adding
-    segments to zone `adjust` (default the longest). Returns (stations, segments per zone)."""
+    apart (one zone, breaks=[a, b], gives evenly spaced stations). floors: {zone index: minimum segments}. multiple:
+    make the total segment count a multiple of this by adding segments to zone `adjust` (default the longest).
+    Returns (stations, segments per zone)."""
     counts = [max(1, round((b - a) / step)) for a, b in zip(breaks, breaks[1:])]
     for z, n in (floors or {}).items():
         counts[z] = max(counts[z], n)
@@ -58,23 +66,59 @@ def grid_faces(face, cols, rows):
     for ca, cb in zip(cols, cols[1:]):
         for i, j in zip(rows, rows[1:]):
             vs = [ca.get(i), cb.get(i), cb.get(j), ca.get(j)]
-            if all(vs):
+            if all(v is not None for v in vs):
                 out.append(face(vs))
     return out
 
 
-def step_3to1(face, new_vert, top, bottom, mid_at):
-    """A 3 to 1 reduction band: top has 3n + 1 verts, bottom n + 1. For each group of three top segments two points are
-    added mid-band (new_vert(co)) at mid_at(f, c0, c1, k) -> co, k = 1 or 2 for the point under f1 or f2, and four
-    quads are made: [f0 f1 p c0] [f1 f2 q p] [f2 f3 c1 q] [p q c1 c0]."""
-    assert (len(top) - 1) == 3 * (len(bottom) - 1), "top must have three segments per bottom segment"
+def _along(cs, t):
+    """The point at fraction t (by length) along the polyline through the verts cs."""
+    pts = [c.co for c in cs]
+    lengths = [(b - a).length for a, b in zip(pts, pts[1:])]
+    d = t * sum(lengths)
+    for a, b, seg in zip(pts, pts[1:], lengths):
+        if d <= seg:
+            return a.lerp(b, d / seg if seg else 0.0)
+        d -= seg
+    return pts[-1].copy()
+
+
+def step_reduce(face, new_vert, top, bottom, mid_at, n=1):
+    """A loop-reduction band of the 3 to 1 family, all quads: every group of n + 2 top segments becomes n bottom
+    segments (n = 1: 3 to 1, n = 2: 4 to 2, n = 3: 5 to 3). top has (n + 2) * g + 1 verts and bottom n * g + 1 for g
+    groups; each group's end verts sit under its end top verts. A closed ring (round a pipe) is passed with its first
+    vert repeated at the end of both runs, so it still has (n + 2) * g + 1 and n * g + 1 entries and the last group
+    closes the ring. Each group adds n + 1 verts mid-band, one
+    under each of its top verts 1..n+1, at mid_at(f, cs, t) -> co (f: the top vert above; cs: the group's n + 1 bottom
+    verts; t = k / (n + 2): the fraction along cs below f), and makes 2n + 2 quads. Poles: valence 3 at the first and
+    last mid vert of a group; valence 6 at a bottom vert shared by two groups when a row continues below (4 at the
+    band's ends); every other vert keeps valence 4. Winding follows the runs (f0 -> f1 -> mid -> c0), the same way as
+    grid_faces when the top run is the earlier row. When the fine run is the later row (going coarse to fine, as the
+    second band on a ring does), pass both runs reversed, or the band faces the other way (topology_audit's
+    flipped_edges counts it)."""
+    m = n + 2
+    groups = (len(top) - 1) // m
+    assert n >= 1 and (len(top) - 1) % m == 0 and groups * n == len(bottom) - 1, \
+        "top needs n + 2 segments for every n bottom segments (a closed ring repeats its first vert at the end)"
     out = []
-    for s in range(0, len(top) - 1, 3):
-        f0, f1, f2, f3 = top[s:s + 4]
-        c0, c1 = bottom[s // 3], bottom[s // 3 + 1]
-        p, q = new_vert(mid_at(f1, c0, c1, 1)), new_vert(mid_at(f2, c0, c1, 2))
-        out += [face([f0, f1, p, c0]), face([f1, f2, q, p]), face([f2, f3, c1, q]), face([p, q, c1, c0])]
+    for g in range(groups):
+        f = top[g * m:(g + 1) * m + 1]
+        cs = bottom[g * n:(g + 1) * n + 1]
+        mids = [new_vert(mid_at(f[k + 1], cs, (k + 1) / m)) for k in range(n + 1)]
+        out.append(face([f[0], f[1], mids[0], cs[0]]))
+        for k in range(1, n + 1):
+            out.append(face([f[k], f[k + 1], mids[k], mids[k - 1]]))
+        out.append(face([f[n + 1], f[n + 2], cs[n], mids[n]]))
+        for k in range(n):
+            out.append(face([mids[k], mids[k + 1], cs[k + 1], cs[k]]))
     return out
+
+
+def step_3to1(face, new_vert, top, bottom, mid_at):
+    """A 3 to 1 reduction band (step_reduce with n = 1): top has 3n + 1 verts, bottom n + 1. For each group of three
+    top segments two points are added mid-band (new_vert(co)) at mid_at(f, c0, c1, k) -> co, k = 1 or 2 for the point
+    under f1 or f2, and four quads are made: [f0 f1 p c0] [f1 f2 q p] [f2 f3 c1 q] [p q c1 c0]."""
+    return step_reduce(face, new_vert, top, bottom, lambda f, cs, t: mid_at(f, cs[0], cs[1], round(t * 3)), 1)
 
 
 def mid_between(surface=None):
@@ -82,6 +126,15 @@ def mid_between(surface=None):
     optionally moved onto a surface (surface(co) -> co)."""
     def mid(f, c0, c1, k):
         co = (f.co + c0.co.lerp(c1.co, k / 3.0)) / 2.0
+        return surface(co) if surface else co
+    return mid
+
+
+def mid_along(surface=None):
+    """A mid_at for step_reduce: halfway between f and the point a fraction t along the group's bottom verts,
+    optionally moved onto a surface (surface(co) -> co)."""
+    def mid(f, cs, t):
+        co = (f.co + _along(cs, t)) / 2.0
         return surface(co) if surface else co
     return mid
 
@@ -140,8 +193,9 @@ def ladder(face, A, B):
 
 class PointCache:
     """One vertex per point for layouts built from computed coordinates: get(co) returns the vertex there, creating it
-    once. Coordinates reached by different sums can land either side of a rounding step, so also call weld() (remove
-    doubles within dist on the cached verts only) before adding separate islands."""
+    once. Coordinates reached by different sums can land either side of a rounding step, so also call weld() (merge
+    doubles within dist among the cached verts only) before adding separate islands; the cache then points at the
+    surviving verts."""
     def __init__(self, bm, digits=6):
         self.bm, self.digits, self.map = bm, digits, {}
 
@@ -152,15 +206,23 @@ class PointCache:
         return self.map[k]
 
     def weld(self, dist=1e-5):
+        """Merge cached verts closer than dist; returns how many were merged away."""
         import bmesh
-        bmesh.ops.remove_doubles(self.bm, verts=[v for v in self.map.values() if v.is_valid], dist=dist)
+        verts = [v for v in self.map.values() if v.is_valid]
+        targetmap = bmesh.ops.find_doubles(self.bm, verts=verts, dist=dist)["targetmap"]
+        if targetmap:
+            bmesh.ops.weld_verts(self.bm, targetmap=targetmap)
+        self.map = {k: targetmap.get(v, v) for k, v in self.map.items()}
+        self.map = {k: v for k, v in self.map.items() if v.is_valid}
+        return len(targetmap)
 
 
 def flat_fill(bm, loop, join=True):
     """The fewest faces for a small flat region bounded by loop (BMVerts in order, a simple polygon in its own plane):
     a constrained Delaunay of the outline alone (the triangulation with the best smallest angles), paired into quads
-    where that makes a good quad. Use it for small regions only: over a large region with few outline points it makes a
-    web of long triangles; lay large flat parts out as quads on the grid's columns instead."""
+    where that makes a good quad. Returns the faces it leaves in bm. Use it for small regions only: over a large region
+    with few outline points it makes a web of long triangles; lay large flat parts out as quads on the grid's columns
+    instead."""
     import bmesh
     from mathutils.geometry import delaunay_2d_cdt
     pts = [v.co for v in loop]
@@ -190,40 +252,59 @@ def flat_fill(bm, loop, join=True):
         # CDT works in single precision: collinear outline points give triangles of about 1e-8, not 0
         if abs((vs[f[1]] - vs[f[0]]).cross(vs[f[2]] - vs[f[0]])) > 1e-6 and inside(c):
             tris.append(bm.faces.new([loop[back[i]] for i in f]))
-    if join:
-        bmesh.ops.join_triangles(bm, faces=tris, angle_face_threshold=math.radians(2.0),
-                                 angle_shape_threshold=math.radians(60.0))
-    return tris
+    if not join:
+        return tris
+    for f in tris:
+        f.normal_update()          # new faces have no normal yet, and join_triangles compares normals (5.2.2: no joins)
+    # join_triangles removes the triangles it pairs and returns only the new quads
+    quads = bmesh.ops.join_triangles(bm, faces=tris, angle_face_threshold=math.radians(2.0),
+                                     angle_shape_threshold=math.radians(60.0))["faces"]
+    return [f for f in tris if f.is_valid] + list(quads)
 
 
-def thin_plate_heights(points, tris, fixed):
+def thin_plate_heights(points, tris, fixed, use_scipy=None):
     """Least-bending (biharmonic) heights over a plan triangulation. points: list of (x, y); tris: index triples;
-    fixed: {index: z}. Hold known sections two rows deep so slopes carry across. Returns a list of z. Needs scipy (it
-    ships with Blender's Python)."""
+    fixed: {index: z}. Hold known sections two rows deep so slopes carry across: a plane or a quadratic held that way is
+    reproduced exactly. Returns a list of z. Needs numpy (Blender bundles it). use_scipy: None = scipy's sparse solver
+    when importable, else a dense numpy solve (fine to a few thousand points); True = require scipy; False = numpy."""
     import numpy as np
-    import scipy.sparse as sp
-    import scipy.sparse.linalg as spl
     P = np.asarray(points, float)
     n = len(P)
     I, J, W = [], [], []
     area = np.zeros(n)
     for t in tris:
-        ar = abs(np.cross(P[t[1]] - P[t[0]], P[t[2]] - P[t[0]])) / 2
+        ar = abs(_cross2(P[t[1]] - P[t[0]], P[t[2]] - P[t[0]])) / 2
         for k in range(3):
             i0, i1, i2 = t[k], t[(k + 1) % 3], t[(k + 2) % 3]
             u, v = P[i1] - P[i0], P[i2] - P[i0]
-            cot = np.dot(u, v) / max(abs(np.cross(u, v)), 1e-12)
+            cot = float(np.dot(u, v)) / max(abs(_cross2(u, v)), 1e-12)
             I += [i1, i2, i1, i2]
             J += [i2, i1, i1, i2]
             W += [0.5 * cot, 0.5 * cot, -0.5 * cot, -0.5 * cot]
             area[t[k]] += ar / 3
-    L = sp.csr_matrix((W, (I, J)), shape=(n, n))
-    Q = (L.T @ sp.diags(1.0 / np.maximum(area, 1e-12)) @ L).tocsr()
+    inv_area = 1.0 / np.maximum(area, 1e-12)
     Z = np.zeros(n)
-    fx = np.array(sorted(fixed))
+    fx = np.array(sorted(fixed), dtype=int)
     Z[fx] = [fixed[i] for i in fx]
     fr = np.setdiff1d(np.arange(n), fx)
-    Z[fr] = spl.spsolve(Q[fr][:, fr].tocsc(), -Q[fr][:, fx] @ Z[fx])
+    sparse = None
+    if use_scipy is not False:
+        try:
+            import scipy.sparse as sparse
+            import scipy.sparse.linalg as sparse_linalg
+        except ImportError:
+            if use_scipy:
+                raise
+            sparse = None
+    if sparse is not None:
+        L = sparse.csr_matrix((W, (I, J)), shape=(n, n))
+        Q = (L.T @ sparse.diags(inv_area) @ L).tocsr()
+        Z[fr] = sparse_linalg.spsolve(Q[fr][:, fr].tocsc(), -Q[fr][:, fx] @ Z[fx])
+    else:
+        L = np.zeros((n, n))
+        np.add.at(L, (np.array(I, dtype=int), np.array(J, dtype=int)), W)
+        Q = L.T @ (L * inv_area[:, None])
+        Z[fr] = np.linalg.solve(Q[np.ix_(fr, fr)], -Q[np.ix_(fr, fx)] @ Z[fx])
     return Z.tolist()
 
 

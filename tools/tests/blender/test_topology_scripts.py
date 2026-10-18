@@ -1,0 +1,947 @@
+"""Blender-hosted tests for blender-mesh-topology's scripts: topology_audit (modifiers applied, slivers on flat faces,
+poles of a reduction band and of a triangle fan, flipped faces and a coarse-to-fine band built with its runs the wrong
+way round), the hard-surface checks against references/hard-surface.md (the big-faces-flat figure per route and on
+wide chamfers, a column and an architrave, hard_surface.py's Smooth by Angle and hand-off functions with their
+refusals, audit_stack with the Triangulate live, off, applied or missing, routes from enabled modifiers only, a late
+Smooth by Angle, flat shading, and normals_snapshot across UV work and scale), grid_topology in bmesh
+(PointCache.weld, flat_fill, step_reduce), quad_remesh's patch_input, weld_layout and mirror_half (and a real engine
+run when Quad Remesher is installed), and review_render's headless wire over a mirrored mesh with the scene restored
+afterwards.
+
+Host: Blender 4.2+ (bpy, bmesh; tested on 5.2.2), run from anywhere:
+    blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_topology_scripts.py
+Prints PASS <case> / SKIP <case>: <why> / FAIL <case>: <why>, and raises if any case failed.
+"""
+
+import math
+import os
+import re
+import tempfile
+import traceback
+from pathlib import Path
+
+import bmesh
+import bpy
+from mathutils import Vector
+
+ROOT = Path(__file__).resolve().parents[3]
+SCRIPTS = ROOT / "skills" / "blender-mesh-topology" / "scripts"
+TMP = Path(tempfile.mkdtemp(prefix="topology_test_"))
+RESULTS = []
+
+
+class Skip(Exception):
+    pass
+
+
+def case(fn):
+    try:
+        fn()
+        RESULTS.append(("PASS", fn.__name__))
+        print("PASS", fn.__name__)
+    except Skip as exc:
+        RESULTS.append(("SKIP", fn.__name__))
+        print("SKIP %s: %s" % (fn.__name__, exc))
+    except Exception as exc:  # noqa: BLE001
+        RESULTS.append(("FAIL", fn.__name__))
+        print("FAIL %s: %s" % (fn.__name__, exc))
+        traceback.print_exc()
+
+
+def check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+def load(name):
+    ns = {}
+    path = SCRIPTS / name
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+    return ns
+
+
+AUDIT, GRID, QR, RR, HS = (load(n) for n in ("topology_audit.py", "grid_topology.py", "quad_remesh.py",
+                                              "review_render.py", "hard_surface.py"))
+
+
+def fresh():
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
+def object_from_bmesh(name, bm):
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def cube(name):
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    return object_from_bmesh(name, bm)
+
+
+def test_audit_applies_modifiers():
+    fresh()
+    ob = cube("Cube")
+    ob.modifiers.new("sub", "SUBSURF").levels = 1
+    bpy.context.view_layer.update()
+    check(AUDIT["audit"](ob)["triangles"] == 48, "evaluated triangles")
+    check(AUDIT["audit"](ob, evaluated=False)["triangles"] == 12, "mesh-data triangles")
+
+
+def test_slivers_counted_on_flat_faces():
+    fresh()
+    bm = bmesh.new()
+    vs = [bm.verts.new(co) for co in ((0, 0, 0), (1, 0, 0), (0.5, 0.004, 0))]
+    f = bm.faces.new(vs)
+    f.smooth = False
+    ob = object_from_bmesh("Needle", bm)
+    check(AUDIT["audit"](ob)["slivers"] == 1, "a flat-shaded needle is a sliver")
+
+
+def band_object(n, groups):
+    bm = bmesh.new()
+    m = n + 2
+    face = lambda vs: bm.faces.new(vs)                       # noqa: E731
+    new_vert = lambda co: bm.verts.new(co)                   # noqa: E731
+    up = [bm.verts.new((x, 2.0, 0.0)) for x in range(m * groups + 1)]
+    top = [bm.verts.new((x, 1.0, 0.0)) for x in range(m * groups + 1)]
+    bottom = [bm.verts.new((x * m / n, 0.0, 0.0)) for x in range(n * groups + 1)]
+    down = [bm.verts.new((x * m / n, -1.0, 0.0)) for x in range(n * groups + 1)]
+    GRID["ladder"](face, up, top)                              # same winding as the band's quads
+    GRID["step_reduce"](face, new_vert, top, bottom, GRID["mid_along"](), n)
+    GRID["ladder"](face, bottom, down)
+    return object_from_bmesh("Band%d" % n, bm)
+
+
+def test_reduction_bands_audit_clean_with_the_documented_poles():
+    for n in (1, 2, 3):
+        fresh()
+        r = AUDIT["audit"](band_object(n, 2))
+        check(AUDIT["problems"](r, allow_open=True) == [], "n=%d problems %s" % (n, AUDIT["problems"](r, True)))
+        check(r["ngons"] == 0 and r["tri_faces_pct"] == 0, "n=%d not all quads" % n)
+        check(r["poles"] == 5, "n=%d poles %d (want 4 valence-3 + 1 valence-6)" % (n, r["poles"]))
+        check(r["fan_centres"] == 0, "n=%d fan centres" % n)
+
+
+def test_flipped_faces_are_a_problem():
+    fresh()
+    good = cube("Good")
+    bad = cube("OneFlipped")
+    bad.data.polygons[0].flip()
+    bad.data.update()
+    r_good, r_bad = AUDIT["audit"](good), AUDIT["audit"](bad)
+    check(r_good["flipped_edges"] == 0 and AUDIT["problems"](r_good) == [],
+          "clean cube: %s" % AUDIT["problems"](r_good))
+    check(r_bad["flipped_edges"] == 4, "one flipped quad: %d flipped edges, want 4" % r_bad["flipped_edges"])
+    check("flipped_edges" in AUDIT["problems"](r_bad), "flipped face not in problems()")
+
+
+def test_second_band_on_a_ring_needs_its_runs_reversed():
+    for reverse, want in ((False, True), (True, False)):
+        fresh()
+        bm = bmesh.new()
+        face = lambda vs: bm.faces.new(vs)                       # noqa: E731
+        new_vert = lambda co: bm.verts.new(co)                   # noqa: E731
+        fine1 = [bm.verts.new((x, 2.0, 0.0)) for x in range(7)]
+        coarse1 = [bm.verts.new((3.0 * x, 1.0, 0.0)) for x in range(3)]
+        coarse2 = [bm.verts.new((3.0 * x, 0.0, 0.0)) for x in range(3)]
+        fine2 = [bm.verts.new((x, -1.0, 0.0)) for x in range(7)]
+        GRID["step_reduce"](face, new_vert, fine1, coarse1, GRID["mid_along"](), 1)
+        GRID["ladder"](face, coarse1, coarse2)
+        top, bottom = (fine2[::-1], coarse2[::-1]) if reverse else (fine2, coarse2)
+        GRID["step_reduce"](face, new_vert, top, bottom, GRID["mid_along"](), 1)
+        r = AUDIT["audit"](object_from_bmesh("Ring%d" % reverse, bm))
+        check((r["flipped_edges"] > 0) == want, "reverse=%s: %d flipped edges" % (reverse, r["flipped_edges"]))
+
+
+def test_poles_count_irregular_vertices_next_to_triangles():
+    fresh()
+    bm = bmesh.new()
+    centre = bm.verts.new((0.0, 0.0, 0.0))
+    ring = [bm.verts.new((math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0)) for a in range(8)]
+    for i in range(8):
+        bm.faces.new((centre, ring[i], ring[(i + 1) % 8]))
+    r = AUDIT["audit"](object_from_bmesh("Fan", bm))
+    check(r["poles"] == 1 and r["fan_centres"] == 1, "a fan of 8 triangles: poles %d, fan centres %d"
+          % (r["poles"], r["fan_centres"]))
+
+
+def ridge(mark):
+    """A 1 x 0.1 x 2 m panel whose front is two big flat faces meeting at a 13 deg fold, marked sharp or not."""
+    h = 0.5 * math.tan(math.radians(13.0 / 2))
+    bm = bmesh.new()
+    f = [bm.verts.new(c) for c in ((0, 0, 0), (0.5, -h, 0), (1, 0, 0), (1, 0, 2), (0.5, -h, 2), (0, 0, 2))]
+    b = [bm.verts.new(c) for c in ((0, 0.1, 0), (1, 0.1, 0), (1, 0.1, 2), (0, 0.1, 2))]
+    for vs in ([f[0], f[1], f[4], f[5]], [f[1], f[2], f[3], f[4]], [b[0], b[3], b[2], b[1]], [f[0], f[5], b[3], b[0]],
+               [f[2], b[1], b[2], f[3]], [f[0], b[0], b[1], f[2], f[1]], [f[5], f[4], f[3], b[2], b[3]]):
+        bm.faces.new(vs)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for face in bm.faces:
+        face.smooth = True
+    bm.edges.ensure_lookup_table()
+    if mark:
+        for e in bm.edges:
+            if set(e.verts) == {f[1], f[4]}:
+                e.smooth = False                                 # Edge > Mark Sharp
+    return object_from_bmesh("Ridge", bm)
+
+
+def panel(smooth=True, name="Panel"):
+    """The 1 x 0.08 x 2 m panel of hard-surface.md, shaded smooth unless smooth=False (as primitives come)."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(1.0, 0.08, 2.0), verts=bm.verts)
+    for face in bm.faces:
+        face.smooth = smooth
+    return object_from_bmesh(name, bm)
+
+
+def column(segments=16):
+    """A 2.5 m column of radius 0.15 m with flat caps, shaded smooth: a curved part."""
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=segments, radius1=0.15, radius2=0.15, depth=2.5)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for face in bm.faces:
+        face.smooth = True
+    return object_from_bmesh("Column", bm)
+
+
+def hard_surface_stack(ob, route, keep=True, angle_limit=None, smooth_by_angle=None, width=0.01, segments=2):
+    """hard-surface.md's stacks: route A Bevel (Harden) -> Triangulate (Keep Normals); route B Bevel (Face Strength
+    Affected) -> Triangulate -> Weighted Normal; optionally Smooth by Angle first, through hard_surface.py."""
+    bev = ob.modifiers.new("Bevel", "BEVEL")
+    bev.limit_method, bev.width, bev.segments = "ANGLE", width, segments
+    if angle_limit is not None:
+        bev.angle_limit = math.radians(angle_limit)
+    if route == "A":
+        bev.harden_normals = True
+    else:
+        bev.face_strength_mode = "FSTR_AFFECTED"
+    tri = ob.modifiers.new("Triangulate", "TRIANGULATE")
+    tri.min_vertices, tri.keep_custom_normals = 4, keep                   # Keep Normals on both routes
+    if route == "B":
+        wn = ob.modifiers.new("WeightedNormal", "WEIGHTED_NORMAL")
+        wn.mode, wn.keep_sharp, wn.use_face_influence = "FACE_AREA", True, True
+    if smooth_by_angle is not None:
+        sba = HS["smooth_by_angle_first"](ob, smooth_by_angle)
+        check(ob.modifiers[0] == sba and not sba.use_pin_to_last, "Smooth by Angle not unpinned and moved first")
+    bpy.context.view_layer.update()
+    return ob
+
+
+def test_big_faces_flat_check_and_the_fold_rule_per_route():
+    cases = (("route B, fold marked sharp", dict(route="B"), True, False),
+             ("route A, fold marked sharp", dict(route="A"), True, True),
+             ("route A, fold left smooth", dict(route="A"), False, False),
+             ("route B, fold left smooth", dict(route="B"), False, False),
+             ("route B, fold chamfered (angle limit 10)", dict(route="B", angle_limit=10), False, True),
+             ("route B, Smooth by Angle 10 first", dict(route="B", smooth_by_angle=10), False, True),
+             ("route B, Smooth by Angle 30 first", dict(route="B", smooth_by_angle=30), False, False))
+    for label, kw, mark, flat_ok in cases:
+        fresh()
+        ob = hard_surface_stack(ridge(mark), **kw)
+        r = AUDIT["audit"](ob)
+        off = r["flat_faces_off_deg"]
+        print("INFO %s: big faces %.2f deg off flat" % (label, off))
+        check((off < 0.5) == flat_ok, "%s: big faces %.2f deg off flat" % (label, off))
+        check(("flat_faces_off_deg" in AUDIT["problems"](r, flat_tol=0.5)) != flat_ok, "%s: problems()" % label)
+        check("flat_faces_off_deg" not in AUDIT["problems"](r), "flat check failed without flat_tol")
+
+
+def test_flat_check_passes_wide_single_segment_chamfers():
+    """15 and 20 mm one-segment chamfers are 21-28 mm wide faces whose corners carry the big faces' normals: the
+    5 cm floor leaves them out (a 2 cm floor failed them at 45-55 deg)."""
+    for route in ("A", "B"):
+        for width in (0.015, 0.02):
+            fresh()
+            ob = hard_surface_stack(panel(), route, width=width, segments=1)
+            narrow = AUDIT["audit"](ob, min_flat_width=0.02)["flat_faces_off_deg"]
+            s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+            print("INFO route %s, %d mm, 1 segment: %.2f deg with a 2 cm floor, %.2f with 5 cm, problems %s"
+                  % (route, width * 1000, narrow, s["merged"]["flat_faces_off_deg"], s["problems"]))
+            check(narrow > 40, "fixture: a 2 cm floor should judge the chamfer (%.2f)" % narrow)
+            check(s["merged"]["flat_faces_off_deg"] < 0.5 and s["problems"] == [],
+                  "route %s, %d mm: %s" % (route, width * 1000, s["problems"]))
+
+
+def test_smooth_by_angle_function_touches_only_its_piece():
+    """The page's smooth_by_angle_first(ob, angle) on a piece that is not selected while two other pieces are (one
+    active): the others keep their stack, shading and selection, and a second run gives the same stack."""
+    fresh()
+    others = [panel(smooth=False, name="Other_%d" % i) for i in range(2)]
+    ob = panel(smooth=False, name="Target")
+    hard_surface_stack(ob, "B")
+    for o in others:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = others[0]
+    fn = HS["smooth_by_angle_first"]
+
+    def stack():
+        return [(m.type, m.name, m.use_pin_to_last,
+                 round(math.degrees(m.properties.inputs.Input_1.value), 3) if m.type == "NODES" else None)
+                for m in ob.modifiers]
+    fn(ob, 10)
+    first = stack()
+    fn(ob, 10)
+    check(stack() == first, "a rerun changed the stack: %s -> %s" % (first, stack()))
+    check(first[0][0] == "NODES" and first[0][2] is False and first[0][3] == 10.0 and len(first) == 4,
+          "stack %s" % first)
+    check(all(p.use_smooth for p in ob.data.polygons), "the piece was not shaded smooth")
+    for o in others:
+        check(len(o.modifiers) == 0 and not any(p.use_smooth for p in o.data.polygons) and o.select_get(),
+              "%s was touched: %s" % (o.name, [m.name for m in o.modifiers]))
+    check(bpy.context.view_layer.objects.active == others[0] and not ob.select_get(), "selection changed")
+
+
+def test_audit_stack_judges_a_stack_triangulated_piece():
+    fresh()
+    good = hard_surface_stack(panel(), "A")
+    plain = AUDIT["audit"](good)
+    check(plain["slivers"] > 0, "fixture: the triangulated chamfer strips should be slivers to a plain audit")
+    s = AUDIT["audit_stack"](good, flat_tol=0.5)
+    check(s["route"] == "A" and s["triangulate"] == "live" and s["problems"] == [] and s["normals_change_deg"] < 0.5,
+          "route A with Keep Normals: %s, change %s" % (s["problems"], s["normals_change_deg"]))
+    check(s["off"]["slivers"] == 0 and s["merged"]["slivers"] == 0, "slivers not judged before the Triangulate")
+    check(all(m.show_viewport for m in good.modifiers), "a Triangulate was left switched off")
+    fresh()
+    slip = hard_surface_stack(panel(), "A", keep=False)
+    s = AUDIT["audit_stack"](slip, flat_tol=0.5)
+    check("triangulate_moves_normals" in s["problems"] and s["normals_change_deg"] > 5,
+          "Keep Normals off not caught: %s, change %s" % (s["problems"], s["normals_change_deg"]))
+    fresh()
+    s = AUDIT["audit_stack"](hard_surface_stack(panel(), "B"), flat_tol=0.5)
+    check(s["route"] == "B" and s["problems"] == [] and s["normals_change_deg"] is None,
+          "route B: %s, route %s, change %s" % (s["problems"], s["route"], s["normals_change_deg"]))
+
+
+def apply_modifiers(ob, names):
+    with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob], selected_editable_objects=[ob]):
+        for name in names:
+            bpy.ops.object.modifier_apply(modifier=name)
+    bpy.context.view_layer.update()
+
+
+def test_audit_stack_without_a_live_triangulate():
+    """The Triangulate switched off, set to n-gons only, or applied; and a piece with no stack (route None)."""
+    for route in ("A", "B"):
+        fresh()
+        ob = hard_surface_stack(panel(), route)
+        ob.modifiers["Triangulate"].show_viewport = False
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+        check(s["route"] == route and s["triangulate"] == "disabled" and "custom_normals_on_quads" in s["problems"]
+              and not ob.modifiers["Triangulate"].show_viewport, "route %s, Triangulate off: %s %s"
+              % (route, s["triangulate"], s["problems"]))
+    fresh()
+    ob = hard_surface_stack(panel(), "B")
+    ob.modifiers["Triangulate"].min_vertices = 5
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+    check("custom_normals_on_quads" in s["problems"], "route B, n-gons only: %s" % s["problems"])
+    for route in ("A", "B"):
+        fresh()
+        ob = hard_surface_stack(panel(), route)
+        live = AUDIT["audit_stack"](ob)["off"]
+        apply_modifiers(ob, ["Bevel", "Triangulate"])
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+        print("INFO route %s, Bevel and Triangulate applied: slivers %d as exported, %d with pairs joined, problems %s"
+              % (route, s["on"]["slivers"], s["off"]["slivers"], s["problems"]))
+        check(s["route"] == route and s["triangulate"] == "applied" and s["on"]["slivers"] > 0
+              and s["problems"] == [], "route %s applied: %s %s" % (route, s["triangulate"], s["problems"]))
+        same = [k for k in ("slivers", "poles", "fan_centres", "tri_faces_pct") if s["off"][k] != live[k]]
+        check(not same, "route %s applied: %s differ from the live stack's untriangulated pass" % (route, same))
+    fresh()
+    s = AUDIT["audit_stack"](cube("Plain"), flat_tol=0.5)
+    check(s["route"] is None and s["triangulate"] == "none" and s["problems"] == [], "plain cube: %s" % s)
+
+
+def test_audit_stack_route_follows_the_enabled_modifiers():
+    """Only Triangulates below the last enabled Weighted Normal are compared; a disabled Weighted Normal is no route
+    B."""
+    fresh()
+    ob = hard_surface_stack(panel(), "B")
+    extra = ob.modifiers.new("Triangulate.2", "TRIANGULATE")       # after the Weighted Normal, Keep Normals off
+    extra.min_vertices = 4
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+    check(s["route"] == "B" and s["problems"] == [], "route B + a 2nd Triangulate: %s, change %s"
+          % (s["problems"], s["normals_change_deg"]))
+    fresh()
+    ob = hard_surface_stack(panel(), "A", keep=False)
+    wn = ob.modifiers.new("WeightedNormal", "WEIGHTED_NORMAL")
+    wn.show_viewport = False
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+    check(s["route"] == "A" and "triangulate_moves_normals" in s["problems"], "disabled Weighted Normal: %s %s"
+          % (s["route"], s["problems"]))
+    fresh()
+    ob = panel()
+    bev = ob.modifiers.new("Bevel", "BEVEL")
+    bev.limit_method, bev.width, bev.segments, bev.face_strength_mode = "ANGLE", 0.01, 2, "FSTR_AFFECTED"
+    wn = ob.modifiers.new("WeightedNormal", "WEIGHTED_NORMAL")
+    wn.mode, wn.keep_sharp, wn.use_face_influence = "FACE_AREA", True, True
+    below = ob.modifiers.new("Triangulate", "TRIANGULATE")                 # below the Weighted Normal
+    below.min_vertices = 4
+    for keep, want in ((False, {"triangulate_moves_normals", "triangulate_below_weighted_normal"}),
+                       (True, {"triangulate_below_weighted_normal"})):
+        below.keep_custom_normals = keep
+        bpy.context.view_layer.update()
+        s = AUDIT["audit_stack"](ob)
+        check(s["route"] == "B" and want <= set(s["problems"]) and (keep or s["normals_change_deg"] > 5)
+              and not (keep and "triangulate_moves_normals" in s["problems"]),
+              "Triangulate below the Weighted Normal, Keep Normals %s: %s, change %s"
+              % (keep, s["problems"], s["normals_change_deg"]))
+
+
+def test_audit_stack_names_a_late_smooth_by_angle_and_flat_shading():
+    for route in ("A", "B"):
+        fresh()
+        ob = hard_surface_stack(panel(), route)
+        before = AUDIT["normals_snapshot"](ob)
+        with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob],
+                                       selected_editable_objects=[ob]):
+            bpy.ops.object.shade_auto_smooth()                         # pinned last: on top of the stack
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=before)
+        print("INFO route %s + Shade Auto Smooth on top: normals moved %.2f deg, problems %s"
+              % (route, s["snapshot_change_deg"], s["problems"]))
+        check("smooth_by_angle_late" in s["problems"] and "triangulate_moves_normals" not in s["problems"],
+              "route %s: %s" % (route, s["problems"]))
+    for route, flagged in (("A", False), ("B", True)):
+        fresh()
+        s = AUDIT["audit_stack"](hard_surface_stack(panel(smooth=False), route), flat_tol=0.5)
+        check(("flat_shaded_faces" in s["problems"]) == flagged, "flat-shaded route %s: %s" % (route, s["problems"]))
+
+
+def test_normals_snapshot_catches_uv_work_that_loses_the_normals():
+    """UV work as hard-surface.md says (apply_for_uv_work, layout with the Triangulate off, then on again) keeps the
+    normals, scale applied in between included; applying the Bevel alone, or shading by angle afterwards, does not."""
+    def piece(route):
+        fresh()
+        ob = hard_surface_stack(ridge(False), route, smooth_by_angle=10)
+        ob.scale = (2.0, 2.0, 2.0)
+        bpy.context.view_layer.update()
+        return ob, AUDIT["normals_snapshot"](ob)
+    apply_for_uv_work = HS["apply_for_uv_work"]
+    for route in ("A", "B"):
+        ob, snap = piece(route)
+        apply_for_uv_work(ob)
+        with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob],
+                                       selected_editable_objects=[ob]):
+            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        during = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+        check("custom_normals_on_quads" in during["problems"] and during["triangulate"] == "disabled",
+              "route %s during layout: %s" % (route, during["problems"]))
+        ob.modifiers["Triangulate"].show_viewport = True
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+        check(s["problems"] == [] and s["snapshot_change_deg"] < 0.5 and s["snapshot_matched"] == 1.0,
+              "route %s from the top: %s, change %s, matched %s" % (route, s["problems"], s["snapshot_change_deg"],
+                                                                     s["snapshot_matched"]))
+        check([m.type for m in ob.modifiers] == (["TRIANGULATE"] if route == "A" else ["TRIANGULATE",
+                                                                                     "WEIGHTED_NORMAL"]),
+              "stack left %s" % [m.type for m in ob.modifiers])
+
+        ob, snap = piece(route)
+        apply_modifiers(ob, ["Bevel"])                                  # the Bevel alone
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+        print("INFO route %s, Bevel applied alone: normals moved %.2f deg, problems %s"
+              % (route, s["snapshot_change_deg"], s["problems"]))
+        check("normals_changed_since_snapshot" in s["problems"] and "smooth_by_angle_without_bevel" in s["problems"],
+              "route %s, Bevel alone: %s" % (route, s["problems"]))
+    ob, snap = piece("A")
+    apply_for_uv_work(ob)
+    ob.modifiers["Triangulate"].show_viewport = True
+    with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob], selected_editable_objects=[ob]):
+        bpy.ops.object.shade_smooth_by_angle(angle=math.radians(30))
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+    print("INFO route A, shaded by angle after UV work: normals moved %.2f deg" % s["snapshot_change_deg"])
+    check("normals_changed_since_snapshot" in s["problems"], "shading by angle afterwards: %s" % s["problems"])
+
+
+def half_ridge():
+    """The ridge's right half, cut at the 13 deg fold (x = 0), open there: a Mirror makes the whole ridge."""
+    h = 0.5 * math.tan(math.radians(13.0 / 2))
+    bm = bmesh.new()
+    f = [bm.verts.new(c) for c in ((0, -h, 0), (0.5, 0, 0), (0.5, 0, 2), (0, -h, 2))]
+    b = [bm.verts.new(c) for c in ((0, 0.1, 0), (0.5, 0.1, 0), (0.5, 0.1, 2), (0, 0.1, 2))]
+    for vs in ([f[0], f[1], f[2], f[3]], [b[0], b[3], b[2], b[1]], [f[1], b[1], b[2], f[2]], [f[0], b[0], b[1], f[1]],
+               [f[3], f[2], b[2], b[3]]):
+        bm.faces.new(vs)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for face in bm.faces:
+        face.smooth = True
+    return object_from_bmesh("HalfRidge", bm)
+
+
+def half_panel():
+    """The panel's x >= 0 half, open at x = 0: a Mirror makes the whole panel."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(1.0, 0.08, 2.0), verts=bm.verts)
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, 0, 0), plane_no=(1, 0, 0),
+                           clear_inner=True)
+    for face in bm.faces:
+        face.smooth = True
+    return object_from_bmesh("HalfPanel", bm)
+
+
+def test_uv_work_keeps_a_trailing_mirror_live_and_applies_one_above_a_bevel():
+    """Route B. Mirror below the Bevel (a half panel): apply_for_uv_work leaves the Mirror live and first,
+    apply_before_layout applies it, normals kept. Mirror above the Bevel (a half ridge, its fold on the mirror plane,
+    chamfered at a 10 deg limit): applied in the top-down run, normals kept; applying the Bevel alone under the Mirror
+    loses the chamfer on the mirror plane."""
+    apply_for_uv_work, apply_before_layout = HS["apply_for_uv_work"], HS["apply_before_layout"]
+
+    def piece(mirror_first):
+        fresh()
+        ob = half_ridge() if mirror_first else half_panel()
+        if mirror_first:
+            ob.modifiers.new("Mirror", "MIRROR").use_clip = True
+        hard_surface_stack(ob, "B", angle_limit=10)
+        if not mirror_first:
+            m = ob.modifiers.new("Mirror", "MIRROR")
+            m.use_clip = True
+            with bpy.context.temp_override(object=ob, active_object=ob):
+                bpy.ops.object.modifier_move_to_index(modifier="Mirror", index=1)    # Bevel > Mirror > Tri > WN
+        bpy.context.view_layer.update()
+        return ob, AUDIT["normals_snapshot"](ob)
+
+    ob, snap = piece(mirror_first=False)
+    apply_for_uv_work(ob)
+    check([m.type for m in ob.modifiers] == ["MIRROR", "TRIANGULATE", "WEIGHTED_NORMAL"],
+          "a trailing Mirror was not left live: %s" % [m.type for m in ob.modifiers])
+    apply_before_layout(ob)
+    ob.modifiers["Triangulate"].show_viewport = True
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+    check([m.type for m in ob.modifiers] == ["TRIANGULATE", "WEIGHTED_NORMAL"] and s["problems"] == [],
+          "Bevel > Mirror: %s, %s" % ([m.type for m in ob.modifiers], s["problems"]))
+
+    ob, snap = piece(mirror_first=True)
+    apply_for_uv_work(ob)
+    ob.modifiers["Triangulate"].show_viewport = True
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+    check([m.type for m in ob.modifiers] == ["TRIANGULATE", "WEIGHTED_NORMAL"] and s["problems"] == [],
+          "Mirror > Bevel, top-down: %s, %s" % ([m.type for m in ob.modifiers], s["problems"]))
+
+    ob, snap = piece(mirror_first=True)
+    faces = AUDIT["audit"](ob)["faces"]
+    apply_modifiers(ob, ["Bevel"])                                     # the Bevel alone, under the live Mirror
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5, before=snap)
+    print("INFO Mirror > Bevel, Bevel applied alone: faces %d -> %d, positions matched %.3f, problems %s"
+          % (faces, s["on"]["faces"], s["snapshot_matched"], s["problems"]))
+    check(s["on"]["faces"] < faces and "snapshot_geometry_changed" in s["problems"],
+          "Bevel alone under a Mirror: %s" % s["problems"])
+
+
+def test_flat_faces_list_curved_parts_by_mesh_face():
+    """A smooth column is over the flat tolerance by design: every such face is listed by the mesh data's face index
+    with its centre, all on the curved side, none on the flat caps."""
+    for route in ("A", "B"):
+        fresh()
+        ob = hard_surface_stack(column(), route)
+        r = AUDIT["audit_stack"](ob, flat_tol=0.5)["merged"]
+        faces = ob.data.polygons
+        print("INFO 16-segment column, route %s: %.2f deg, %d faces listed" % (route, r["flat_faces_off_deg"],
+                                                                             len(r["flat_faces"])))
+        check(r["flat_faces_off_deg"] > 5 and r["flat_faces"], "column route %s: %s" % (route, r["flat_faces_off_deg"]))
+        check(r["flat_worst_face"] == r["flat_faces"][0]["face"], "worst face %s" % r["flat_worst_face"])
+        for f in r["flat_faces"]:
+            check(0 <= f["face"] < len(faces) and abs(faces[f["face"]].normal.z) < 0.1,
+                  "listed face %s is not a side face of the mesh data" % f)
+            check(0.14 < math.hypot(f["centre"][0], f["centre"][1]) < 0.151, "centre off the side: %s" % (f,))
+
+
+def architrave(mark_folds):
+    """A 1 m run of a 70 x 20 mm architrave: faces 5-30 mm wide, folds of 12 and 10 deg (marked sharp when asked)."""
+    pts = [(0.070, 0.0), (0.070, 0.008)]
+    x, y = 0.070, 0.008
+    x, y = x - 0.030 * math.cos(math.radians(12)), y + 0.030 * math.sin(math.radians(12))
+    pts.append((x, y))
+    y += 0.005
+    pts.append((x, y))
+    x -= 0.025
+    pts.append((x, y))
+    x, y = x - 0.015 * math.cos(math.radians(10)), y - 0.015 * math.sin(math.radians(10))
+    pts += [(x, y), (x, 0.0)]
+    bm = bmesh.new()
+    lo = [bm.verts.new((px, py, 0.0)) for px, py in pts]
+    hi = [bm.verts.new((px, py, 1.0)) for px, py in pts]
+    for i in range(len(pts)):
+        j = (i + 1) % len(pts)
+        bm.faces.new([lo[i], lo[j], hi[j], hi[i]])
+    bm.faces.new(list(reversed(lo)))
+    bm.faces.new(hi)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for face in bm.faces:
+        face.smooth = True
+    if mark_folds:
+        for e in bm.edges:
+            if len(e.link_faces) == 2 and 1 < math.degrees(e.link_faces[0].normal.angle(e.link_faces[1].normal)) < 30:
+                e.smooth = False
+    return object_from_bmesh("Architrave", bm)
+
+
+def test_flat_floor_follows_the_live_bevel():
+    """The floor is 2.1 x the largest live Bevel amount (5 cm without one): an architrave's narrow faces are judged
+    (a route B fold marked sharp is caught, route A passes), and wide chamfers still pass."""
+    results = {}
+    for route in ("A", "B"):
+        fresh()
+        ob = hard_surface_stack(architrave(True), route, width=0.002, segments=1)
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+        results[route] = s
+        print("INFO architrave route %s, folds marked: %.2f deg (floor %.4f m; a 5 cm floor reads %.2f), problems %s"
+              % (route, s["merged"]["flat_faces_off_deg"], s["merged"]["flat_min_width"],
+                 AUDIT["audit"](ob, min_flat_width=0.05)["flat_faces_off_deg"], s["problems"]))
+        check(abs(s["merged"]["flat_min_width"] - 0.005) < 1e-9, "floor %s (2.1 x 2 mm under the 5 mm minimum)"
+              % s["merged"]["flat_min_width"])
+    check(results["A"]["problems"] == [], "architrave route A: %s" % results["A"]["problems"])
+    check("flat_faces_off_deg" in results["B"]["problems"] and results["B"]["merged"]["flat_faces_off_deg"] > 5,
+          "architrave route B with marked folds was not caught: %s" % results["B"]["problems"])
+    fresh()
+    ob = hard_surface_stack(panel(), "B", width=0.02, segments=1)
+    r = AUDIT["audit"](ob)
+    check(abs(r["flat_min_width"] - 0.042) < 1e-9 and r["flat_faces_off_deg"] < 0.5, "20 mm panel: floor %s, %.2f"
+          % (r["flat_min_width"], r["flat_faces_off_deg"]))
+    ob.modifiers["Bevel"].show_viewport = False
+    check(AUDIT["audit"](ob)["flat_min_width"] == 0.05, "no live Bevel: 5 cm")
+
+
+def half_column():
+    """The x >= 0 half of a 16-segment column, open at x = 0, shaded smooth."""
+    bm = bmesh.new()
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=False, segments=16, radius1=0.15, radius2=0.15, depth=2.5)
+    bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, 0, 0), plane_no=(1, 0, 0),
+                           clear_inner=True)
+    for face in bm.faces:
+        face.smooth = True
+    return object_from_bmesh("HalfColumn", bm)
+
+
+def test_flat_faces_list_each_mesh_face_once():
+    """A mirrored half column with a live Triangulate: both halves and both triangles of a quad fold into one entry
+    per face of the mesh data."""
+    fresh()
+    ob = half_column()
+    m = ob.modifiers.new("Mirror", "MIRROR")
+    m.use_clip = True
+    hard_surface_stack(ob, "A")
+    r = AUDIT["audit_stack"](ob, flat_tol=0.5)["merged"]
+    faces = [f["face"] for f in r["flat_faces"]]
+    sides = sum(1 for p in ob.data.polygons if abs(p.normal.z) < 0.1)
+    print("INFO mirrored half column: %d entries for %d side faces of the mesh data" % (len(faces), sides))
+    check(faces and len(faces) == len(set(faces)) and len(faces) <= sides, "flat_faces %s" % faces)
+
+
+def test_smooth_by_angle_function_placement_and_edit_mode():
+    """Below a leading Mirror (where it sees a fold on the mirror plane); refused, with nothing changed, outside
+    Object Mode."""
+    fresh()
+    ob = half_ridge()
+    ob.modifiers.new("Mirror", "MIRROR").use_clip = True
+    hard_surface_stack(ob, "B")
+    HS["smooth_by_angle_first"](ob, 10)
+    check([m.type for m in ob.modifiers] == ["MIRROR", "NODES", "BEVEL", "TRIANGULATE", "WEIGHTED_NORMAL"],
+          "stack %s" % [m.type for m in ob.modifiers])
+    s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+    check(s["problems"] == [], "fold on the mirror plane: %s" % s["problems"])
+    fresh()
+    ob = hard_surface_stack(panel(), "B")
+    other = cube("Other")
+    bpy.context.view_layer.objects.active = other
+    other.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    try:
+        HS["smooth_by_angle_first"](ob, 10)
+    except RuntimeError as exc:
+        check("Object Mode" in str(exc), "unclear message: %s" % exc)
+    else:
+        raise AssertionError("ran in Edit Mode")
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    check([m.type for m in ob.modifiers] == ["BEVEL", "TRIANGULATE", "WEIGHTED_NORMAL"], "the stack changed")
+
+
+def test_hand_off_refusals_and_topology_types():
+    """apply_for_uv_work refuses a topology change below the Triangulate, a modifier to apply that is off in the
+    viewport (Blender would apply it), shape keys and a shared mesh, changing nothing; it applies a Decimate or Weld
+    above the Triangulate with the Bevel. audit_stack names a Mirror or Array under the stack."""
+    afu = HS["apply_for_uv_work"]
+
+    def refused(ob, words):
+        before = [(m.type, m.show_viewport) for m in ob.modifiers]
+        faces = len(ob.data.polygons)
+        try:
+            afu(ob)
+        except ValueError as exc:
+            check(words in str(exc), "message %r lacks %r" % (str(exc), words))
+        else:
+            raise AssertionError("not refused: %s" % words)
+        check([(m.type, m.show_viewport) for m in ob.modifiers] == before and len(ob.data.polygons) == faces,
+              "a refused hand-off changed the piece")
+
+    for kind in ("MIRROR", "ARRAY"):
+        fresh()
+        ob = hard_surface_stack(half_panel() if kind == "MIRROR" else panel(), "B")
+        ob.modifiers.new(kind.title(), kind)                      # appended: below the Weighted Normal
+        s = AUDIT["audit_stack"](ob, flat_tol=0.5)
+        print("INFO %s appended under route B: flat %.2f, problems %s"
+              % (kind.title(), s["merged"]["flat_faces_off_deg"], s["problems"]))
+        check("topology_below_triangulate" in s["problems"], "%s appended not named: %s" % (kind, s["problems"]))
+        refused(ob, "below the Triangulate")
+    fresh()
+    ob = half_panel()
+    mirror = ob.modifiers.new("Mirror", "MIRROR")
+    hard_surface_stack(ob, "B")
+    mirror.show_viewport = False
+    refused(ob, "off in the viewport")
+    with bpy.context.temp_override(object=ob, active_object=ob):
+        bpy.ops.object.modifier_apply(modifier="Mirror")               # what Blender does without the refusal
+    check(len(ob.data.polygons) == 10, "fixture: a disabled Mirror applied gives %d faces" % len(ob.data.polygons))
+    fresh()
+    ob = hard_surface_stack(panel(), "A")
+    ob.shape_key_add(name="Basis")
+    refused(ob, "shape keys")
+    fresh()
+    ob = hard_surface_stack(panel(), "A")
+    twin = bpy.data.objects.new("Twin", ob.data)
+    bpy.context.scene.collection.objects.link(twin)
+    refused(ob, "shares its mesh")
+    for kind in ("DECIMATE", "WELD"):
+        fresh()
+        ob = hard_surface_stack(panel(), "B")
+        m = ob.modifiers.new(kind.title(), kind)
+        with bpy.context.temp_override(object=ob, active_object=ob):
+            bpy.ops.object.modifier_move_to_index(modifier=m.name, index=1)
+        out = afu(ob)
+        check(out["applied"] == ["Bevel", m.name] and [x.type for x in ob.modifiers] == ["TRIANGULATE",
+                                                                                         "WEIGHTED_NORMAL"],
+              "%s above the Triangulate: %s, %s" % (kind, out, [x.type for x in ob.modifiers]))
+
+
+def test_scale_goes_before_the_stack_or_after_the_hand_off():
+    """Scale applied under a live Bevel resizes the chamfers (snapshot_geometry_changed); after the hand-off it is
+    harmless."""
+    for scale_first in (True, False):
+        fresh()
+        ob = hard_surface_stack(panel(), "A")
+        ob.scale = (2.0, 2.0, 2.0)
+        bpy.context.view_layer.update()
+        snap = AUDIT["normals_snapshot"](ob)
+        steps = ["scale", "hand-off"] if scale_first else ["hand-off", "scale"]
+        for step in steps:
+            if step == "scale":
+                with bpy.context.temp_override(object=ob, active_object=ob, selected_objects=[ob],
+                                               selected_editable_objects=[ob]):
+                    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            else:
+                HS["apply_for_uv_work"](ob)
+        ob.modifiers["Triangulate"].show_viewport = True
+        s = AUDIT["audit_stack"](ob, before=snap)
+        check(("snapshot_geometry_changed" in s["problems"]) == scale_first,
+              "%s: %s (matched %s)" % (" then ".join(steps), s["problems"], s["snapshot_matched"]))
+
+
+def test_point_cache_weld_points_at_survivors():
+    fresh()
+    bm = bmesh.new()
+    cache = GRID["PointCache"](bm, digits=6)
+    a = cache.get((4e-7, 0.0, 0.0))                            # rounds to 0.0
+    b = cache.get((6e-7, 0.0, 0.0))                            # rounds to 1e-06: a second vertex 2e-7 away
+    check(a is not b and len(bm.verts) == 2, "fixture: two cached verts")
+    merged = cache.weld(1e-5)
+    check(merged == 1 and len(bm.verts) == 1, "merged %d, verts %d" % (merged, len(bm.verts)))
+    for co in ((4e-7, 0.0, 0.0), (6e-7, 0.0, 0.0)):
+        v = cache.get(co)
+        check(v.is_valid and len(bm.verts) == 1, "cache returned a removed or new vertex for %s" % (co,))
+    bm.free()
+
+
+def test_flat_fill_returns_live_faces_covering_the_region():
+    fresh()
+    bm = bmesh.new()
+    loop = [bm.verts.new((math.cos(a * math.pi / 4), math.sin(a * math.pi / 4), 0.0)) for a in range(8)]
+    faces = GRID["flat_fill"](bm, loop)                         # a regular octagon: 6 triangles pair into quads
+    check(faces and all(f.is_valid for f in faces), "returned removed faces")
+    check(len(faces) == len(bm.faces), "returned %d of %d faces" % (len(faces), len(bm.faces)))
+    check(abs(sum(f.calc_area() for f in faces) - 2 * math.sqrt(2)) < 1e-5, "faces do not cover the octagon")
+    check(sum(len(f.verts) == 4 for f in faces) >= 2, "triangles were not joined into quads")
+    bm.free()
+
+
+def grid_patch():
+    """A 1 x 1 patch on x 0..1 as an engine-like result: 3 x 3 quads, border loop of 12 points, 4 interior points."""
+    pts = [(x / 3.0, y / 3.0, 0.0) for y in range(4) for x in range(4)]
+    faces = [(y * 4 + x, y * 4 + x + 1, (y + 1) * 4 + x + 1, (y + 1) * 4 + x) for y in range(3) for x in range(3)]
+    ring = [(x, 0) for x in range(4)] + [(3, y) for y in range(1, 4)] + [(x, 3) for x in range(2, -1, -1)] + \
+           [(0, y) for y in range(2, 0, -1)]
+    loop = [Vector((x / 3.0, y / 3.0, 0.0)) for x, y in ring]
+    return [Vector(p) for p in pts], faces, loop
+
+
+def test_weld_layout_and_mirror_half():
+    fresh()
+    qp, qf, loop = grid_patch()
+    lay = QR["weld_layout"](qp, qf, loop)
+    check(lay is not None, "a clean patch was rejected")
+    faces, npos = lay
+    check(len(faces) == 9 and len(npos) == 4, "faces %d, new points %d" % (len(faces), len(npos)))
+    bad = QR["weld_layout"](qp, qf[:-1], loop)                  # a hole: border no longer the loop
+    check(bad is None, "a patch with a hole was accepted")
+    bm = bmesh.new()
+    cache = GRID["PointCache"](bm)
+    loop_verts = [cache.get(p) for p in loop]
+    face = lambda vs: bm.faces.new(vs)                       # noqa: E731
+    for sign in (1, -1):
+        QR["mirror_half"](faces, npos, loop_verts, lambda lv: cache.get((-lv.co.x, lv.co.y, lv.co.z)),
+                          lambda co: cache.get(co), face, sign)
+    bm.normal_update()
+    check(len(bm.faces) == 18, "faces %d" % len(bm.faces))
+    check(all(f.normal.z > 0.99 for f in bm.faces), "mirrored half faces the other way")
+    check(all(len(e.link_faces) <= 2 for e in bm.edges), "overfull edges at the mirror line")
+    bm.free()
+
+
+def test_patch_input_walks_the_border():
+    """patch_input: a 4 x 3 quad patch gives its 20 points, 24 triangles and the 14-point border in order; a patch
+    with a hole (two borders) is refused."""
+    def grid(hole):
+        bm = bmesh.new()
+        vs = [[bm.verts.new((x / 4.0, y / 3.0, 0.0)) for x in range(5)] for y in range(4)]
+        for y in range(3):
+            for x in range(4):
+                if not (hole and (x, y) == (1, 1)):
+                    bm.faces.new((vs[y][x], vs[y][x + 1], vs[y + 1][x + 1], vs[y + 1][x]))
+        return object_from_bmesh("Patch", bm)
+    fresh()
+    pts, tris, loop = QR["patch_input"](grid(False))
+    check(len(pts) == 20 and len(tris) == 24 and all(len(t) == 3 for t in tris), "pts %d, tris %d"
+          % (len(pts), len(tris)))
+    check(len(loop) == 14 and len({tuple(round(c, 6) for c in p) for p in loop}) == 14, "loop %d points" % len(loop))
+    check(all(min(p.x, 1 - p.x, p.y, 1 - p.y) < 1e-6 for p in loop), "a loop point off the border")
+    for i in range(len(loop)):
+        d = (loop[i] - loop[i - 1]).length
+        check(abs(d - 0.25) < 1e-6 or abs(d - 1 / 3.0) < 1e-6, "loop step %d is %.4f: not along the border" % (i, d))
+    try:
+        QR["patch_input"](grid(True))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a patch with a hole was accepted")
+
+
+def test_quad_remesh_engine_round_trip():
+    engine = QR["find_engine"]()
+    if not os.path.exists(engine):
+        raise Skip("Quad Remesher engine not installed (%s)" % engine)
+    fresh()
+    n = 8                                                      # border points per side: 32 in the loop (even)
+    loop = [Vector((i / n, 0, 0)) for i in range(n)] + [Vector((1, i / n, 0)) for i in range(n)] + \
+           [Vector((1 - i / n, 1, 0)) for i in range(n)] + [Vector((0, 1 - i / n, 0)) for i in range(n)]
+    pts = [Vector((x / n, y / n, 0)) for y in range(n + 1) for x in range(n + 1)]
+    tris = []
+    for y in range(n):
+        for x in range(n):
+            a, b, c, d = y * (n + 1) + x, y * (n + 1) + x + 1, (y + 1) * (n + 1) + x + 1, (y + 1) * (n + 1) + x
+            tris += [(a, b, c), (a, c, d)]
+    before = (len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials))
+    try:
+        faces, npos, raw = QR["remesh_patch"](pts, tris, loop, target=16, mats=[0] * len(tris), timeout=120)
+    except RuntimeError as exc:
+        text = str(exc)
+        if "progress" in text.lower() or "licen" in text.lower() or "failed" in text.lower():
+            raise Skip("engine did not run here: %s" % text[:200])
+        raise
+    check(len(faces) >= 4, "too few faces: %d" % len(faces))
+    after = (len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials))
+    check(after == before, "left data behind: objects/meshes/materials %s -> %s" % (before, after))
+    check(not [m for m in bpy.data.materials if m.name.startswith("_qr_")], "temporary materials leaked")
+
+
+def test_quad_remesher_page_recipe_runs():
+    """quad-remesher.md's worked call, run as written on half of a domed patch cut at its mirror line x = 0: one
+    welded, mirrored mesh comes out, open only at the outer border."""
+    if not os.path.exists(QR["find_engine"]()):
+        raise Skip("Quad Remesher engine not installed")
+    fresh()
+    n = 12                                                     # 48 border points; square corners need the density
+    bm = bmesh.new()
+    vs = [[bm.verts.new((x / n, y / n - 0.5, 0.1 * math.cos(x / n * 1.5) * math.cos((y / n - 0.5) * 3)))
+           for x in range(n + 1)] for y in range(n + 1)]
+    for y in range(n):
+        for x in range(n):
+            bm.faces.new((vs[y][x], vs[y][x + 1], vs[y + 1][x + 1], vs[y + 1][x]))
+    patch = object_from_bmesh("Patch", bm)
+    page = (ROOT / "skills" / "blender-mesh-topology" / "references" / "quad-remesher.md").read_text(encoding="utf-8")
+    block = next(b for b in re.findall(r"```python\n(.*?)```", page, re.S) if "patch_input" in b)
+    block = block.replace("<skill>", str(ROOT / "skills" / "blender-mesh-topology").replace("\\", "/"))
+    block = block.replace("target=400", "target=60")                    # a small patch
+    ns = {"bpy": bpy, "bmesh": bmesh, "patch": patch}
+    try:
+        exec(block, ns)
+    except RuntimeError as exc:
+        text = str(exc)
+        if "progress" in text.lower() or "licen" in text.lower() or "failed" in text.lower():
+            raise Skip("engine did not run here: %s" % text[:200])
+        raise
+    ob = bpy.data.objects.new("Remeshed", ns["me"])
+    bpy.context.scene.collection.objects.link(ob)
+    r = AUDIT["audit"](ob)
+    check(AUDIT["problems"](r, allow_open=True) == [] and r["islands"] == 1, "remeshed: %s, islands %d"
+          % (AUDIT["problems"](r, allow_open=True), r["islands"]))
+    xs = [v.co.x for v in ob.data.vertices]
+    check(min(xs) < -0.99 and max(xs) > 0.99, "not mirrored: x %.2f..%.2f" % (min(xs), max(xs)))
+
+
+def test_review_render_headless_wire_follows_modifiers():
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)                           # a light background, so only wire is dark
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=2, y_segments=2, size=0.4)
+    bmesh.ops.translate(bm, verts=bm.verts, vec=(0.5, 0.0, 0.0))   # the half at x > 0
+    ob = object_from_bmesh("Half", bm)
+    ob.modifiers.new("mirror", "MIRROR")                          # the other half at x < 0
+    keep = (scene.render.engine, scene.camera, scene.render.resolution_x, scene.render.filepath)
+    n_obj = len(bpy.data.objects)
+    path = str(TMP / "wire.png")
+    # a long lens from far away makes the wire (0.12% of the distance thick) several pixels wide
+    RR["render"](path, eye=(0, 0, 7), target=(0, 0, 0), lens=100, w=1200, h=600, light="FLAT", wire=True)
+    check(os.path.exists(path), "no image written")
+    check((scene.render.engine, scene.camera, scene.render.resolution_x, scene.render.filepath) == keep,
+          "scene render settings not restored")
+    check(len(bpy.data.objects) == n_obj, "temporary objects left behind")
+    img = bpy.data.images.load(path)
+    w, h = img.size
+    px = list(img.pixels[:])
+    dark = [0, 0]
+    for y in range(h):
+        for x in range(w):
+            i = (y * w + x) * 4
+            if px[i] < 0.2 and px[i + 3] > 0.5:
+                dark[0 if x < w // 2 else 1] += 1
+    check(min(dark) > 50, "wire pixels left/right %s: the mirrored half has no wire" % dark)
+
+
+for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
+           test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
+           test_second_band_on_a_ring_needs_its_runs_reversed, test_poles_count_irregular_vertices_next_to_triangles,
+           test_big_faces_flat_check_and_the_fold_rule_per_route, test_flat_check_passes_wide_single_segment_chamfers,
+           test_smooth_by_angle_function_touches_only_its_piece, test_audit_stack_judges_a_stack_triangulated_piece,
+           test_audit_stack_without_a_live_triangulate, test_audit_stack_route_follows_the_enabled_modifiers,
+           test_audit_stack_names_a_late_smooth_by_angle_and_flat_shading,
+           test_normals_snapshot_catches_uv_work_that_loses_the_normals,
+           test_uv_work_keeps_a_trailing_mirror_live_and_applies_one_above_a_bevel,
+           test_flat_faces_list_curved_parts_by_mesh_face, test_flat_floor_follows_the_live_bevel,
+           test_flat_faces_list_each_mesh_face_once, test_smooth_by_angle_function_placement_and_edit_mode,
+           test_hand_off_refusals_and_topology_types, test_scale_goes_before_the_stack_or_after_the_hand_off,
+           test_point_cache_weld_points_at_survivors,
+           test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
+           test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
+           test_review_render_headless_wire_follows_modifiers):
+    case(fn)
+failed = [r for r in RESULTS if r[0] == "FAIL"]
+print("%d passed, %d skipped, %d failed (fixtures in %s)" % (sum(r[0] == "PASS" for r in RESULTS),
+                                                             sum(r[0] == "SKIP" for r in RESULTS), len(failed), TMP))
+if failed:
+    raise SystemExit("FAILED: " + ", ".join(r[1] for r in failed))
