@@ -63,7 +63,7 @@ for the full installer reference and for how to add or change a skill.
 |---|---|
 | `vrchat-world-optimization` | Entry point: profiling order, budgets, pre-upload audit, routing to the rest |
 | `vrchat-world-orchestration` | Master-agent pipeline for a whole world build: intake, mockups, YAML world spec with generated SVG plans/elevations, KIT/ASM/MASTER .blend structure, greybox and user gates, subagent briefs, QA after every task, resumable ledger, plus spec validator and SVG generator scripts |
-| `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, instancing-ready shader code |
+| `unity-batching-and-instancing` | GPU instancing, static/dynamic batching, MaterialPropertyBlocks, atlasing, `VRCGraphics.DrawMeshInstanced`, plus an instanced UdonSharp field and an instancing-ready shader |
 | `vrchat-lighting-and-baking` | Lightmap baking, lightmap UVs and texel density, VRC Light Volumes, probes, reflection probes, LTCGI, mirrors, occlusion culling |
 | `vrchat-texture-and-vram` | Compression formats, VRAM maths, download size, the Quest 100 MB limit, mesh/audio import settings |
 | `vrchat-world-qa` | Independent stage-by-stage QA for world builds: pass/fail checklists from spec to optimisation, a fixed verdict block, visual review against mockups and plans, plus a `bpy` measurement / ortho-render / overlay script |

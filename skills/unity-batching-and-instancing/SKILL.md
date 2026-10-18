@@ -1,77 +1,134 @@
 ---
 name: unity-batching-and-instancing
-description: Reduce draw calls in Unity Built-in Render Pipeline projects - GPU instancing, static and dynamic batching, MaterialPropertyBlocks, texture atlasing, instancing-ready shaders and Graphics.DrawMeshInstanced, with VRChat notes (VRCGraphics.DrawMeshInstanced from Udon, Quest). Use when draw calls or SetPass calls are too high, when repeated props should share one draw call, when instancing "is enabled but not working", or when deciding whether to merge meshes, atlas materials or instance.
+description: Cut draw calls and SetPass calls in Unity Built-in RP and VRChat worlds - GPU instancing that will not batch, static vs dynamic batching, MaterialPropertyBlocks, atlasing, instancing shaders, DrawMeshInstanced and VRCGraphics.DrawMeshInstanced from Udon, instancing on Quest materials. In a VRChat world, triage starts at vrchat-world-optimization; atlas UVs come from uv-unwrapping, shared materials from blender-to-unity.
 ---
 
 # Batching and GPU instancing (Unity Built-in RP)
 
-The Built-in Render Pipeline has **no SRP Batcher**, so the tools are: fewer materials, static batching, GPU instancing, and drawing procedurally. Apply them per object class — a scene needs a mix, not one answer. VRChat worlds are Built-in RP; what differs
-there is in `references/vrchat-notes.md`.
+The Built-in Render Pipeline has **no SRP Batcher**, so the tools are fewer materials, static batching, GPU
+instancing and procedural drawing. Pick per class of object: a scene needs a mix, not one answer. VRChat worlds are
+Built-in RP; what differs there is in references/vrchat-notes.md. For a whole VRChat world's performance triage,
+start with the `vrchat-world-optimization` skill.
 
-## Pick the right mechanism
+## Pick the mechanism
 
 | Situation | Use |
 |---|---|
-| Level geometry, never moves, unique shapes | **Static batching** + material atlasing, chunked per room |
-| Same mesh repeated many times (chairs, bottles, bolts, foliage, kit pieces) | **GPU instancing** |
-| Repeated meshes that must also be lightmapped | Instancing works **only if they bake into the same lightmap texture**; otherwise static-batch them |
-| Thousands of copies, purely decorative, no per-object components | **`Graphics.DrawMeshInstanced`** each frame (VRChat: `VRCGraphics.DrawMeshInstanced` from Udon) |
-| Moving objects sharing a mesh and material | GPU instancing (dynamic batching is obsolete and CPU-expensive) |
-| Different meshes, same look | **Atlas the textures**, then one material → static batching becomes possible |
+| Level geometry that never moves, unique shapes | **Static batching** plus material atlasing |
+| Static low-poly repeats (kit walls, floor tiles, trims under about 256 vertices) | **Static batching**: Unity advises against instancing meshes under 256 vertices. On Quest/iOS weigh the combined mesh's download size, and measure both |
+| The same mesh many times at about 256 vertices or more (chairs, bottles, foliage clumps), or anything that moves or toggles | **GPU instancing** |
+| Many static repeats that are lit by the bake (lamp posts, pillars) | **GPU instancing** when they reach about 256 vertices: lightmapped copies batch per lightmap texture (one lightmap, one batch), and probe-lit copies batch anywhere (small props usually are: vrchat-lighting-and-baking's 64 px rule). Static batching only for repeats under about 256 vertices, and on Quest/iOS it adds every copy's mesh to the download |
+| Thousands of purely decorative copies, no per-copy components | **`Graphics.DrawMeshInstanced`** every frame (VRChat: `VRCGraphics.DrawMeshInstanced` from Udon) |
+| Moving objects sharing a mesh and material | GPU instancing (dynamic batching is legacy and costs CPU) |
+| Different meshes, same look | **Atlas the textures** into one material; then static batching works |
 
-## GPU instancing: the rules that actually bite
+## GPU instancing: the rules that bite
 
 Requirements:
-1. Same **mesh**, same **material** (same instance of the material asset, not a copy).
-2. Material has **Enable GPU Instancing** ticked (`material.enableInstancing = true`).
-3. Shader supports it: `#pragma multi_compile_instancing`, `UNITY_VERTEX_INPUT_INSTANCE_ID` in the structs, `UNITY_SETUP_INSTANCE_ID(v)` in the vertex shader. Standard, Standard (Specular) and most hand-written surface shaders do. **Shader Graph shaders do not work in Built-in RP at all.**
-4. Mesh Renderers only — **Skinned Mesh Renderers are never instanced**.
+
+1. Same **mesh** and same **material** (the same material asset, not a copy).
+2. **Enable GPU Instancing** ticked on the material (`material.enableInstancing = true`).
+3. A shader with an instancing variant: Standard, Standard (Specular) and every surface shader have one; a
+   vertex/fragment shader needs `#pragma multi_compile_instancing` and the instance-ID macros
+   (references/instanced-shader.md). Shader Graph has a Built-In target in Unity 2022.3: check that its output
+   instances. Standard, Standard (Specular) and VRChat's Standard Lite instance only the transform (Unity: "no
+   per-instance properties other than the transform"), so a per-copy `_Color` in a MaterialPropertyBlock breaks
+   instancing on them. For per-copy colour use an instancing shader (`scripts/InstancedUnlit.shader`, the surface
+   shader in references/instanced-shader.md), or one material per variant (each still instances).
+4. Mesh Renderers only: Skinned Mesh Renderers are never instanced.
 
 What silently disables it:
 
-- **Static batching wins.** If a renderer is marked Batching Static and gets statically batched, Unity disables instancing for it — even with an instancing shader. Instancing and "Batching Static" on the same object is a contradiction; pick one.
-- **MaterialPropertyBlock with a non-instanced property.** Setting a property that is not declared inside the instancing constant buffer breaks the batch. Per-instance variation must be declared with `UNITY_INSTANCING_BUFFER_START/END` and `UNITY_DEFINE_INSTANCED_PROP` — see `references/instanced-shader.md`.
-- **Different lightmaps.** Lightmapped statics instance only when they bake into the *same* lightmap texture (`unity_LightmapST` is part of the per-instance buffer, so differing UV scale/offset is fine, differing lightmap index is not).
-- **Per-pixel realtime lights.** In forward rendering, each additional pixel light adds another pass per object, multiplying whatever you saved. Bake.
-- **Material variants.** Two materials identical except for one float are two SetPass calls. Merge them and drive the difference with an instanced property.
-- **Batch size.** Instances per batch are capped by the constant buffer (commonly ~500 with default per-instance data); `Graphics.DrawMeshInstanced` is hard-capped at **1023 per call**.
+- **Static batching wins.** A renderer that is Batching Static and gets statically batched is never instanced, even
+  with an instancing shader. Pick one per object.
+- **A MaterialPropertyBlock with a non-instanced property.** Unity: "Don't put non-instanced properties in the
+  MaterialPropertyBlock, because this disables instancing." Per-instance values go inside
+  `UNITY_INSTANCING_BUFFER_START/END` with `UNITY_DEFINE_INSTANCED_PROP`.
+- **Different lightmaps.** Lightmapped renderers instance only when they bake into the same lightmap texture (each
+  one's lightmap scale and offset is per-instance data; the lightmap texture is not). Unity: each instance takes its
+  GI from "Any number of Light Probes", "One lightmap" or one Light Probe Proxy Volume.
+- **Realtime pixel lights.** Each extra per-pixel light adds a forward-add pass per object, and Standard's forward-add
+  pass has no instancing variant: every lit object draws on its own (measured 2026-10-16: one point light took a view
+  from 9 to 18 SetPass calls). Bake.
+- **Material variants.** Two materials that differ in one float are two SetPass calls: merge them and drive the
+  difference with an instanced property, on a shader that declares it per instance. On Standard, Standard
+  (Specular) or Standard Lite keep the variants: each material still instances.
+- **Batch size.** Instances per batch are capped by the constant buffer (500 by default); `Graphics.DrawMeshInstanced`
+  draws at most **1023 per call**.
 
 ## Verify, never assume
 
-1. Play mode → **Stats** panel: watch *SetPass calls* first, then *Batches*, then *Saved by batching*.
-2. **Frame Debugger**: instanced draws appear as `Draw Mesh (instanced)` with an instance count. Select any draw call and read **"Why this draw call can't be batched with the previous one"** — it names the exact reason (different material, different lightmap, MPB, shadow settings, ...).
-3. Fix the reason it names, not the reason you assumed.
+1. Play mode -> Stats panel: SetPass calls first, then Batches, then Saved by batching.
+2. Frame Debugger: instanced draws read `Draw Mesh (instanced)` with an instance count. Select any draw and read "Why
+   this draw call can't be batched with the previous one": it names the reason (different material, different
+   lightmap, MaterialPropertyBlock, shadow settings, ...).
+3. Fix the reason it names, not the one you assumed.
 
-With Unity MCP: `execute_code` to sweep the scene and report renderers grouped by (mesh, material, lightmapIndex, staticFlags) — that grouping immediately shows which clusters *could* instance and what is blocking them. `manage_profiler` for before/after numbers.
+With Unity MCP: `execute_code` to group renderers by (mesh, material, lightmapIndex, static flags); the groups show
+which clusters could instance and what blocks them. `manage_profiler` for before and after numbers.
 
-## Static batching, honestly
+## Static batching
 
-- It does **not** merge draw calls into one; it merges *state changes* by pre-combining geometry into a combined mesh with submeshes, so consecutive draws avoid mesh binding.
-- The combined mesh is **baked into the build**: more download size, more memory. On mobile targets this can cost more than it saves — check the build report both ways.
-- It breaks if the object moves (it cannot move), and it is incompatible with MaterialPropertyBlocks.
-- **Chunk it.** Mark static per room or per district, not for the entire world, or you lose frustum and occlusion culling.
+- Unity combines the static meshes into shared vertex and index buffers at build time, then draws the visible objects
+  with almost no state changes between them. **Per-object frustum and occlusion culling still work**: merging meshes
+  by hand is what loses them.
+- The cost is memory and download: every GameObject gets its own copy of a shared mesh in the combined buffer (a dense
+  forest of one tree mesh multiplies it), and the combined mesh ships in the build. On Quest/iOS that can outweigh the
+  draw calls saved: check the build size both ways, and instance the dense repeats instead.
+- Up to 64000 vertices per batch; statically batched objects cannot move.
+- LTCGI turns static batching off on its receivers on purpose ("By default, LTCGI disables static batching on
+  LTCGI-enabled receivers during the bake", https://ltcgi.dev/Advanced/Shadowmaps): count those receivers' draw
+  calls, and see the `vrchat-lighting-and-baking` skill before re-enabling it.
 
 ## Dynamic batching
 
-Legacy CPU-side vertex merging, limited to small meshes (~300 vertices, fewer with tangents), uniform scale, no lightmap differences. It burns CPU to save draw calls and is usually a net loss on modern hardware. Leave it off unless a profile proves otherwise.
+Legacy CPU-side vertex merging: meshes up to 300 vertices and 900 vertex attributes (180 vertices with UV1 and
+tangents), lightmapped objects only when they point to the same lightmap location, and only the first pass of a
+multi-pass shader. On modern hardware its CPU work often costs more than the draw calls it saves: leave it off unless
+a profile proves otherwise.
 
 ## Atlasing: the highest-leverage move
 
-Most prop-built scenes are material-bound, not triangle-bound. Combining 20 prop textures into one 2048 atlas turns 20 SetPass calls into 1 and makes static batching viable.
+Most prop-built scenes are material-bound, not triangle-bound. Twenty prop textures in one 2048 atlas turn 20 SetPass
+calls into 1 and make static batching possible.
 
-- Atlas **by logical group and locality** (one atlas per room / per kit), not by flattening unrelated assets — a global atlas forces every texture into memory for a single visible prop.
-- Keep lightmap UVs (UV2) intact when re-laying out UV0.
-- Channel-pack metallic/roughness/AO into one texture rather than three.
-- Do the atlasing at authoring time in Blender (`blender-to-unity`) so the source of truth is the asset, not an editor script.
+- Atlas by group and locality (one atlas per room or kit), not everything into one: a global atlas loads every
+  texture for one visible prop.
+- Keep the lightmap UV2 intact when re-laying out UV0.
+- Pack metallic (R) and smoothness (A) into the one Standard metallic map instead of separate grey maps.
+- Atlas at authoring time in Blender, so the asset stays the source of truth: packing several pieces' UVs into one
+  texture is the `uv-unwrapping` skill (its shared-atlas layout); the shared materials and the export are
+  `blender-to-unity`.
 
 ## Drawing instances procedurally
 
-For large decorative counts where per-object GameObjects are wasteful, `Graphics.DrawMeshInstanced` draws up to **1023 matrices per call**. It must be called **every frame**, and the instances are not individually frustum- or occlusion-culled, so a thousand of them behind a wall still cost vertex work. In VRChat, Udon cannot call `Graphics.*`; it uses `VRCGraphics.DrawMeshInstanced` instead, with its own rules: `references/udon-drawmeshinstanced.md`.
+`Graphics.DrawMeshInstanced` draws up to **1023 matrices per call** and must be called every frame. Its copies are
+culled as one group, never one by one, so a thousand of them behind a wall still cost their vertex work. Unity 2022.3's
+documentation recommends `Graphics.RenderMeshInstanced` in its place; Udon has only `VRCGraphics.DrawMeshInstanced`:
+references/udon-drawmeshinstanced.md, with a working UdonSharp script in `scripts/InstancedField.cs` and a matching
+shader in `scripts/InstancedUnlit.shader`.
 
 ## Decision checklist for a new prop set
 
-1. How many copies? `1–3` → don't care. `4–100` → instancing or static batch. `100+` → instancing, or DrawMeshInstanced if purely decorative.
-2. Does it move or toggle? Yes → instancing. No → static batching is usually cheaper at runtime, more expensive in build size.
-3. Is it lightmapped? Force all copies into one lightmap, or accept static batching.
-4. Does each copy need to look different? Instanced properties (color, tint, UV offset), not separate materials.
-5. Measure in the Frame Debugger. Record the numbers.
+1. How many copies? 1-3: do not bother. Thousands, purely decorative: DrawMeshInstanced.
+2. Does it move or toggle, or reach about 256 vertices? Instancing. Static and under about 256 vertices: static
+   batching, which is cheaper at runtime but dearer in memory and download (check the Quest/iOS build size).
+3. Lit by the bake? Probe-lit copies instance anywhere; lightmapped copies instance per lightmap texture, so fewer,
+   fuller lightmaps mean fewer batches.
+4. Should each copy look different? On a shader that declares them per instance (InstancedUnlit, the surface
+   shader in references/instanced-shader.md): instanced properties (colour, tint, UV offset). On Standard, Standard
+   (Specular) or Standard Lite: one material per variant, since an MPB `_Color` there breaks instancing.
+5. Measure in the Frame Debugger and record the numbers.
+
+## Sources (checked 2026-10-17)
+
+| Facts | Source |
+|---|---|
+| Instancing requirements, lightmaps, the 256-vertex advice | https://docs.unity3d.com/2022.3/Documentation/Manual/GPUInstancing.html |
+| Shader macros, surface shaders, the MaterialPropertyBlock rule, 500 per batch | https://docs.unity3d.com/2022.3/Documentation/Manual/gpu-instancing-shader.html |
+| Static batching wins over instancing | https://docs.unity3d.com/2022.3/Documentation/Manual/optimizing-draw-calls.html |
+| Static batching memory, 64000 vertices | https://docs.unity3d.com/2022.3/Documentation/Manual/static-batching.html |
+| Static batching draws only the visible objects | https://docs.unity3d.com/2019.4/Documentation/Manual/DrawCallBatching.html |
+| Dynamic batching limits | https://docs.unity3d.com/2022.3/Documentation/Manual/dynamic-batching.html |
+| DrawMeshInstanced: 1023 per call, group culling, RenderMeshInstanced | https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Graphics.DrawMeshInstanced.html |
+| Standard's forward-add pass has no instancing pragma | Unity's built-in shader source, Standard.shader (FORWARD_DELTA pass) |
