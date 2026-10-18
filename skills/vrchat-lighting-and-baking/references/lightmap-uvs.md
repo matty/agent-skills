@@ -1,78 +1,63 @@
-# Lightmap UVs (UV2): rules, failure modes, fixes
+# Lightmap UVs (UV2): rules, generator settings, symptoms
 
-Unity bakes lightmaps into the **second UV channel** (`UV1` in Blender terms / `uv2`/`TEXCOORD1` in shaders). Everything that goes wrong with bakes goes wrong here first.
+Unity bakes lightmaps into the mesh's second UV channel: the second UV map in Blender's list, `Mesh.uv2` in C#,
+`TEXCOORD1` in shaders. How to unwrap it well is the `uv-unwrapping` skill's job (`rizomuv-uv-pipeline` automates it);
+how big each mesh's rectangle in the lightmap is, and so how wide its gaps must be, is references/lightmap-budget.md.
 
-## Hard rules
+## Rules
 
-1. **No overlapping islands.** Overlap means two surfaces share texels; one room's shadow appears on another wall. (UV0 for textures *may* overlap and tile; UV2 may not.)
-2. **Everything inside 0–1 space.** Anything outside is undefined.
-3. **Padding between islands** ≥ 2 texels at the *final baked* resolution, more for low resolutions. Too little padding = light bleeding across seams after mipmapping and filtering.
-4. **Split islands on hard angles.** Continuing a UV island across a 90° corner smears the shadow terminator around it.
-5. **Roughly uniform texel density per object**, then use *Scale In Lightmap* per renderer to weight importance.
+1. **No overlapping charts.** Two surfaces sharing texels share their light: one wall's shadow lands on another.
+   (UV0 may overlap and tile; UV2 may not.)
+2. **Everything inside 0-1.**
+3. **Gaps of 2 texels or more at the footprint** the mesh gets in the lightmap, and 1 texel or more to the tile
+   edge. Pack for the worst case: gap in UV = 2 / (texels/m x sqrt(surface area) x Scale In Lightmap), which holds
+   whatever the UV2's bounding box turns out to be (lightmap-budget.md). A margin chosen for a whole 1024 map is a
+   fraction of a texel on a small mesh.
+4. **Split charts at hard angles.** A chart continued around a 90 deg corner smears the shadow terminator.
+5. **Even texel density inside a mesh**; weight whole renderers with Scale In Lightmap instead.
 
-## Authoring UV2 in Blender (preferred)
+## Authoring UV2 in Blender without the uv-unwrapping skill
 
-Control beats Unity's automatic packer for hero geometry. How to make a good UV2 is the `uv-unwrapping` skill's
-job (and `rizomuv-uv-pipeline` automates it); without either, the minimum that bakes cleanly:
+The minimum that bakes cleanly:
 
-1. Add a **second** UV map (order matters, not name: the second slot becomes UV2 in Unity). Never re-unwrap UV0 by
-   accident: make the new map active first.
-2. Unwrap it into few, large charts cut at hard angles: Smart UV Project at about 66 deg works for architecture.
-   Blender's Lightmap Pack makes one chart per face and suits only very simple meshes.
-3. Average Islands Scale, then pack with padding in **pixels at the rectangle the mesh will get in the lightmap**
-   (its footprint, below), not at 1024: 2 texels minimum, 4 safer. A margin chosen for a whole 1024 map is a
-   fraction of a texel on a small object and bleeds.
-4. Export with both UV layers; in Unity leave *Generate Lightmap UVs* **off** for these meshes.
-
-Footprint in pixels = sqrt(surface area in m2) x lightmap texels per metre x Scale In Lightmap, divided by about
-sqrt(0.7-0.85) when the charts do not fill their square (measured 2026-10-16 in Unity 2022.3: a 2 x 3 x 0.2 m wall at
-60 texels/m got 243 px, a 2 x 2 x 0.1 m slab 200 px).
-
-How many renderers fit one lightmap: Unity packs each renderer's UV2 rectangle whole, without rotating it, and spills
-into a second map once the rectangles fill about 0.75-0.8 of it (same test: 16 renderers filled one 512 map at 113 px
-each, and spilled at 121 px). So the padding rule is also a capacity rule: if every piece needs 128 px to keep its
-UV2 gaps at 2 texels, a 512 map holds about 12 of them. Check the sum of footprints squared against 0.65 x the map
-area before choosing the lightmap size, not after the bake.
-
-Unity 2022.3 notes: the lightmapper is `LightingSettings.lightmapper`; lightmap padding clamps to at least 2; and
-`Lightmapping.buildProgress` stays at 0 while the GPU lightmapper compiles its kernels on the first bake (about 45 s),
-so watch the Editor log rather than the progress value.
+1. Add a **second** UV map (order matters, not the name). Make it active before unwrapping so UV0 is untouched.
+2. Unwrap into few, large charts cut at hard angles: Smart UV Project at about 66 deg suits architecture. Lightmap
+   Pack makes one chart per face and suits only very simple meshes.
+3. Average Islands Scale, then Pack Islands with Margin Method **Fraction** and Margin = half the gap from rule 3
+   (2 texels at b = 1). Fraction leaves the margin at the tile edge and twice it between islands. The default,
+   Scaled, ignores the number: packed with the full gap on a 2 x 3 x 0.2 m wall at 15 texels/m it left 0.71 texels
+   between islands, while Fraction at half the gap left 2.09 between and 1.04 to the edge (Blender 5.2.2, measured
+   2026-10-17).
+4. Export both UV layers; in Unity leave *Generate Lightmap UVs* **off** for these meshes.
 
 ## Letting Unity generate them
 
-Fine for kitbash props and anything non-hero. Mesh importer → *Generate Lightmap UVs*, then tune under Advanced:
+For one-off props only (a mesh change regenerates the layout and invalidates the bake). Model importer > Generate
+Lightmap UVs, then:
 
-| Setting | Effect |
+| Setting (Unity 2022.3) | Use |
 |---|---|
-| Hard Angle (default 88) | Lower → more splits, fewer smeared corners |
-| Angle Error (default 8) | Lower → more faithful, more islands |
-| Area Error (default 15) | Lower → less distortion |
-| Pack Margin (default 4) | **Raise to 8–16** for low texel densities; the default bleeds |
+| Margin Method | **Calculate**, never Manual: the Manual Pack Margin (default 4 px) assumes the mesh fills a whole 1024 map |
+| Min Lightmap Resolution | the scene's Lightmap Resolution x the smallest Scale In Lightmap this mesh gets |
+| Min Object Scale | the smallest scale the mesh is placed at |
+| Hard Angle (default 88 deg) | lower for more splits and fewer smeared corners |
+| Angle Error (8%), Area Error (15%) | lower for less distortion, at the cost of more charts |
 
-Unity regenerates on every reimport, so a change to the mesh reshuffles the atlas and invalidates the bake — expect to re-bake.
+Source: https://docs.unity3d.com/2022.3/Documentation/Manual/LightingGiUvs-GeneratingLightmappingUVs.html (checked
+2026-10-17).
 
-## Symptom → cause
+## Symptom -> cause
 
 | Symptom | Cause |
 |---|---|
-| Shadow of one object appearing on an unrelated surface | Overlapping UV2 islands |
-| Dark or bright fringes along island borders | Insufficient pack margin / too-low texel density |
-| Blocky, pixelated shadows | Texel density too low — raise Scale In Lightmap for that renderer, not the whole scene |
-| Visible seams across a flat wall | Islands split where they should be continuous, or no seam stitching |
-| Only part of a mesh is lit | UV2 island outside 0–1, or the mesh is not Contribute GI |
-| Bake time exploded and 6 lightmaps appeared | Scene lightmap resolution too high, or Scale In Lightmap left high on large meshes |
-| Lightmaps enormous in the build | Resolution × map count; also Directional mode (doubles data) |
+| A shadow on an unrelated surface | Overlapping UV2 charts |
+| "objects in the Scene with overlapping UV's" in Editor.log | Charts closer than about 2 texels at the footprint, or real overlap |
+| Dark or bright fringes along chart borders | Gaps too small for the footprint |
+| Blocky, pixelated shadows | Texel density too low: raise Scale In Lightmap for that renderer, not the whole scene |
+| Visible seam across a flat wall | Charts split where they should be continuous. Stitch Seams (Mesh Renderer > Lightmapping, Progressive only, off by default) hides seams between straight, axis-aligned chart edges inside one renderer |
+| Seam exactly where two kit pieces meet | Unity: "Seam stitching only works on single GameObjects". Untested route: give neighbours equal texels/m x Scale In Lightmap, put chart borders on each piece's outer edges, or merge a co-planar run into one renderer and tick Stitch Seams |
+| Only part of a mesh is lit | UV2 outside 0-1, or the renderer is not Contribute GI |
+| Six lightmaps appeared and the bake time exploded | Scene Lightmap Resolution too high, or Scale In Lightmap left high on large meshes |
+| Lightmaps enormous in the build | Map count x size, and Directional mode (about twice the memory) |
 
-## Practical texel-density guide
-
-Lightmap resolution is *texels per unit* and units are metres. This skill owns these numbers.
-
-| Surface | Texels/unit |
-|---|---|
-| Large outdoor terrain, skybox-lit ground | 2-5 |
-| Facades and exteriors seen from a distance | 6-10 |
-| General interior walls/floors | 10-20 |
-| Hero surface with crisp contact shadows | 20-40 |
-| Small props | let Scale In Lightmap drop them to 0.25-0.5x |
-
-Set the scene value at the low end and promote individual renderers. That is the single biggest lever on bake time and build size.
+Seam stitching: https://docs.unity3d.com/2022.3/Documentation/Manual/Lightmapping-SeamStitching.html (checked 2026-10-17).
