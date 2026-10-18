@@ -45,7 +45,7 @@ for the full installer reference and for how to add or change a skill.
 
 | Skill | Covers |
 |---|---|
-| `blender-kit-library` | Modular kits across .blend files: KIT / ASM / MASTER files, linking instead of appending, piece naming, grid modules and pivots, one writer per file, plus a create / link / place / audit `bpy` script |
+| `blender-kit-library` | Modular kits across .blend files: KIT / ASM (one assembly per file) / MASTER files, linking instead of appending, piece naming, grid modules and pivots, `kit_status`, one writer per file, plus a create / link / place / audit `bpy` script with an audit CLI |
 | `blender-mesh-topology` | Clean low-count topology: hand-designed grids with 3-to-1 reductions, fair blend surfaces, Quad Remesher from Python with frozen borders, plus grid / remesh / audit / review-render `bpy` scripts |
 | `uv-unwrapping` | Entry point for UVs: tiling, trim, unique or lightmap UVs, seams and hard edges for baking, distortion, texel density, padding in pixels per mip, stacking and mirroring, lightmap UV rules, Blender UV operators from Python, engine notes (Unity), plus a UV audit / texel-density / pack `bpy` script |
 | `rizomuv-uv-pipeline` | RizomUV driven headless from Python (RizomUVLink): fileless transfer from Blender, seam presets, minimum-distortion unwrap with a measured quality gate, texel-density and lightmap packing, the undocumented Pack behaviour, plus launcher / unwrap / metrics / Blender bridge / process pool / smoke-test scripts |
