@@ -18,7 +18,7 @@ changes what gets baked), then work in three passes: plan, bake, verify.
 | Avatars, pickups, moving props | **Light probes, always** | Add VRC Light Volumes on top when installed, for renderers whose shaders support them |
 | A light players switch | Lighting states: a baked copy of the static geometry per state (method under A light players can switch) | Light Volumes installed and the world's shaders read additive volumes (Standard and Standard Lite do not): an Additive volume. PC-only world with no other realtime light on: a shadowless realtime light |
 | Lightmapper | Progressive GPU | Bakery is installed (Windows with an NVIDIA GPU) and bakes are slow |
-| Directional Mode | Non-Directional (half the memory) | PC hero surfaces whose normal maps must respond to baked light |
+| Directional Mode | Non-Directional (half the memory) | Normal maps that matter: under Non-Directional, Standard shows them only in reflections and Standard Lite skips them; bake Directional or Bakery MonoSH, decided with the texturing plan (references/final-look.md) |
 
 ## 1. Plan the lightmap before baking
 
@@ -55,8 +55,9 @@ with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
 - Static flags: **Contribute GI** on all static geometry (it was Lightmap Static before Unity 2019.2); Receive Global
   Illumination per plan step 4. Anything that moves stays non-static.
 - Lighting window (Unity 2022.3 names): Lightmapper Progressive GPU; Lightmap Resolution and Max Lightmap Size from
-  the plan; Lightmap Padding 2 (the minimum); Lightmap Compression Normal Quality; Ambient Occlusion on; Directional
-  Mode per the decision table; Auto Generate **off**: bake explicitly.
+  the plan; Lightmap Padding 2 (the minimum); Lightmap Compression High Quality (the same BC6H size as Normal on
+  Windows); Ambient Occlusion on; Directional Mode per the decision table; Auto Generate **off**: bake explicitly. The
+  final bake's samples, bounces and denoiser, lighting design and PC post-processing: references/final-look.md.
 - Light probes and reflection probes placed first (sections below), so one bake covers all three.
 - Bake a copy of the scene while iterating, so a bad bake can be thrown away. Scripted bakes through Unity MCP:
   references/lightmap-budget.md.

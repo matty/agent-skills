@@ -13,7 +13,7 @@ and `VRChat-Mobile-Lightmapped.shader` in a VRChat project.
 | | `VRChat/Mobile/Standard Lite` | `VRChat/Mobile/Lightmapped` |
 |---|---|---|
 | Kind | Surface shader: `#pragma surface surf StandardVRC vertex:vert exclude_path:prepass exclude_path:deferred noforwardadd noshadow nodynlightmap nolppv noshadowmask` | Legacy `Vertex` and `VertexLM` passes, "no lighting" |
-| Reads | Albedo, metallic (R) + smoothness (A) map, normal, occlusion, emission, detail; lightmaps, including Bakery MonoSH | Albedo and the lightmap |
+| Reads | Albedo, metallic (R) + smoothness (A) map, normal, occlusion, emission, detail; lightmaps, Directional (`DIRLIGHTMAP_COMBINED`) and Bakery MonoSH included (MonoSH with lightmapped specular in its "highlights" mode). Under a Non-Directional lightmap the normal map is not sampled unless Glossy Reflections or a realtime directional light are on. Geometric specular anti-aliasing built in. Opaque only. Its features are shader keywords only the inspector sets (`vrchat-world-sdk-setup`) | Albedo and the lightmap |
 | Light probes | Yes | No: a dynamic object on it is unlit |
 | Realtime lights | The main directional light only, unshadowed: `noforwardadd` gives "one full directional light" in the base pass, and `VRChat.cginc` adds `light.color * nl`. Other lights are per-vertex or SH, which lightmapped surfaces skip, so point and spot lights do not show on them | No |
 | Realtime shadows received | No (`noshadow`) | No |
