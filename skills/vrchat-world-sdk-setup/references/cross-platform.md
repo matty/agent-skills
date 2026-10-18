@@ -29,8 +29,20 @@ PC publish prep:
 
      | Shader | Reads | GPU instancing | Use |
      |---|---|---|---|
-     | `VRChat/Mobile/Standard Lite` | Albedo, metallic (R) and smoothness (A) map, normal, occlusion, emission, lightmap, light probes | Yes: tick Enable GPU Instancing on its materials | Lit world materials; also what an iOS fallback renders best |
+     | `VRChat/Mobile/Standard Lite` | Albedo, metallic (R) and smoothness (A) map, normal, occlusion (G), emission, detail maps (the Standard layout: Detail Mask alpha, Detail Albedo x2, Detail Normal, UV0 or UV1), lightmaps (Directional and Bakery MonoSH too), light probes, vertex colour; geometric specular anti-aliasing; opaque only | Yes: tick Enable GPU Instancing on its materials | Lit world materials; also what an iOS fallback renders best |
      | `VRChat/Mobile/Lightmapped` | Albedo (`_MainTex`) and the lightmap only: no probes, so dynamic or toggled lighting does not show | No instancing variant | The cheapest baked surfaces |
+
+     Standard Lite's detail maps, emission, MonoSH and specular anti-aliasing are `shader_feature` keywords that only
+     its material inspector switches on (`_DETAIL`, `_EMISSION`, `_MONOSH_SPECULAR` or `_MONOSH_NOSPECULAR`,
+     `_ENABLE_GEOMETRIC_SPECULAR_AA`): a material made or changed by script calls `material.EnableKeyword` for each
+     feature it uses, or the feature silently does nothing (the AA property defaults to 1, its keyword does not
+     follow). It multiplies the metallic-smoothness map by the Metallic and Smoothness sliders, so set both to 1 when
+     the map is assigned: a material switched from Standard (which ignores the sliders under a map) keeps Metallic 0
+     and renders non-metal. Under a Non-Directional lightmap it never samples the normal map unless Glossy
+     Reflections are on or a realtime directional light is: decide normal maps with the lighting
+     (`vrchat-lighting-and-baking`). Worlds SDK 3.10.5 source (`VRChat-Mobile-StandardLite.shader`, `VRChat.cginc`,
+     `GUI/StandardLiteShaderGUI.cs`), read 2026-10-18. Standard has the same inspector-only keywords for the maps it
+     uses (`_NORMALMAP`, `_METALLICGLOSSMAP`, `_DETAIL_MULX2`, `_EMISSION`).
 
      Realtime light: VRChat documents both shaders as not supporting real-time lighting (Content Limitations page,
      updated 2025-10-08); Standard Lite's shader source still keeps the main directional light in its base pass,
