@@ -75,9 +75,11 @@ Full table in `references/budgets.md`. Starting points:
 | Max texture size | 2048 (4096 only for a hero surface) | **1024** (set on both the Android and the iOS override) |
 | Download size | no SDK limit; VRChat asks public worlds to stay under 200 MB | **100 MB hard limit** (104,857,600 bytes) after compression |
 | Realtime lights on static geometry | at most 1 realtime per-pixel light at a time (PC-only worlds) | 0: a cross-platform world bakes every light |
-| Post-processing | budget carefully | **disabled by VRChat** |
+| Post-processing | tonemapping, grading and a light bloom, with an in-world toggle (`vrchat-lighting-and-baking`); no AO or screen-space reflections | **disabled by VRChat** |
 
 VRChat's MB is 2^20 bytes: the SDK checks the mobile limit against 104,857,600 bytes and shows sizes in that unit.
+A cross-platform world need not hold PC to the mobile numbers: each budget can be set per platform, and PC-only
+extras switched per build target (`vrchat-world-sdk-setup`).
 
 ## Routing
 

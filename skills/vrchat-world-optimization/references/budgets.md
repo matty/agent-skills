@@ -75,5 +75,6 @@ Source: https://creators.vrchat.com/worlds/udon/networking/network-details/ (che
 ## What actually fills the download
 
 In order: oversized or uncompressed textures, audio imported as PCM or ADPCM, lightmaps (resolution x map count),
-meshes without mesh compression or with unused rig and blend-shape data, and static batching's combined meshes.
+meshes with unused rig and blend-shape data, and static batching's combined meshes. Mesh compression shrinks only
+unique props: on kit pieces it misaligns joints and UV2 gaps, so they stay Off (`vrchat-texture-and-vram`).
 Read/Write on meshes and textures costs memory, not download.
