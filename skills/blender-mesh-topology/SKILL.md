@@ -1,12 +1,13 @@
 ---
 name: blender-mesh-topology
-description: Retopology and clean low-count topology in Blender - messy, fanned or pinched topology, n-gons, poles, pinched or faceted shading from the mesh itself, too many triangles, edge flow. Hand-designed grids with 3-to-1 reductions, thin-plate fills, Quad Remesher from Python, hard-surface chamfers and weighted normals, mesh audit, wire and matcap renders. Wins for topology; for Unity export see blender-to-unity, for UVs uv-unwrapping; not rigging or sculpting.
+description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading from the mesh, too many triangles, edge flow; a greybox piece that looks plain, boxy or too clean, what to model, at what size. 3-to-1 reduction grids, thin-plate fills, Quad Remesher, hard-surface chamfers, weighted normals, audit, wire and matcap renders. Wins for topology and form; textures and bakes pbr-texturing, UVs uv-unwrapping, export blender-to-unity.
 ---
 
 # Clean topology for generated and hard-surface meshes
 
 Clean topology is designed, not found. Decide the shape first, then the layout, then prove both with numbers and
-close-up renders. Engine-neutral; what an engine does with the result is in `references/engine-notes.md`.
+close-up renders. Finishing a greybox piece, what to model and at what size, is section 5. Engine-neutral; what an
+engine does with the result is in `references/engine-notes.md`.
 
 ## Pick the path
 
@@ -14,8 +15,9 @@ close-up renders. Engine-neutral; what an engine does with the result is in `ref
 |---|---|---|
 | Generated, swept, revolved or built from sections (stairs, decks, bands, rings, generated walls) | Design the grid by hand (sections 2-3) | `references/grid-layout.md`, `scripts/grid_topology.py` |
 | A free-form patch with few or free borders | Quad Remesher from Python (section 4) | `references/quad-remesher.md`, `scripts/quad_remesh.py` |
-| A hand-modelled static hard-surface piece (kit walls, door surrounds, trims, furniture) | Chamfers, custom normals, flat-face rules (section 5) | `references/hard-surface.md` |
-| Any of them, before calling it done | Validate (section 6) | `references/validation.md`, `scripts/topology_audit.py`, `scripts/review_render.py` |
+| A greybox piece to finish, or one that looks plain, boxy or too clean | Detail at real sizes, geometry or normal map by viewing distance, joints (section 5) | `references/form-and-detail.md`, `references/real-world-sizes.md`, `scripts/detail_scale.py` |
+| A hand-modelled static hard-surface piece (kit walls, door surrounds, trims, furniture) | Chamfers, custom normals, flat-face rules (section 6) | `references/hard-surface.md` |
+| Any of them, before calling it done | Validate (section 7) | `references/validation.md`, `scripts/topology_audit.py`, `scripts/review_render.py` |
 
 A remesher never fixes a shape, and on engineered surfaces fixed on every side it leaves knots at the borders: when
 the piece has sections, design the grid.
@@ -65,7 +67,27 @@ Freeze the borders and give them even spacing near the target edge length, remes
 validates and retries other targets. Engine, settings, a worked call and the failure table:
 `references/quad-remesher.md`.
 
-## 5. Hard-surface pieces (hand-modelled)
+## 5. Finish the form (a greybox piece)
+
+- Start from intent: reference images, the brief's description and detail list, the nearest and the usual viewing
+  distance, the triangle budget. The greybox's footprint, pivot and openings stay exactly as they are.
+- The greybox is the primary form. Add the secondary forms (frames, panels, mouldings, reveals, sills, rails) at real
+  sizes (`references/real-world-sizes.md`); tertiary surface detail belongs in textures (`pbr-texturing`).
+- Geometry or normal map, per feature, from the distance d: relief deeper than about 0.014 x d^2 m (one pixel of
+  stereo disparity at 20 ppd), anything on the silhouette and anything seen at grazing angles is geometry; shallower
+  relief seen face-on is a baked normal or a trim bevel. Nothing narrower than 2 px (d / 575 m) at the usual distance:
+  it shimmers. `python scripts/detail_scale.py <d>...` prints both with the texel class (`--ppd 25` for Quest 3).
+- Chamfer the edges players see up close (section 6), never a face that meets a neighbouring kit piece: two chamfers
+  make a groove at every joint. A profile that runs across pieces is identical at both ends.
+- Imperfection (sag, chipped corners, uneven boards) goes on the body only, never on joint faces; variants differ in it.
+- Mid-poly with custom normals for hard-surface kit pieces; a high-poly bake for ornament and organic or cloth props
+  (the bake is `pbr-texturing`'s).
+- Review from eye height (1.6-1.7 m) at the nearest walkable and the usual distance, beside the reference, and report
+  every detail item with its measured size.
+
+Rules, worked numbers and routes: `references/form-and-detail.md`.
+
+## 6. Hard-surface pieces (hand-modelled)
 
 - Chamfer the edges the player sees up close (one or two segments); only facets of a curved surface are smoothed by
   angle. A fold between two big flat faces is never smoothed, at any angle.
@@ -96,7 +118,7 @@ validates and retries other targets. Engine, settings, a worked call and the fai
 
 Details, measurements and sources: `references/hard-surface.md`.
 
-## 6. Validate before calling it done
+## 7. Validate before calling it done
 
 - `topology_audit.audit(obj)` on the modifier stack's result: n-gons, open, overfull or flipped edges, inverted
   islands, short edges, degenerate faces, bad quads, slivers, loose vertices; poles, fan centres and how far big faces
@@ -120,9 +142,10 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
 | `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)` |
 | `scripts/review_render.py` | `render(path, eye, target, ...)` live or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)` |
+| `scripts/detail_scale.py` | Plain Python, no Blender: `px_per_m(d)`, `texel_class(d)`, `stereo_relief_m(d)`, `min_width_m(d, px=2)`, each with `ppd=20` (25 for Quest 3); `python detail_scale.py 0.5 1 2 [--ppd 25]` prints the table |
 
-Load a script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions. None of them
-change the scene except where stated: the grid helpers build what you pass them, renders add and remove a temporary
-camera, `audit_stack` and `normals_snapshot` switch Triangulate modifiers for a reading and restore them, the
-`hard_surface` functions change the stack they are given (and nothing else), and `quad_remesh` removes everything it
-creates.
+Load a Blender script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions
+(`detail_scale.py` runs in any Python). None of them change the scene except where stated: the grid helpers build
+what you pass them, renders add and remove a temporary camera, `audit_stack` and `normals_snapshot` switch
+Triangulate modifiers for a reading and restore them, the `hard_surface` functions change the stack they are given
+(and nothing else), and `quad_remesh` removes everything it creates.
