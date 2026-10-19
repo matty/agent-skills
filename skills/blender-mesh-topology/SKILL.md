@@ -1,6 +1,6 @@
 ---
 name: blender-mesh-topology
-description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading from the mesh, too many triangles, edge flow; a greybox piece that looks plain, boxy or too clean, what to model, at what size. 3-to-1 reduction grids, thin-plate fills, Quad Remesher, hard-surface chamfers, weighted normals, audit, wire and matcap renders. Wins for topology and form; textures and bakes pbr-texturing, UVs uv-unwrapping, export blender-to-unity.
+description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading from the mesh, too many triangles, edge flow; a greybox piece that looks plain, boxy or too clean, what to model, at what size. 3-to-1 reduction grids, Quad Remesher, hard-surface chamfers, weighted normals, audit and review renders. Wins for topology and kit-piece finishing; blocky or over-bevelled props and furniture 3d-form-design, textures pbr-texturing.
 ---
 
 # Clean topology for generated and hard-surface meshes
@@ -15,6 +15,7 @@ engine does with the result is in `references/engine-notes.md`.
 |---|---|---|
 | Generated, swept, revolved or built from sections (stairs, decks, bands, rings, generated walls) | Design the grid by hand (sections 2-3) | `references/grid-layout.md`, `scripts/grid_topology.py` |
 | A free-form patch with few or free borders | Quad Remesher from Python (section 4) | `references/quad-remesher.md`, `scripts/quad_remesh.py` |
+| A prop or piece that looks blocky or over-bevelled, or furniture: its form, proportions and bevel sizes | Load the `3d-form-design` skill, then come back for the stack and validation | - |
 | A greybox piece to finish, or one that looks plain, boxy or too clean | Detail at real sizes, geometry or normal map by viewing distance, joints (section 5) | `references/form-and-detail.md`, `references/real-world-sizes.md`, `scripts/detail_scale.py` |
 | A hand-modelled static hard-surface piece (kit walls, door surrounds, trims, furniture) | Chamfers, custom normals, flat-face rules (section 6) | `references/hard-surface.md` |
 | Any of them, before calling it done | Validate (section 7) | `references/validation.md`, `scripts/topology_audit.py`, `scripts/review_render.py` |
