@@ -1,0 +1,178 @@
+{
+ "piece": "Sideboard, walnut veneer, four doors on a plinth",
+ "type": "sideboard",
+ "reference": "1960s walnut sideboard: solid top overhanging the carcass, four flush doors with 3 mm gaps, bar handles, recessed plinth",
+ "view": {
+  "usual_m": 1.5,
+  "nearest_m": 0.7,
+  "display": "vr20"
+ },
+ "tris_budget": 2500,
+ "bevel_tiers_mm": {
+  "primary": 5,
+  "secondary": 3,
+  "small": 2
+ },
+ "key_dims": {
+  "height": 820,
+  "front_gap": 3,
+  "plinth_setback": 50
+ },
+ "parts": [
+  {
+   "name": "top",
+   "role": "top",
+   "size": [
+    1600,
+    450,
+    25
+   ],
+   "made": "wood",
+   "build": "extrude",
+   "attach_to": "side",
+   "notes": "Overhangs the carcass 18 mm at the front and sides.",
+   "edges": [
+    {
+     "where": "top front and side edges",
+     "tier": "primary"
+    },
+    {
+     "where": "lower front and side edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "back edges against the wall",
+     "tier": "sharp"
+    },
+    {
+     "where": "underside",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "side",
+   "role": "side",
+   "count": 2,
+   "size": [
+    18,
+    430,
+    680
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "plinth",
+   "edges": [
+    {
+     "where": "front vertical edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "bottom edges, joint on the plinth",
+     "tier": "sharp"
+    },
+    {
+     "where": "top edges under the top",
+     "tier": "sharp"
+    },
+    {
+     "where": "back edges against the wall",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "door",
+   "role": "door",
+   "count": 4,
+   "size": [
+    387,
+    18,
+    674
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "side",
+   "notes": "Separate pieces with 3 mm gaps to each other, the top and the plinth; hinged in pairs.",
+   "edges": [
+    {
+     "where": "front face perimeter",
+     "tier": "secondary"
+    },
+    {
+     "where": "back face perimeter",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "handle",
+   "role": "handle",
+   "count": 4,
+   "size": [
+    12,
+    30,
+    120
+   ],
+   "made": "machined_metal",
+   "build": "sweep",
+   "attach_to": "door",
+   "notes": "A bar swept along a squared U path, at each door's free edge, 100 mm below its top.",
+   "edges": [
+    {
+     "where": "outer edges of the bar",
+     "tier": "secondary"
+    },
+    {
+     "where": "feet against the door",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "plinth",
+   "role": "plinth",
+   "size": [
+    1500,
+    18,
+    115
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "floor",
+   "notes": "Set back 50 mm from the door faces: the shadow line at the floor.",
+   "edges": [
+    {
+     "where": "bottom edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "top edges under the carcass",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back",
+   "role": "back",
+   "size": [
+    1564,
+    6,
+    680
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "side",
+   "edges": [
+    {
+     "where": "all edges, hidden against the wall",
+     "tier": "sharp"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,253 @@
+{
+ "piece": "Dining chair, beech, slatted back",
+ "type": "dining_chair",
+ "reference": "Mid-century beech dining chair: trapezoid seat, back legs running up into the back posts, three slats, curved top rail",
+ "view": {
+  "usual_m": 1.5,
+  "nearest_m": 0.7,
+  "display": "vr20"
+ },
+ "tris_budget": 2000,
+ "bevel_tiers_mm": {
+  "primary": 5,
+  "secondary": 3,
+  "small": 2
+ },
+ "key_dims": {
+  "seat_height": 450,
+  "seat_depth": 420,
+  "back_angle_deg": 100,
+  "back_height": 420
+ },
+ "parts": [
+  {
+   "name": "seat",
+   "role": "seat",
+   "size": [
+    460,
+    420,
+    22
+   ],
+   "made": "wood",
+   "build": "extrude",
+   "attach_to": "seat_rail_front",
+   "shape": {
+    "plan": "trapezoid, 460 front, 380 back",
+    "dish_mm": 8
+   },
+   "notes": "Extrude the trapezoid plan; dish the top 8 mm, deepest just behind the centre.",
+   "edges": [
+    {
+     "where": "top front edge",
+     "tier": "primary"
+    },
+    {
+     "where": "top side and back edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "underside edges",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "front_leg",
+   "role": "leg",
+   "count": 2,
+   "size": [
+    38,
+    38,
+    428
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "floor",
+   "shape": {
+    "taper": {
+     "faces": "inside two",
+     "from_mm": 38,
+     "to_mm": 28
+    },
+    "splay_deg": 4
+   },
+   "edges": [
+    {
+     "where": "four vertical corners",
+     "tier": "secondary"
+    },
+    {
+     "where": "foot edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "top end, joint under the seat",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back_leg",
+   "role": "leg",
+   "count": 2,
+   "size": [
+    38,
+    130,
+    880
+   ],
+   "made": "wood",
+   "build": "sweep",
+   "attach_to": "floor",
+   "shape": {
+    "rake_deg": 8,
+    "profile": "side view: raked foot, straight through the seat, bending back 10 deg above it"
+   },
+   "notes": "One part from the floor to the top rail: a 38 x 32 section swept along the side-view path.",
+   "edges": [
+    {
+     "where": "long corners",
+     "tier": "secondary"
+    },
+    {
+     "where": "foot edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "joints with the rails",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "seat_rail_front",
+   "role": "rail",
+   "size": [
+    400,
+    18,
+    75
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "front_leg",
+   "edges": [
+    {
+     "where": "lower outer edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "top edge under the seat, hidden",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends at the leg joint",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "seat_rail_side",
+   "role": "rail",
+   "count": 2,
+   "size": [
+    18,
+    360,
+    75
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "front_leg",
+   "edges": [
+    {
+     "where": "lower outer edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "top edge under the seat, hidden",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends at the leg joint",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back_top_rail",
+   "role": "back_rail",
+   "size": [
+    400,
+    25,
+    90
+   ],
+   "made": "wood",
+   "build": "sweep",
+   "attach_to": "back_leg",
+   "shape": {
+    "plan_radius_mm": 1015
+   },
+   "notes": "Curved in plan on a 1015 mm radius: its section swept along the arc.",
+   "edges": [
+    {
+     "where": "top front and back edges",
+     "tier": "primary"
+    },
+    {
+     "where": "lower edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "ends at the post joint",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "slat",
+   "role": "slat",
+   "count": 3,
+   "size": [
+    50,
+    12,
+    300
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "back_top_rail",
+   "notes": "Each slat turned to the top rail's arc, evenly spaced between the posts (a mechanical repeat).",
+   "edges": [
+    {
+     "where": "long front edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "ends at the rail joints",
+     "tier": "sharp"
+    },
+    {
+     "where": "long back edges",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "stretcher",
+   "role": "stretcher",
+   "count": 2,
+   "size": [
+    22,
+    22,
+    390
+   ],
+   "made": "wood",
+   "build": "revolve",
+   "attach_to": "front_leg",
+   "notes": "Turned, 22 mm swelling to 24 at the middle, 150 mm off the floor, 12 segments.",
+   "edges": [
+    {
+     "where": "ends in the legs",
+     "tier": "sharp"
+    }
+   ]
+  }
+ ]
+}

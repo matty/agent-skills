@@ -1,6 +1,6 @@
 # Bevels and chamfers: which edges, how wide, how many segments
 
-Scope: sizing and choosing edges (SKILL.md section 5). The Blender modifier stack and custom normals that make a
+Scope: sizing and choosing edges (SKILL.md section 3, the spec's edge lists). The Blender modifier stack and custom normals that make a
 bevel shade cleanly are `blender-mesh-topology`'s; this file decides what to bevel and how much. Sources checked
 2026-10-19. No authoritative source gives a numeric game bevel width: the caps, tiers and pixel floor below are
 *practice* (this skill's rules) built on the sourced principles, and are settled by the renders.
@@ -40,7 +40,7 @@ several centimetres on a crate or a chair has no counterpart: that is the over-b
 
 Take the smallest of these, after deciding the edge is bevelled at all (section 4):
 
-1. **The material's believable maximum** (section 2, game column in SKILL.md section 5).
+1. **The material's believable maximum** (section 2; `form_spec.py` holds the numbers it checks).
 2. **The tier**: silhouette and outer shell edges 1x, part and panel edges 0.5x, small detail and trim 0.25x. Name the
    three widths as constants and reuse them across a set of pieces.
 3. **The cap**: a quarter of the narrowest flat face beside the edge (a face bevelled on both sides keeps half its

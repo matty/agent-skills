@@ -47,7 +47,7 @@ not tuned on a body of real assets.
 | `blocky` | box_share 0.6 or more |
 | `warn_cube_parts` | Box-filled parts with all sides within 15% |
 | `floating_parts` | Any floating part |
-| `warn_size_tiers` | 3 or more parts in fewer than 3 size tiers |
+| `warn_size_tiers` | 3 or more parts all within 2x of each other in size (furniture members of similar length are normal: only all-one-size is flagged) |
 | `warn_box_silhouette` | Front and side silhouettes both 95% or more of their box |
 
 `problems(r, expect_sharp=False)` drops the every-edge warning for a piece that really has no hard edge (a moulded

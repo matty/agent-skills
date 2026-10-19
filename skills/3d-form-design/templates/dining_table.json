@@ -1,0 +1,142 @@
+{
+ "piece": "Dining table, solid oak, legs and aprons",
+ "type": "dining_table",
+ "reference": "Plain Shaker-style oak table: square legs tapered on the inside faces, aprons set back, top overhanging about 100 mm",
+ "view": {
+  "usual_m": 1.5,
+  "nearest_m": 0.7,
+  "display": "vr20"
+ },
+ "tris_budget": 1500,
+ "bevel_tiers_mm": {
+  "primary": 5,
+  "secondary": 3,
+  "small": 2
+ },
+ "key_dims": {
+  "height": 750,
+  "apron_clearance": 640,
+  "overhang": 100
+ },
+ "parts": [
+  {
+   "name": "top",
+   "role": "top",
+   "size": [
+    1800,
+    900,
+    25
+   ],
+   "made": "wood",
+   "build": "extrude",
+   "attach_to": "apron_long",
+   "notes": "One board at real thickness; edge profile from the tiers, rounder on top than underneath.",
+   "edges": [
+    {
+     "where": "top outer edge",
+     "tier": "primary"
+    },
+    {
+     "where": "lower outer edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "underside face where it sits on the aprons",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "leg",
+   "role": "leg",
+   "count": 4,
+   "size": [
+    60,
+    60,
+    725
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "floor",
+   "shape": {
+    "taper": {
+     "faces": "inside two",
+     "from_mm": 60,
+     "to_mm": 38,
+     "start_below_apron_mm": 25
+    }
+   },
+   "notes": "Outer faces plumb and square; taper only the two inside faces, from 25 mm below the apron.",
+   "edges": [
+    {
+     "where": "four vertical corners",
+     "tier": "secondary"
+    },
+    {
+     "where": "foot edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "top end, joint under the top",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "apron_long",
+   "role": "apron",
+   "count": 2,
+   "size": [
+    1580,
+    22,
+    90
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "leg",
+   "notes": "Set back 5 mm from the legs' outer faces.",
+   "edges": [
+    {
+     "where": "lower outer edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "top edge under the top, hidden",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends at the leg joint",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "apron_short",
+   "role": "apron",
+   "count": 2,
+   "size": [
+    680,
+    22,
+    90
+   ],
+   "made": "wood",
+   "build": "box",
+   "attach_to": "leg",
+   "notes": "As apron_long.",
+   "edges": [
+    {
+     "where": "lower outer edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "top edge under the top, hidden",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends at the leg joint",
+     "tier": "sharp"
+    }
+   ]
+  }
+ ]
+}

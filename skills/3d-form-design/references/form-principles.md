@@ -1,6 +1,6 @@
 # Form principles: hierarchy, silhouette, breaking blockiness
 
-Scope: the design rules behind SKILL.md sections 2-4, with sources. All sources checked 2026-10-19. *practice* marks
+Scope: the design rules behind SKILL.md section 3, with sources. All sources checked 2026-10-19. *practice* marks
 this skill's working rules, which have no published number: starting points, settled by the renders. Polycount forum
 threads refuse automated fetches, so the critiques quoted from them were read in search summaries only; verify by
 hand before quoting them further.
@@ -17,8 +17,8 @@ hand before quoting them further.
 | Avoid tangents: edges that just touch or line up by accident "flatten the depth out of an image" | https://ctrlpaint.com/videos/avoiding-visual-tangents |
 
 Checkable versions (*practice*):
-- Parts sorted by largest dimension fall into at least three tiers, each about 2x apart (`form_audit` reports
-  `size_tiers`; a one-part object is judged from its renders).
+- Big, medium and small forms are all present, each clearly smaller than the last (judged from the renders;
+  furniture members of similar length are normal, and `form_audit` only flags parts that are all one size).
 - No major part or overall form with all three sides within 15% of each other unless the real object is cubic.
 - Primary splits nearer 1:1.6 or 1:2 than 1:1 (the golden ratio is 1.618).
 - At most about 40% of the visible surface carrying detail.
@@ -64,9 +64,11 @@ Rules for a modelling agent (*practice*):
 - Jitter repeated instances 0.5-2 deg and a few mm; break exact mirror symmetry on one secondary feature; never noise
   on primary forms or joint faces.
 
-## 4. Workflow gates
+## 4. Order of decisions
 
-From blockout to finish, each gate passing before the next (sources: the 80.lv mech tips, "it's super easy to change
+The order artists work in, from blockout to finish. In this skill the first three happen in the spec (sizes,
+profiles and shape values written and validated) so the build makes each part once; the gates are checked on the
+spec's profiles before modelling and on the renders after (sources: the 80.lv mech tips, "it's super easy to change
 things" at blockout; Cave Academy, block primaries then secondaries and tertiaries, study real objects; Unity Learn,
 https://learn.unity.com/course/high-fidelity-game-visuals-environment/tutorial/creating-a-prototype-blockout-from-concept-art):
 

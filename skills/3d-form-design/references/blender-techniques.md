@@ -1,6 +1,6 @@
 # Profile-first modelling in Blender from Python
 
-Scope: the bpy and bmesh calls behind SKILL.md section 2-3 (profiles, revolve, sweep, taper, crown, bevel by
+Scope: the bpy and bmesh calls behind SKILL.md section 4 (profiles, revolve, sweep, taper, crown, bevel by
 weight). API facts from the Blender 5.2 API docs (https://docs.blender.org/api/current/) and release notes, checked
 2026-10-19. The snippets have not been run in this repo's tests: run them on a scratch object first and read back the
 result (vertex count, bounding box, a render).
@@ -83,6 +83,33 @@ md.offset_type = "WIDTH"
 md.width = 0.004
 md.segments = 2
 ```
+
+Pick the edges by rule from the spec's edge list, not by hand or "all": for example convex, not on the floor, not on
+a joint face. In bmesh (a float layer becomes an edge attribute of that name when written back; check it in your
+build):
+
+```python
+import bmesh, math
+
+def tier_edges(ob, attr_name, pick):
+    """Weight 1.0 on the edges pick(edge, zmin) accepts, 0.0 elsewhere, in a float edge attribute."""
+    bm = bmesh.new(); bm.from_mesh(ob.data)
+    lay = bm.edges.layers.float.get(attr_name) or bm.edges.layers.float.new(attr_name)
+    zmin = min(v.co.z for v in bm.verts)
+    for e in bm.edges:
+        e[lay] = 1.0 if pick(e, zmin) else 0.0
+    bm.to_mesh(ob.data); bm.free()
+
+def outer_corner(e, zmin, min_deg=30.0):
+    if len(e.link_faces) != 2 or not e.is_convex:
+        return False                                    # open, overfull or concave: sharp
+    if all(abs(v.co.z - zmin) < 1e-4 for v in e.verts):
+        return False                                    # on the floor: sharp
+    return math.degrees(e.calc_face_angle()) >= min_deg
+```
+
+Joint faces need their own test (their position against the neighbour part, or a face map or material set while
+building).
 
 `BevelModifier.edge_weight` names the attribute (default `bevel_weight_edge`), per the API page
 (https://docs.blender.org/api/current/bpy.types.BevelModifier.html); confirm the property name in your build. The

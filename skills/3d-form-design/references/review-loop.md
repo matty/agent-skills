@@ -1,6 +1,6 @@
 # The review loop: what research on LLM-built 3D found, and the loop this skill runs
 
-Scope: why SKILL.md section 7 works the way it does. Papers read through their arXiv HTML or project pages on
+Scope: why SKILL.md works spec-first and verifies once. Papers read through their arXiv HTML or project pages on
 2026-10-19; figures are as the papers report them, on their own benchmarks, and small samples.
 
 ## Findings
@@ -17,18 +17,18 @@ Scope: why SKILL.md section 7 works the way it does. Papers read through their a
 | Working towards an image, generated first when only text is given, keeps edits directed | BlenderAlchemy, https://arxiv.org/html/2404.17672v1 |
 | Splitting the object into a graph of parts, then refining each, beats one-shot generation | ShapeCraft, https://arxiv.org/abs/2510.17603 ; MeshCoder, https://arxiv.org/html/2508.14879v1 |
 
-## The loop
+## What this skill takes from it
 
-1. **Plan in parts with numbers**: the parts table of SKILL.md section 1 (real sizes, material, attachment, contact).
+The findings argue for deciding before building rather than iterating after: measurements up front helped most,
+retrieval stopped the primitive default, critics are unreliable and fixes regress. So:
+
+1. **Plan in parts with numbers**: the form spec (`form-spec.md`), validated before any geometry.
 2. **Look up the API** for any operation you have not used in this Blender version (`blender-techniques.md`, the API
    docs) instead of falling back to primitives.
-3. **Build in milestones** (blockout, primaries, secondaries, edges), saving or snapshotting after each, so a bad
-   round can be reverted.
-4. **Measure**: `form_audit` and the parts table (every part's size within tolerance, every part touching what holds
-   it).
-5. **Look**: the silhouette set and a lit three-quarter close-up, beside the reference. Write the critique as
-   questions with yes/no answers ("Do the back legs rake back about 10 deg?", "Is there a gap between the drawer
-   fronts?"), in priority order: missing parts, floating or disconnected parts, proportions, alignment, detail.
-6. **Fix one item at a time and check it on its own** in a new render; a critic can claim a fix that did not happen.
-7. **Revert** a round that made anything worse. **Stop** after about three rounds and report the remaining items
-   rather than looping.
+3. **Build each part once** from its spec line, saving after each part so a bad step can be undone.
+4. **Verify once, with numbers first**: `check_build` and `form_audit`, then one render set. Write the visual check as
+   yes/no questions from the spec ("do the back legs rake about 8 deg?"), in priority order: missing parts, floating
+   or disconnected parts, proportions, alignment, detail.
+5. **A failure is a spec line or a build step**: fix that, rebuild that part, re-run the check that failed and
+   confirm it in a new render; never accept a critic's claim that a fix happened. Revert anything that made another
+   check worse. Do not start open-ended critique rounds.

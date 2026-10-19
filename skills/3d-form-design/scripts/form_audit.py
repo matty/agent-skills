@@ -515,9 +515,9 @@ def problems(r, ratio_warn=RATIO_WARN, ratio_fail=RATIO_FAIL, expect_sharp=True)
     if floating:
         out.append(("floating_parts", "%d part(s) touch nothing and are off the ground, e.g. at z %.3f m" %
                     (len(floating), floating[0]["lo"][2])))
-    if len(r["parts"]) >= 3 and r["size_tiers"] < 3:
-        out.append(("warn_size_tiers", "%d parts in %d size tier(s): big, medium and small forms want 3, each about "
-                    "2x apart" % (len(r["parts"]), r["size_tiers"])))
+    if len(r["parts"]) >= 3 and r["size_tiers"] < 2:
+        out.append(("warn_size_tiers", "%d parts all within 2x of each other in size: no big, medium and small" %
+                    len(r["parts"])))
     sil = r.get("silhouettes")
     if sil and all(sil[v]["rectangularity"] >= SIL_RECT for v in ("front", "side")):
         out.append(("warn_box_silhouette", "front and side silhouettes fill %.0f%% and %.0f%% of their bounding box" %

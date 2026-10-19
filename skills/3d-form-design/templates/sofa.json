@@ -1,0 +1,184 @@
+{
+ "piece": "Three-seat sofa, fabric, boxed cushions on turned legs",
+ "type": "sofa",
+ "reference": "Mid-century three-seat sofa: boxed seat and back cushions with piping, square arms, tapered turned wooden legs",
+ "view": {
+  "usual_m": 1.5,
+  "nearest_m": 0.7,
+  "display": "vr20"
+ },
+ "tris_budget": 6000,
+ "bevel_tiers_mm": {
+  "primary": 5,
+  "secondary": 3,
+  "small": 2
+ },
+ "key_dims": {
+  "seat_height": 450,
+  "seat_depth": 560,
+  "back_angle_deg": 105
+ },
+ "parts": [
+  {
+   "name": "base",
+   "role": "base",
+   "size": [
+    2100,
+    880,
+    200
+   ],
+   "made": "upholstery",
+   "build": "subd",
+   "attach_to": "leg",
+   "shape": {
+    "crown_pct": 1
+   },
+   "edges": [
+    {
+     "where": "seams",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "arm",
+   "role": "arm",
+   "count": 2,
+   "size": [
+    180,
+    880,
+    420
+   ],
+   "made": "upholstery",
+   "build": "subd",
+   "attach_to": "base",
+   "shape": {
+    "crown_pct": 2
+   },
+   "edges": [
+    {
+     "where": "seams",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back",
+   "role": "back",
+   "size": [
+    1740,
+    180,
+    420
+   ],
+   "made": "upholstery",
+   "build": "subd",
+   "attach_to": "base",
+   "shape": {
+    "crown_pct": 1
+   },
+   "edges": [
+    {
+     "where": "seams",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "seat_cushion",
+   "role": "seat_cushion",
+   "count": 3,
+   "size": [
+    580,
+    600,
+    140
+   ],
+   "made": "upholstery",
+   "build": "cloth",
+   "attach_to": "base",
+   "shape": {
+    "crown_pct": 4
+   },
+   "notes": "Cloth with pressure on a boxed blank, frame as collider; 10-15 mm sag in the middle, front edge rolled.",
+   "edges": [
+    {
+     "where": "seams",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back_cushion",
+   "role": "back_cushion",
+   "count": 3,
+   "size": [
+    580,
+    180,
+    460
+   ],
+   "made": "upholstery",
+   "build": "cloth",
+   "attach_to": "back",
+   "shape": {
+    "crown_pct": 5
+   },
+   "notes": "Leaning on the back frame at the back angle; fuller crown than the seat.",
+   "edges": [
+    {
+     "where": "seams",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "piping",
+   "role": "piping",
+   "count": 6,
+   "size": [
+    5,
+    5,
+    2400
+   ],
+   "made": "fabric",
+   "build": "sweep",
+   "attach_to": "seat_cushion",
+   "notes": "A 6-sided tube swept along each seat cushion's top and bottom seam.",
+   "edges": [
+    {
+     "where": "tube",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "leg",
+   "role": "leg",
+   "count": 4,
+   "size": [
+    40,
+    40,
+    160
+   ],
+   "made": "wood",
+   "build": "revolve",
+   "attach_to": "floor",
+   "shape": {
+    "taper": {
+     "faces": "round",
+     "from_mm": 40,
+     "to_mm": 25
+    },
+    "splay_deg": 8
+   },
+   "edges": [
+    {
+     "where": "top rim",
+     "tier": "secondary"
+    },
+    {
+     "where": "foot on the floor",
+     "tier": "sharp"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,157 @@
+{
+ "piece": "Bookcase, painted MDF, four shelves",
+ "type": "bookcase",
+ "reference": "Plain painted bookcase: sides to the floor, recessed plinth, back panel, shelves with edge strips",
+ "view": {
+  "usual_m": 1.5,
+  "nearest_m": 0.7,
+  "display": "vr20"
+ },
+ "tris_budget": 1000,
+ "bevel_tiers_mm": {
+  "primary": 5,
+  "secondary": 3,
+  "small": 2
+ },
+ "key_dims": {
+  "depth": 300,
+  "shelf_span": 764,
+  "plinth": 80
+ },
+ "parts": [
+  {
+   "name": "side",
+   "role": "side",
+   "count": 2,
+   "size": [
+    18,
+    300,
+    2000
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "floor",
+   "edges": [
+    {
+     "where": "front vertical edges",
+     "tier": "secondary"
+    },
+    {
+     "where": "top front edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "bottom edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "back edges against the wall",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "top",
+   "role": "top",
+   "size": [
+    764,
+    300,
+    18
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "side",
+   "edges": [
+    {
+     "where": "front top edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "ends at the side joints",
+     "tier": "sharp"
+    },
+    {
+     "where": "back edge against the wall",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "shelf",
+   "role": "shelf",
+   "count": 4,
+   "size": [
+    764,
+    280,
+    25
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "side",
+   "notes": "25 mm including the edge strip; spacing 360 at the bottom closing to 300 at the top.",
+   "edges": [
+    {
+     "where": "front top edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "front lower edge",
+     "tier": "secondary"
+    },
+    {
+     "where": "ends at the side joints",
+     "tier": "sharp"
+    },
+    {
+     "where": "back edges",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "back",
+   "role": "back",
+   "size": [
+    800,
+    6,
+    2000
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "side",
+   "edges": [
+    {
+     "where": "all edges, hidden against the wall",
+     "tier": "sharp"
+    }
+   ]
+  },
+  {
+   "name": "plinth",
+   "role": "plinth",
+   "size": [
+    764,
+    18,
+    80
+   ],
+   "made": "board",
+   "build": "box",
+   "attach_to": "floor",
+   "notes": "Set back 20 mm from the sides' front edges.",
+   "edges": [
+    {
+     "where": "bottom edges on the floor",
+     "tier": "sharp"
+    },
+    {
+     "where": "top edges under the bottom shelf",
+     "tier": "sharp"
+    },
+    {
+     "where": "ends at the side joints",
+     "tier": "sharp"
+    }
+   ]
+  }
+ ]
+}
