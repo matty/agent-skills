@@ -53,8 +53,17 @@ GRID_TOL = 0.01      # modules: how far an extent may be from a whole number of 
 STATUS_ORDER = ("grey", "modelled", "uv", "textured", "exported")   # collection custom property kit_status
 
 
+def _resolve(path):
+    """bpy.path.abspath, refusing "//..." in a file never saved: Blender would resolve it against its current
+    directory (often C:\\Windows\\System32 or the install folder, so //../ paths land in C:\\)."""
+    if path.startswith("//") and not bpy.data.filepath:
+        raise ValueError("%r is relative to the .blend's folder, but this file has never been saved: save it first or "
+                         "pass an absolute path" % path)
+    return bpy.path.abspath(path)
+
+
 def _abs(path):
-    return bpy.path.abspath(path).replace("\\", "/").lower()
+    return _resolve(path).replace("\\", "/").lower()
 
 
 def new_piece(name, parent=None):
@@ -152,7 +161,7 @@ def relink(search_dirs, relative=True, renamed=None):
     Returns {old stored path: new stored path, None (no file found), "ambiguous: ..." or "fix <ASM file> first"}."""
     found = {}
     for top in search_dirs:
-        for base, _dirs, files in os.walk(bpy.path.abspath(top)):
+        for base, _dirs, files in os.walk(_resolve(top)):
             for f in files:
                 if f.lower().endswith(".blend"):
                     path = os.path.join(base, f)          # one entry per real file, however often it is reached
@@ -228,7 +237,7 @@ def save_file(filepath=None):
     prefs.save_version = 0
     try:
         if filepath:
-            os.makedirs(os.path.dirname(os.path.abspath(bpy.path.abspath(filepath))), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(_resolve(filepath))), exist_ok=True)
             bpy.ops.wm.save_as_mainfile(filepath=filepath)
         else:
             bpy.ops.wm.save_mainfile()
