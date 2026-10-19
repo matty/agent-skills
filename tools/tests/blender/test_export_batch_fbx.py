@@ -2,7 +2,7 @@
 collection (hidden LOD, collision shell disabled in viewports, an excluded piece, a piece outside the scene) with its
 modifiers applied, restores the visibility it changed, writes no texture copies with Path Mode Strip, and the files
 re-import at rotation 0 with the piece's size; --dir resolves against the current directory or, with //, the .blend's
-folder; --set-status saves kit_status without a .blend1; a selection export skips hidden objects and, with Copy,
+folder, and a // folder in a file never saved is refused; --set-status saves kit_status without a .blend1; a selection export skips hidden objects and, with Copy,
 writes the .fbm texture folder that Strip avoids; custom normals survive the export when the stack triangulates first
 (hard-surface routes A and B), and an untriangulated weighted-normal panel gets the re-triangulation warning.
 
@@ -291,12 +291,28 @@ def test_selection_export_skips_hidden_and_copy_writes_fbm():
     check([p for p in out.rglob("*.fbm")], "Copy wrote no .fbm folder (the fixture's material is textured)")
 
 
+def test_unsaved_file_refuses_blend_relative_dir():
+    # bpy.path.abspath("//x") in a file never saved is "x", relative to Blender's current directory: from
+    # C:\Windows\System32, //../../export/fbx wrote into C:\export\fbx
+    bpy.ops.wm.read_homefile(use_empty=True)
+    ns = load()
+    for fn in (lambda: ns["export_kit"]("//../../export/fbx"), lambda: ns["export_selected"]("//export/fbx")):
+        try:
+            fn()
+        except ValueError as exc:
+            check("never been saved" in str(exc), "wrong refusal: %s" % exc)
+        else:
+            raise AssertionError("a // folder was accepted in an unsaved file")
+    check(ns["resolve_dir"](str(TMP)) == os.path.normpath(str(TMP)), "an absolute folder no longer resolves")
+
+
 build_kit()
 for fn in (test_kit_export_writes_every_member_and_restores_visibility,
            test_cli_relative_dir_is_taken_from_the_current_directory,
            test_cli_blend_relative_dir_and_set_status,
            test_selection_export_skips_hidden_and_copy_writes_fbm,
-           test_custom_normals_survive_when_triangulated_in_the_stack):
+           test_custom_normals_survive_when_triangulated_in_the_stack,
+           test_unsaved_file_refuses_blend_relative_dir):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

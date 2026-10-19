@@ -68,7 +68,11 @@ KIT_PATH_MODE = "STRIP"         # kit pieces use the family's shared Unity mater
 
 def resolve_dir(path):
     """Absolute folder for path: "//..." is relative to the open .blend's folder, anything else relative to the
-    current directory (as for any command-line tool)."""
+    current directory (as for any command-line tool). "//..." in an unsaved file is refused: Blender would resolve
+    it against its current directory (often C:\\Windows\\System32 or the install folder, so //../../ lands in C:\\)."""
+    if path.startswith("//") and not bpy.data.filepath:
+        raise ValueError("%r is relative to the .blend's folder, but this file has never been saved: save it first or "
+                         "pass an absolute folder" % path)
     return os.path.normpath(os.path.abspath(bpy.path.abspath(path)))
 
 
