@@ -1,4 +1,5 @@
-"""blender-kit-library: SKILL.md documents what scripts/kit_library.py does, and the two shipped copies are identical.
+"""blender-kit-library: SKILL.md and its references document what scripts/kit_library.py does, and the two shipped
+copies are identical.
 
 Host: plain Python 3.9+, standard library (reads the script with ast; bpy is not needed). Run from the repo root:
     python -B -m unittest discover -s tools/tests -p "test_kit_library_docs.py"
@@ -25,26 +26,29 @@ class KitLibraryDocs(unittest.TestCase):
         cls.src = SCRIPT.read_text(encoding="utf-8")
         cls.tree = ast.parse(cls.src)
         cls.doc = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        cls.docs = cls.doc + "".join(p.read_text(encoding="utf-8") for p in sorted((SKILL / "references").glob("*.md")))
 
     def test_copies_are_identical(self):
         self.assertEqual(SCRIPT.read_bytes(), COPY.read_bytes(),
                          "copy skills/blender-kit-library/scripts/kit_library.py over the orchestration copy")
 
     def test_every_public_function_is_in_the_skill(self):
-        missing = [name for name in functions(self.tree) if "%s(" % name not in self.doc]
-        self.assertEqual(missing, [], "SKILL.md does not document these kit_library functions")
+        missing = [name for name in functions(self.tree) if "%s(" % name not in self.docs]
+        self.assertEqual(missing, [], "SKILL.md and its references do not document these kit_library functions")
 
     def test_every_function_the_skill_calls_exists(self):
-        named = set(re.findall(r"`(\w+)\(", self.doc)) - {"open", "exec"}
+        named = set(re.findall(r"`(\w+)\(", self.docs)) - {"open", "exec"}
         known = set(functions(self.tree)) | {"Library.reload", "reload"}
         unknown = sorted(n for n in named if n not in known and n.islower() and "_" in n)
         self.assertEqual(unknown, [], "SKILL.md calls functions kit_library.py does not have")
 
     def test_cli_flags_are_documented(self):
         flags = set(re.findall(r'"(--[a-z-]+)"', self.src.split("def _main")[1]))
-        self.assertEqual(flags, {"--audit", "--module", "--json", "--relink", "--files", "--renamed"})
-        for flag in flags:
-            self.assertIn(flag, self.doc)
+        flags |= set(re.findall(r'"(--[a-z-]+)"', self.src.split("def _work_cli")[1].split("def _main")[0]))
+        self.assertEqual(flags, {"--audit", "--module", "--json", "--relink", "--files", "--renamed", "--snapshot",
+                                 "--changes", "--checkout", "--integrate", "--names", "--materials", "--force"})
+        for flag in flags - {"--force"}:                       # --force is for the user to choose, not advertised
+            self.assertIn(flag, self.docs)
 
     def test_material_pattern_is_canonical_and_documented(self):
         value = next(n.value for n in self.tree.body
@@ -61,7 +65,7 @@ class KitLibraryDocs(unittest.TestCase):
         self.assertNotIn("half a module", self.doc)
 
     def test_every_headless_command_returns_script_errors(self):
-        for text, name in ((self.doc, "SKILL.md"), (self.src, "kit_library.py")):
+        for text, name in ((self.docs, "SKILL.md and references"), (self.src, "kit_library.py")):
             for line in text.splitlines():
                 if "blender -b --" in line:                                  # a command, not a mention
                     self.assertIn("--python-exit-code 1", line, "%s: %s" % (name, line.strip()))
@@ -79,6 +83,13 @@ class KitLibraryDocs(unittest.TestCase):
 
     def test_one_assembly_per_asm_file(self):
         self.assertIn("blender/asm/ASM_<Name>_<Variant>.blend", self.doc)
+
+    def test_single_master_is_the_default(self):
+        self.assertIn("`single` (**default**)", self.doc)
+        self.assertIn("Never pick `split` on your own", self.doc)
+        layout = next(ast.literal_eval(n.value) for n in self.tree.body
+                      if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "LAYOUT_PROP")
+        self.assertIn("`%s`" % layout, self.doc)
 
     def test_save_without_backups(self):
         self.assertIn("save_version = 0", self.src)
