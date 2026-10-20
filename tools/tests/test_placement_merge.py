@@ -72,6 +72,11 @@ def apply_side(items, plan, available=None, prefix="new"):
             errors.append("assign %s: asset %s, merge saw %s" % (a["id"], cur["asset"], a["asset"]))
         else:
             cur["id"] = a["id"]
+    for f in plan.get("folders", []):        # a folder renamed whole: everything under it follows
+        for i in items:
+            g = i.get("group")
+            if g is not None and not i.get("nested") and (g == f["from"] or g.startswith(f["from"] + "/")):
+                i["group"] = f["to"] + g[len(f["from"]):]
     by_id = {}
     for i in items:
         by_id.setdefault(i.get("id") or "", i)
@@ -759,6 +764,128 @@ class NamesAndFolders(unittest.TestCase):
         made = sc.pu["create"][0]
         self.assertEqual((made["label"], made["group"]), ("Reception desk", "Lobby"))
         sc.converged()
+
+    def test_long_names_are_cut_to_255_bytes_and_converge(self):
+        u = named(blender_layout(), "unity")
+        find(u, "a1")["label"] = "Ü" * 200                  # 400 bytes; Blender keeps 255
+        sc = Scope(self, named(blender_layout(), "blender"), u, named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        sent = find(sc.bdump["items"], "a1")["label"]
+        self.assertEqual((len(sent), len(sent.encode())), (127, 254))
+        self.assertIn("unchanged 3", sc.out2)
+
+
+def folders(items):
+    """The folder paths a dump lists: every group and its parents."""
+    out = set()
+    for i in items:
+        parts = (i.get("group") or "").split("/")
+        out |= {"/".join(parts[:n]) for n in range(1, len(parts) + 1) if parts[0]}
+    return sorted(out)
+
+
+class FolderRenames(unittest.TestCase):
+    def scope(self, b, u, **kw):
+        sc = Scope(self, b, u, named_snapshot(), **kw)
+        sc.bdump["folders"], sc.udump["folders"] = folders(b), folders(u)
+        sc.write()
+        return sc
+
+    def test_folder_renamed_whole_in_blender_is_renamed_in_unity(self):
+        b = named(blender_layout(), "blender")
+        for i in b:
+            if i["group"] == "Street":
+                i["group"] = "Main street"
+        sc = self.scope(b, named(blender_layout(), "unity"))
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.pu["folders"], [{"from": "Street", "to": "Main street"}])
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {}})       # no per-placement moves
+        self.assertIn("folder 'Street' -> 'Main street' (renamed whole", sc.out)
+        self.assertEqual(find(sc.udump["items"], "b2")["group"], "Main street")
+        self.assertIn("unchanged 3", sc.out2)
+
+    def test_placements_moved_out_of_a_folder_that_stays_are_moved_one_by_one(self):
+        b = named(blender_layout(), "blender")
+        for i in b:
+            if i["group"] == "Street":
+                i["group"] = "Plaza"
+        sc = self.scope(b, named(blender_layout(), "unity"))
+        sc.bdump["folders"] = ["Plaza", "Street"]                # Street still exists in Blender
+        sc.write()
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.pu["folders"], [])
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {"update": 2}})
+
+    def test_older_dumps_without_folders_move_one_by_one(self):
+        b = named(blender_layout(), "blender")
+        for i in b:
+            if i["group"] == "Street":
+                i["group"] = "Main street"
+        sc = Scope(self, b, named(blender_layout(), "unity"), named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.pu["folders"], [])
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {"update": 2}})
+
+    def test_inner_folder_renamed_in_unity(self):
+        b, u = named(blender_layout(), "blender"), named(blender_layout(), "unity")
+        snap = named_snapshot()
+        for side in (b, u):
+            find(side, "a1")["group"] = "Street/Shops"
+        snap["items"]["a1"]["group"] = "Street/Shops"
+        find(u, "a1")["group"] = "Street/Stores"
+        sc = Scope(self, b, u, snap)
+        sc.bdump["folders"], sc.udump["folders"] = folders(b), folders(u)
+        sc.write()
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.pb["folders"], [{"from": "Street/Shops", "to": "Street/Stores"}])
+        self.assertEqual(find(sc.bdump["items"], "a1")["group"], "Street/Stores")
+        self.assertEqual(find(sc.bdump["items"], "b2")["group"], "Street")
+
+    def test_a_new_placement_in_the_renamed_folder_lands_in_the_new_one(self):
+        u = named(blender_layout(), "unity")
+        for i in u:
+            if i["group"] == "Street":
+                i["group"] = "Plaza"
+        b = named(blender_layout(), "blender") + [dict(it("", "DESK_A", (-1, 0, -1), key="Desk.002"),
+                                                       label="Bench", group="Street")]
+        sc = self.scope(b, u)
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.pb["folders"], [{"from": "Street", "to": "Plaza"}])
+        bench = sc.pu["create"][0]
+        self.assertEqual((bench["label"], bench["group"]), ("Bench", "Plaza"))
+        sc.converged()
+        self.assertIn("unchanged 4", sc.out2)
+
+
+class RenameBudget(unittest.TestCase):
+    def layout(self, n):
+        return [dict(it("p%02d" % k, "WALL_A", (k, 0, 0), key="W%02d" % k), label="Wall %02d" % k, group="")
+                for k in range(n)]
+
+    def test_mass_rename_is_refused_until_allowed(self):
+        b = self.layout(12)
+        u = [dict(i, key=str(n), label="Renamed %d" % n) for n, i in enumerate(self.layout(12))]
+        snap = snapshot_of(b)
+        for i in b:
+            snap["items"][i["id"]].update(label=i["label"], group="")
+        sc = Scope(self, b, u, snap)
+        self.assertEqual(sc.merge(), 4)
+        self.assertIn("rename or move to another folder 12 placements and folders; the budget is 10", sc.out)
+        self.assertIn("--allow-renames", sc.out)
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {}})
+        self.assertEqual(sc.loop("--allow-renames"), 0)
+        self.assertEqual(find(sc.bdump["items"], "p03")["label"], "Renamed 3")
+
+    def test_renames_within_the_budget_go_through(self):
+        b = self.layout(12)
+        u = [dict(i, key=str(n)) for n, i in enumerate(self.layout(12))]
+        for n in range(10):
+            u[n]["label"] = "Renamed %d" % n
+        snap = snapshot_of(b)
+        for i in b:
+            snap["items"][i["id"]].update(label=i["label"], group="")
+        sc = Scope(self, b, u, snap)
+        self.assertEqual(sc.loop(), 0)
 
 
 class BadInput(unittest.TestCase):

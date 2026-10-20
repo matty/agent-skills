@@ -103,7 +103,7 @@ then discards the result).
 | Blender dump exits 1, or Unity Dump throws | Stop, and never merge after a failed dump. Both scripts delete their old dump before writing, but a wrong .blend path makes Blender exit before the script runs, leaving the previous file. Fix the cause (the .blend path, `--collection`, Play mode, the scope root) and dump again |
 | merge exit 2, `CONFLICT` lines | Show them to the user. Re-run merge with `--take-id ID=blender` or `--take-id ID=unity` per conflict (`--take blender` or `--take unity` for all). The rest of the plan is ready either way |
 | merge exit 3, only `BLOCKED` lines | The receiving side has no such asset yet; each line says which case (table in `references/merge-rules.md`). A new piece, or a placement swapped to a piece the other side lacks: export and package it (`blender-to-unity`), or add it as a KIT piece; never rename the old asset, other placements still use it. An assembly: sync its ASM scope first. A rename made on one side only (the old asset is gone from that side): finish (or undo) the rename on the other side (`blender-kit-library` has the rename procedure; an assembly: `references/merge-rules.md`, Renaming an assembly). You may apply and commit now: blocked items stay pending and the next merge retries them |
-| merge exit 4, `REFUSED` | Too many deletions, an empty side, or a dump from another file, collection or Unity target than this scope's. Check the dumps (right file and scene, prefab roots). Only if the user confirms the deletions are real: `--allow-deletes`; a scope that really moved: `--accept-source` |
+| merge exit 4, `REFUSED` | Too many deletions or renames, an empty side, or a dump from another file, collection or Unity target than this scope's. Check the dumps (right file and scene, prefab roots). Only if the user confirms the deletions are real: `--allow-deletes`; the renames and folder moves (expected on the first sync after names began to sync): `--allow-renames`; a scope that really moved: `--accept-source` |
 | merge exit 1 | Bad input (a missing or swapped dump, a malformed `--take-id`): fix it and re-run |
 | Unity Apply returns `REFUSED` | Nothing changed. Tell the user why (Play mode, an unsaved or never-saved scene, Prefab Mode open, an ambiguous root) and restart at step 1 once they fixed it. Never save the user's scene for them; `save: false` and `force: true` are in `references/unity-apply.md` |
 | Unity Apply lists `ERRORS` | `references/unity-apply.md` has each one. A stale key or changed object: restart at step 1. A swap that would discard Unity-side changes: ask the user, then take one of three ways out (otherwise every loop plans the same swap again): **force**, re-run Apply on the same plan with `force: true`, then step 5; **swap by hand** in Unity, keeping the `PlacementId` component on the new instance, then step 5; **keep the old piece**, re-point that Blender instance back to the old collection (`blender-kit-library`), then restart at step 2 |
@@ -124,8 +124,9 @@ Full table, id handling, exit codes and file formats: `references/merge-rules.md
 - **Names and folders sync both ways**, each merged on its own, so a rename on one side and a move on the other is
   no conflict. The name is the Blender empty's or Unity instance's name without `.001` or ` (1)`; the folder is the
   collection path under the scope collection, or in Unity the parent GameObjects under the scope root. Apply creates
-  missing folders and never deletes one. A Unity piece parented under another piece keeps its parent as its folder.
-  `/` in a name becomes `-`.
+  missing folders and never deletes one. A folder renamed or moved whole is renamed on the other side, so its lights
+  and other contents go along. A Unity piece parented under another piece keeps its parent as its folder. `/` in a
+  name becomes `-`; names are cut to 255 bytes.
 
 ## What keeps placements stable
 

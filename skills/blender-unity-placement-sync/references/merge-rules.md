@@ -40,6 +40,17 @@ for the clashing fields only.
 - A dump without the fields (an older copy of either applier) leaves names and folders alone on that side.
 - An asset swap keeps the instance's name and place on both sides.
 - A Blender empty in two collections under the scope syncs as being in the first by path; the dump warns.
+- Names are cut to 255 UTF-8 bytes (Blender's limit, measured in 5.2.2) without splitting a character, the same way
+  on every side, so a longer Unity name converges instead of failing every commit.
+- **A Unity folder** is a GameObject that is not a placement and either has only a Transform or holds placements. A
+  light or an Udon object sharing a folder's name is never used as one: a new folder is made beside it.
+- **A folder renamed or moved whole.** Each dump lists its folder paths (`folders`). When every placement the
+  snapshot has under folder F is now under one new path F' on one side (the same subfolders below it), F is gone on
+  that side and F' exists there, and the other side still has F and lacks F', the plan for the other side gets
+  `folders: [{"from": F, "to": F'}]`. The applier renames or reparents that folder before any update, so its lights,
+  colliders and Udon objects go along, and the placements under it need no move of their own (the report shows
+  `folder 'F' -> 'F''`). When the folder is missing, or F' exists by then, the applier moves the placements under F
+  instead. A placement moved out of a folder that still exists is moved on its own.
 
 "Changed" covers position, rotation, scale and the asset (a piece swapped for another). A change pushed to a side that
 has no such asset (no prefab of that name in Unity, no collection of that name in Blender, for example a prefab renamed
@@ -97,6 +108,7 @@ The merge writes empty plans and marks `pending.json` refused (commit then refus
 |---|---|
 | One side's dump has no placements while the snapshot has some | `--allow-deletes` |
 | The plans delete more than max(3, 20% of the snapshot) placements | `--allow-deletes` |
+| The plans rename or move to another folder more than max(10, 20% of the snapshot) placements (a folder renamed whole counts once). The first sync after names began to sync often does, when one side still has default names | `--allow-renames` |
 | The Blender file name, the Blender collection or the Unity target differs from the one recorded at the last commit | `--accept-source` |
 
 Usual causes: prefab roots moved, renamed or mistyped (PlacementSync.json, a stale `PrefabRootsOverride`), a prefab
@@ -125,7 +137,7 @@ merge run after a commit as a check just writes empty plans.
 |---|---|---|
 | `<scope>.blender.json` | `export_placements.py dump` | `scope`, `side`, `file`, `collection`, `items`, `assets`, `warnings` |
 | `<scope>.unity.json` | `PlacementSyncTool.Dump` | `scope`, `side`, `target`, `prefabRoots`, `note`, `items`, `assets` |
-| `<scope>.plan.blender.json`, `<scope>.plan.unity.json` | merge | `assign` [{key, id, was, asset}], `delete` [id], `update` and `create` [items] |
+| `<scope>.plan.blender.json`, `<scope>.plan.unity.json` | merge | `assign` [{key, id, was, asset}], `folders` [{from, to}], `delete` [id], `update` and `create` [items] |
 | `<scope>.pending.json` | merge | The state both sides must reach, the skipped ids and their kept snapshot entries (or `refused`) |
 | `<scope>.report.txt` | merge | The printed report, then the unresolved conflicts as JSON |
 | `<scope>.synced.json` | commit | `items` and `source` (Blender file name and collection, Unity target) |

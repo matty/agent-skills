@@ -104,8 +104,12 @@ Editor extensions such as Bakery can mark a scene dirty without changing it; tha
 - Names and folders: an update or create renames the instance when its name without ` (1)` differs from the plan's
   `label`, and reparents it under the plan's `group` path (keeping its world pose), creating missing folder
   GameObjects under the scope root at identity transform. Folders are never deleted, and a placement parented under
-  another placement is never moved to a folder. A plan item without `group` is not moved. The renames, reparents and
-  new folders are in the same Undo group (verified 2026-10-20, Unity 2022.3.22f1 batch: 31 of 31 checks).
+  another placement is never moved to a folder. A plan item without `group` is not moved. A folder is a plain
+  GameObject (only a Transform) or one that holds placements, preferred in that order; a light called `Lobby` is
+  never used as the `Lobby` folder. The plan's `folders` entries run after the assigns: each renames or reparents
+  one folder with everything in it, or, when it is missing or the target exists, moves the placements under it. The
+  renames, reparents and new folders are in the same Undo group (verified 2026-10-20, Unity 2022.3.22f1 batch: 41 of
+  41 checks).
 - A prefab target is loaded with `LoadPrefabContents` and written with `SaveAsPrefabAsset`: no Undo.
 
 ## Prefab roots

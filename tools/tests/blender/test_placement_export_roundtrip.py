@@ -485,11 +485,46 @@ def test_names_and_folders():
         assert d1.name in bpy.context.scene.collection.objects and len(d1.users_collection) == 1, run
 
 
+def test_folder_renamed_whole():
+    """A plan's folders entry renames and moves the collection with its other objects; a missing folder or a taken
+    target falls back to moving the placements; the dump lists every collection path."""
+    build_kit()
+    build_master()
+    bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+    study = bpy.data.collections["study"]
+    light = bpy.data.objects.new("Lamp light", bpy.data.lights.new("Lamp light", "POINT"))
+    study.objects.link(light)
+    shelf = bpy.data.collections.new("Shelf")
+    study.children.link(shelf)
+    shelf.objects.link(bpy.data.objects["D1"])
+    study.objects.unlink(bpy.data.objects["D1"])
+    save_as(MASTER)
+    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    assert d["folders"] == ["study", "study/Shelf"], d["folders"]
+    assert by_key(d)["D1"]["group"] == "study/Shelf", by_key(d)["D1"]
+    write_plan("MASTER", folders=[{"from": "study", "to": "Rooms/Library"}])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    assert code == 0 and "folder renamed study -> Rooms/Library" in text, text
+    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    assert d["folders"] == ["Rooms", "Rooms/Library", "Rooms/Library/Shelf"], d["folders"]
+    assert {k: i["group"] for k, i in by_key(d).items()} == {"W1": "Rooms/Library", "W2": "Rooms/Library",
+                                                             "D1": "Rooms/Library/Shelf"}, d["items"]
+    bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+    assert [c.name for c in bpy.data.objects["Lamp light"].users_collection] == ["Library"], "the light went along"
+    assert "study" not in bpy.data.collections, "renamed, not copied"
+    # Fallbacks: the source folder is gone, so the placements under the path move; then a taken target.
+    write_plan("MASTER", folders=[{"from": "Nowhere", "to": "Rooms"}, {"from": "Rooms/Library/Shelf", "to": "Rooms"}])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    assert code == 0 and "moved 0 placement(s) from Nowhere" in text and "moved 1 placement(s)" in text, text
+    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    assert by_key(d)["D1"]["group"] == "Rooms" and "Rooms/Library/Shelf" in d["folders"], d
+
+
 CASES = [test_dump_in_unity_space, test_apply_round_trip_without_blend1, test_assign_refuses_a_changed_object,
          test_asm_scope_is_its_collection, test_instance_offset_warning, test_library_override_is_skipped_and_named,
          test_deleting_a_parent_keeps_its_children_in_place, test_moving_a_parent_leaves_its_child_placements,
          test_parent_and_child_both_moved_land_where_planned, test_unmoved_and_constrained_placements_stay_put,
-         test_failed_dump_leaves_no_stale_file, test_names_and_folders,
+         test_failed_dump_leaves_no_stale_file, test_names_and_folders, test_folder_renamed_whole,
          test_full_loop_with_merge]
 
 

@@ -4,7 +4,7 @@ Host: plain Python 3.9+, standard library only. Reads the dumps written by expor
 PlacementSync.cs (Unity); writes one plan per side and a pending file; never touches Blender or Unity itself.
 
     python placement_merge.py merge  --dir <placements> --scope MASTER [--take blender|unity] [--take-id ID=SIDE ...]
-                                     [--allow-deletes] [--accept-source]
+                                     [--allow-deletes] [--allow-renames] [--accept-source]
     python placement_merge.py commit --dir <placements> --scope MASTER
 
 Files, all in --dir, all named after the scope:
@@ -21,8 +21,8 @@ their plans, checks they agree with each other and with pending, and only then r
 
 Exit codes. merge: 0 plans ready; 2 unresolved conflicts (decide them with --take-id / --take, the rest of the plan
 is ready); 3 only BLOCKED items left (apply and commit anyway: they stay pending and the next merge retries them);
-4 REFUSED for safety (more deletions than the budget, an empty side, or a dump from another file or Unity target than
-this scope's snapshot: empty plans are written); 1 bad input. commit: 0 committed; 2 refused.
+4 REFUSED for safety (more deletions or renames than the budget, an empty side, or a dump from another file or Unity
+target than this scope's snapshot: empty plans are written); 1 bad input. commit: 0 committed; 2 refused.
 
 Item (Unity space: left-handed, Y up, metres, relative to the scope root):
     {"id": "9f2c41d0a7b3", "asset": "EXT_Wall_2x3_A", "pos": [x, y, z], "rot": [x, y, z, w], "scl": [x, y, z],
@@ -34,9 +34,15 @@ GameObjects that are not placements; "" = directly under the root), not tracked 
 Unity placement parented under another placement is dumped with "nested": true). Every side cleans them the same way ("/" in a name becomes "-",
 ends trimmed). They merge three-way like the pose, each field on its own, so a rename on one side and a move on the
 other is no conflict. A snapshot without them counts as label = the asset name and group = "", so after an upgrade
-the side that renamed or organised wins. A dump without them (an older applier) leaves them as they are.
+the side that renamed or organised wins. A dump without them (an older applier) leaves them as they are. Names are cut
+to 255 UTF-8 bytes (Blender's limit). A dump's "folders" lists every folder path under the root (Blender
+collections; Unity GameObjects that are not placements and not inside one): when every placement under a folder the
+other side still has moved to one new path the other side lacks, and the old folder is gone on this side, it was
+renamed or moved whole, and the other side renames that folder (taking its lights and other contents along) instead
+of moving each placement.
 Plans: "assign" [{"key", "id", "was", "asset"}] (an applier skips an assign whose object no longer has id `was` and
-asset `asset`), "delete" [id], "update" and "create" [item with the id, label and group].
+asset `asset`), "folders" [{"from", "to"}] (rename or move that folder first; when it is missing or "to" exists,
+move the placements under it instead), "delete" [id], "update" and "create" [item with the id, label and group].
 """
 
 import argparse
@@ -52,6 +58,9 @@ ROT_TOL = 0.01       # degrees
 SCL_TOL = 1e-4       # relative
 DELETE_SHARE = 0.2   # merge refuses plans that delete more than this share of the snapshot ...
 DELETE_MIN = 3       # ... and more than this many placements, unless --allow-deletes
+RENAME_SHARE = 0.2   # likewise for renames and folder moves (a folder renamed whole counts once) ...
+RENAME_MIN = 10      # ... unless --allow-renames
+NAME_BYTES = 255     # Blender's longest data-block name (measured in 5.2.2: 255 bytes)
 SIDES = ("blender", "unity")
 
 
@@ -98,8 +107,10 @@ def differences(a, b):
 
 
 def clean(name):
-    """A name as every side compares it: "/" (Unity's path separator) becomes "-", ends trimmed."""
-    return str(name).replace("/", "-").strip()
+    """A name as every side compares it: "/" (Unity's path separator) becomes "-", ends trimmed, cut to 255 UTF-8
+    bytes without splitting a character."""
+    name = str(name).replace("/", "-").strip()
+    return name.encode("utf-8")[:NAME_BYTES].decode("utf-8", "ignore").strip()
 
 
 def clean_group(group):
@@ -284,7 +295,53 @@ def resolve_ids(items, base, side, assigns, reserved):
 
 
 def _empty_plan(scope, side):
-    return {"scope": scope, "side": side, "assign": [], "delete": [], "update": [], "create": []}
+    return {"scope": scope, "side": side, "assign": [], "folders": [], "delete": [], "update": [], "create": []}
+
+
+def _under(group, folder):
+    return group == folder or group.startswith(folder + "/")
+
+
+def folder_renames(items, base, sender, receiver):
+    """[(from, to)]: folders the sending side renamed or moved whole. `items` is that side's id -> item; `sender` and
+    `receiver` the folder paths each side's dump lists (None from an older applier: no detection). A folder counts
+    when every snapshot placement under it is now under one new path, with the same path below it, and the old path
+    is gone on the sender, the new one exists there and not on the receiver, which still has the old one."""
+    if sender is None or receiver is None:
+        return []
+    sender, receiver = {clean_group(f) for f in sender}, {clean_group(f) for f in receiver}
+    pairs = []
+    for pid, it in items.items():
+        b, new = base.get(pid), meta(it, "group")
+        if b and not b.get("unity_only") and new is not None:
+            pairs.append((base_meta(b, "group"), new))
+    folders = {"/".join(old.split("/")[:n]) for old, _new in pairs if old for n in range(1, old.count("/") + 2)}
+    out = []
+    for f in sorted(folders, key=lambda x: (x.count("/"), x)):
+        if any(_under(f, o) for o, _t in out) or f in sender or f not in receiver:
+            continue
+        targets = set()
+        for old, new in pairs:
+            if not _under(old, f):
+                continue
+            rest = old[len(f):]
+            if not new.endswith(rest) or len(new) == len(rest):
+                targets = None
+                break
+            targets.add(new[:len(new) - len(rest)])
+        if not targets or len(targets) != 1:
+            continue
+        to = targets.pop()
+        if to in sender and to not in receiver and not _under(to, f) and not _under(f, to):
+            out.append((f, to))
+    return out
+
+
+def _moved(group, renames):
+    for f, to in renames:
+        if _under(group, f):
+            return to + group[len(f):]
+    return group
 
 
 def merge(args):
@@ -317,11 +374,34 @@ def merge(args):
     blender_assets = set(bdump.get("assets") or []) | {i["asset"] for i in bdump["items"]}
     unity_assets = set(udump.get("assets") or []) | {i["asset"] for i in udump["items"]}
 
+    # Folders renamed or moved whole on one side: the other side renames the folder, so the snapshot and that side's
+    # items are read as already renamed, and the placements under it need no move of their own.
+    base = {pid: dict(b) for pid, b in base.items()}
+    folder_lines = []
+    for sender, items, receiver, other, rdump, sdump in (("blender", L, "unity", U, udump, bdump),
+                                                         ("unity", U, "blender", L, bdump, udump)):
+        renames = folder_renames(items, base, sdump.get("folders"), rdump.get("folders"))
+        for f, to in renames:
+            plans[receiver]["folders"].append({"from": f, "to": to})
+            folder_lines.append("  %-7s -> %-7s folder %r -> %r (renamed whole: its other contents go along)"
+                                % (sender, receiver, f, to))
+        if renames:
+            for b in base.values():
+                if meta(b, "group") is not None:
+                    b["group"] = _moved(b["group"], renames)
+            for it in other.values():
+                if meta(it, "group") is not None:
+                    it["group"] = _moved(meta(it, "group"), renames)
+
     state, skip, unity_only, conflicts, blocked, lines, deletes = {}, [], [], [], [], [], []
+    lines += folder_lines
+    renamed = [None] * len(folder_lines)       # one per folder renamed whole, then one per placement renamed or moved
     counts = {"unchanged": 0}
 
     def push(side, kind, pid, item, current=None):
         plans[side][kind].append(dict(_state(item), id=pid, key=item.get("key", "")))
+        if current and meta_differences(current, item):
+            renamed.append(pid)
         src = "unity" if side == "blender" else "blender"
         what = "; ".join(all_differences(current, item)) if current else ""
         lines.append("  %-7s -> %-7s %-6s %s %s%s" % (src, side, kind, pid, item["asset"],
@@ -537,6 +617,12 @@ def merge(args):
         if len(deletes) > limit:
             refusal.append("the plans delete %d placements; the budget is %d (%d%% of %d synced, at least %d)"
                            % (len(deletes), limit, round(DELETE_SHARE * 100), len(base), DELETE_MIN))
+    if not getattr(args, "allow_renames", False):
+        limit = max(RENAME_MIN, int(math.ceil(RENAME_SHARE * len(base))))
+        if len(renamed) > limit:
+            refusal.append("the plans rename or move to another folder %d placements and folders; the budget is %d "
+                           "(%d%% of %d synced, at least %d)"
+                           % (len(renamed), limit, round(RENAME_SHARE * 100), len(base), RENAME_MIN))
     if not args.accept_source:
         for k, was in sorted((snap.get("source") or {}).items()):
             now = source.get(k)
@@ -554,7 +640,8 @@ def merge(args):
         report += lines + ["  CONFLICT %s: %s" % (c[0], c[1]) for c in conflicts if c[0] in skip]
         report.append("Check the dumps first: the right .blend file and collection, the right Unity scene or prefab, "
                       "the prefab roots (PlacementSync.json, PrefabRootsOverride). Only when the user confirms the "
-                      "deletions are real, re-run with --allow-deletes; when the scope really moved, --accept-source.")
+                      "deletions are real, re-run with --allow-deletes; the renames (the first sync after names began "
+                      "to sync renames many), --allow-renames; when the scope really moved, --accept-source.")
         _report(path("report.txt"), report, [])
         return 4
 
@@ -566,8 +653,9 @@ def merge(args):
     report = head + notes
     for side in SIDES:
         p = plans[side]
-        report.append("%s plan: %d assign, %d create, %d update, %d delete"
-                      % (side, len(p["assign"]), len(p["create"]), len(p["update"]), len(p["delete"])))
+        report.append("%s plan: %d assign, %d folder, %d create, %d update, %d delete"
+                      % (side, len(p["assign"]), len(p["folders"]), len(p["create"]), len(p["update"]),
+                         len(p["delete"])))
     report.append("unchanged %d, unity-only %d, blocked %d, unresolved conflicts %d"
                   % (counts["unchanged"], len(unity_only), len(blocked), len(unresolved)))
     report += lines
@@ -647,6 +735,8 @@ def main():
     m.add_argument("--take-id", action="append", default=[], metavar="ID=SIDE", help="resolve one conflict")
     m.add_argument("--allow-deletes", action="store_true",
                    help="the deletions are real: skip the deletion budget and the empty-side check")
+    m.add_argument("--allow-renames", action="store_true",
+                   help="the renames and folder moves are real: skip the rename budget")
     m.add_argument("--accept-source", action="store_true",
                    help="this scope's Blender file, collection or Unity target really changed")
     args = ap.parse_args()

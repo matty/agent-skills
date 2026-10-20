@@ -19,7 +19,8 @@ Names and folders sync too. Each item carries "label", the empty's name without 
 "group", the path of collections from the scope collection down to the one holding the empty ("Street/Shops"; ""
 directly in the scope collection). apply renames an empty whose label changed and moves it to its group's
 collection, creating missing collections under the scope collection; it never deletes a collection. "/" in a name
-reads as "-" (Unity uses "/" as a path separator).
+reads as "-" (Unity uses "/" as a path separator). "folders" in the dump lists every collection path under the scope;
+a plan's "folders" entries rename or move a collection whole (its other objects go along) before any update.
 
 Command line (the usual way). One writer per .blend: not while the file is open in a live Blender session.
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
@@ -89,6 +90,39 @@ def groups_of(ob, tree):
     """The group paths of every collection under the scope that holds `ob`, sorted (the first is its group)."""
     _root, parents = tree
     return sorted(_path(c, parents) for c in ob.users_collection if c in parents)
+
+
+def find_group(group, tree):
+    """The collection at `group` under the scope collection, or None."""
+    cur, _parents = tree
+    for part in [p for p in group.split("/") if p]:
+        cur = next((c for c in sorted(cur.children, key=lambda x: x.name)
+                    if c.library is None and clean(c.name) == part), None)
+        if cur is None:
+            return None
+    return cur
+
+
+def move_folder(src, dst, tree, coll):
+    """Rename or move the collection at `src` to `dst` with everything in it. When it is missing or `dst` exists, the
+    placements under it move instead (so the result matches the plan either way). Returns what it did."""
+    found = find_group(src, tree)
+    if found is not None and found is not tree[0] and find_group(dst, tree) is None:
+        parent_path, _, name = dst.rpartition("/")
+        new_parent, old_parent = ensure_group(parent_path, tree), tree[1].get(found)
+        if new_parent is not old_parent:
+            new_parent.children.link(found)
+            old_parent.children.unlink(found)
+        found.name = name
+        return "renamed %s -> %s" % (src, dst)
+    moved = 0
+    for ob in placements(coll=coll):
+        g = (groups_of(ob, tree) or [""])[0]
+        if g == src or g.startswith(src + "/"):
+            move_to_group(ob, dst + g[len(src):], tree)
+            moved += 1
+    return "moved %d placement(s) from %s to %s (%s)" % (moved, src, dst, "folder missing" if found is None
+                                                         else "target exists")
 
 
 def ensure_group(group, tree):
@@ -261,6 +295,7 @@ def dump(directory, scope, libraries=None, collection=None):
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"scope": scope, "side": "blender", "file": bpy.data.filepath,
                    "collection": coll.name if coll else None, "items": items, "assets": sorted(assets),
+                   "folders": sorted(_path(c, tree[1]) for c in tree[1] if tree[1][c] is not None),
                    "warnings": warnings}, f, indent=2)
     print("[placements] dumped %d placement(s) from %s to %s"
           % (len(items), "collection " + coll.name if coll else "scene " + bpy.context.scene.name, out))
@@ -345,6 +380,9 @@ def apply(directory, scope, libraries=None, collection=None):
             continue
         ob[PROP] = a["id"]
         done["assign"] += 1
+
+    for f in plan.get("folders", []):
+        print("[placements] folder " + move_folder(f["from"], f["to"], _tree(coll), coll))
 
     by_id = {}
     for o in placements(coll=coll):

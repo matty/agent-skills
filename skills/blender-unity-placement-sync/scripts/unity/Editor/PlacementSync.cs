@@ -11,7 +11,10 @@
 // non-placement GameObjects between the scope root and the instance ("Street/Shops"; "" directly under the root).
 // A placement parented under another placement is "nested": its folder is its parent's, so its group is not synced.
 // Apply renames an instance whose label changed and moves it under its group's folder, creating missing folder
-// GameObjects (identity transform) under the root; it never deletes a folder. "/" in a name reads as "-".
+// GameObjects (identity transform) under the root; it never deletes a folder. "/" in a name reads as "-". A folder is
+// a GameObject that is not a placement and either has only a Transform or holds placements, so a light or an Udon
+// object that happens to share a folder's name is never used as one. The dump lists every folder path; a plan's
+// "folders" entries rename or move a folder whole (its lights and other contents go along) before any update.
 //
 // Scope targets:  "scene:<root name>"                a root GameObject in an open scene (e.g. scene:MASTER)
 //                 "scene:<scene path>#<root name>"   the same, when more than one open scene has such a root
@@ -43,9 +46,10 @@ using UnityEngine.SceneManagement;
 namespace PlacementSync
 {
     [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; public string name; public string label; public string group; public bool nested; }
-    [Serializable] public class Dump { public string scope; public string side = "unity"; public string target; public string[] prefabRoots; public string note; public Item[] items; public string[] assets; }
+    [Serializable] public class Dump { public string scope; public string side = "unity"; public string target; public string[] prefabRoots; public string note; public Item[] items; public string[] assets; public string[] folders; }
+    [Serializable] public class FolderMove { public string @from; public string to; }
     [Serializable] public class Assign { public string key; public string id; public string was; public string asset; }
-    [Serializable] public class Plan { public string scope; public string side; public Assign[] assign; public string[] delete; public Item[] update; public Item[] create; }
+    [Serializable] public class Plan { public string scope; public string side; public Assign[] assign; public FolderMove[] folders; public string[] delete; public Item[] update; public Item[] create; }
     [Serializable] public class ScopeConfig { public string name; public string target; public string dir; }
     [Serializable] public class Config { public ScopeConfig[] scopes; public string[] prefabRoots; }
 
@@ -95,12 +99,16 @@ namespace PlacementSync
             var dump = new Dump
             {
                 scope = scopeName ?? target, target = target, prefabRoots = PrefabRoots, note = MissingRootsNote(),
-                assets = AvailableAssets().Keys.OrderBy(k => k).ToArray(), items = new Item[0],
+                assets = AvailableAssets().Keys.OrderBy(k => k).ToArray(), items = new Item[0], folders = new string[0],
             };
             if (IsMissingPrefab(target))
                 dump.note = $"{target.Substring(7)} does not exist yet: the first Apply creates it. " + dump.note;
             else
-                WithRoot(target, false, root => dump.items = Placements(root).Select(t => ToItem(root, t)).ToArray());
+                WithRoot(target, false, root =>
+                {
+                    dump.items = Placements(root).Select(t => ToItem(root, t)).ToArray();
+                    dump.folders = Folders(root).ToArray();
+                });
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath)));
             File.WriteAllText(outPath, JsonUtility.ToJson(dump, true));
             var summary = $"[placements] dumped {dump.items.Length} placement(s) from {target} to {outPath}";
@@ -122,7 +130,7 @@ namespace PlacementSync
             }
             if (target.StartsWith("prefab:")) EnsurePrefab(target.Substring(7));
             var errors = new List<string>();
-            var counts = new Dictionary<string, int> { { "assign", 0 }, { "delete", 0 }, { "update", 0 }, { "create", 0 } };
+            var counts = new Dictionary<string, int> { { "assign", 0 }, { "folder", 0 }, { "delete", 0 }, { "update", 0 }, { "create", 0 } };
             WithRoot(target, true, root =>
             {
                 bool inScene = root.gameObject.scene.IsValid() && !EditorSceneManager.IsPreviewScene(root.gameObject.scene);
@@ -154,6 +162,13 @@ namespace PlacementSync
                     pid.id = a.id;
                     touched.Add(pid);
                     counts["assign"]++;
+                }
+
+                foreach (var f in plan.folders ?? new FolderMove[0])
+                {
+                    if (string.IsNullOrEmpty(f.@from) || string.IsNullOrEmpty(f.to)) continue;
+                    Debug.Log("[placements] folder " + MoveFolder(root, f.@from, f.to, inScene, touched));
+                    counts["folder"]++;
                 }
 
                 var byId = new Dictionary<string, Transform>();
@@ -454,7 +469,22 @@ namespace PlacementSync
 
         // A name as every side compares it: Unity's duplicate suffix " (1)" dropped, "/" (Find's path separator) read
         // as "-", ends trimmed.
-        static string Clean(string name) => Regex.Replace(name ?? "", @" \(\d+\)$", "").Replace("/", "-").Trim();
+        static string Clean(string name)
+        {
+            var s = Regex.Replace(name ?? "", @" \(\d+\)$", "").Replace("/", "-").Trim();
+            if (System.Text.Encoding.UTF8.GetByteCount(s) <= 255) return s;
+            // Cut to 255 UTF-8 bytes (Blender's longest name) without splitting a character, as the merge does.
+            int n = 0, i = 0;
+            while (i < s.Length)
+            {
+                int step = char.IsHighSurrogate(s[i]) && i + 1 < s.Length ? 2 : 1;
+                int bytes = System.Text.Encoding.UTF8.GetByteCount(s.Substring(i, step));
+                if (n + bytes > 255) break;
+                n += bytes;
+                i += step;
+            }
+            return s.Substring(0, i).Trim();
+        }
 
         static string CleanGroup(string group) =>
             string.Join("/", (group ?? "").Split('/').Select(Clean).Where(p => p.Length > 0));
@@ -477,17 +507,99 @@ namespace PlacementSync
             return string.Join("/", parts.Where(p => p.Length > 0));
         }
 
-        // The folder for `group` under root, creating the missing GameObjects (identity transform). Placements are
-        // never used as folders.
+        static bool HoldsPlacement(Transform t, string[] roots) =>
+            t.GetComponentsInChildren<Transform>(true).Any(c => c != t && IsPlacement(c.gameObject, roots));
+
+        static bool IsFolder(Transform t, string[] roots) =>
+            !IsPlacement(t.gameObject, roots) && (t.GetComponents<Component>().Length == 1 || HoldsPlacement(t, roots));
+
+        // The child of `parent` that is the folder called `part`: a plain one (only a Transform) first, then one that
+        // already holds placements; null when there is none.
+        static Transform FolderChild(Transform parent, string part, string[] roots)
+        {
+            Transform used = null;
+            foreach (Transform c in parent)
+            {
+                if (Clean(c.name) != part || IsPlacement(c.gameObject, roots)) continue;
+                if (c.GetComponents<Component>().Length == 1) return c;
+                if (used == null && HoldsPlacement(c, roots)) used = c;
+            }
+            return used;
+        }
+
+        static Transform FindGroup(Transform root, string group)
+        {
+            var roots = PrefabRoots;
+            var cur = root;
+            foreach (var part in CleanGroup(group).Split('/').Where(p => p.Length > 0))
+                if ((cur = FolderChild(cur, part, roots)) == null) return null;
+            return cur;
+        }
+
+        // Every folder path under root (folders inside placements excluded), for the merge to tell a folder renamed
+        // whole from placements moved out of it.
+        static List<string> Folders(Transform root)
+        {
+            var roots = PrefabRoots;
+            var found = new List<string>();
+            void Walk(Transform t, string path)
+            {
+                foreach (Transform c in t)
+                {
+                    if (IsPlacement(c.gameObject, roots)) continue;
+                    var p = path.Length > 0 ? path + "/" + Clean(c.name) : Clean(c.name);
+                    if (IsFolder(c, roots)) found.Add(p);
+                    Walk(c, p);
+                }
+            }
+            Walk(root, "");
+            return found.Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+        }
+
+        // Rename or move the folder at `src` to `dst` with everything in it. When it is missing or `dst` exists, the
+        // placements under it move instead, so the result matches the plan either way.
+        static string MoveFolder(Transform root, string src, string dst, bool inScene, List<UnityEngine.Object> touched)
+        {
+            src = CleanGroup(src);
+            dst = CleanGroup(dst);
+            var found = FindGroup(root, src);
+            if (found != null && found != root && FindGroup(root, dst) == null)
+            {
+                var cut = dst.LastIndexOf('/');
+                var parent = EnsureGroup(root, cut >= 0 ? dst.Substring(0, cut) : "", inScene);
+                if (found.parent != parent)
+                {
+                    if (inScene) Undo.SetTransformParent(found, parent, "Placement Sync");
+                    else found.SetParent(parent, true);
+                }
+                if (inScene) Undo.RecordObject(found.gameObject, "Placement Sync");
+                found.gameObject.name = cut >= 0 ? dst.Substring(cut + 1) : dst;
+                touched.Add(found.gameObject);
+                return $"renamed {src} -> {dst}";
+            }
+            int moved = 0;
+            foreach (var t in Placements(root))
+            {
+                if (Nested(root, t)) continue;
+                var g = GroupOf(root, t);
+                if (g != src && !g.StartsWith(src + "/")) continue;
+                var folder = EnsureGroup(root, dst + g.Substring(src.Length), inScene);
+                if (inScene) Undo.SetTransformParent(t, folder, "Placement Sync");
+                else t.SetParent(folder, true);
+                moved++;
+            }
+            return $"moved {moved} placement(s) from {src} to {dst} ({(found == null ? "folder missing" : "target exists")})";
+        }
+
+        // The folder for `group` under root, creating the missing GameObjects (identity transform). Placements, and
+        // objects that are neither plain nor holding placements (a light called like the folder), are never used.
         static Transform EnsureGroup(Transform root, string group, bool inScene)
         {
             var roots = PrefabRoots;
             var cur = root;
             foreach (var part in CleanGroup(group).Split('/').Where(p => p.Length > 0))
             {
-                Transform next = null;
-                foreach (Transform c in cur)
-                    if (Clean(c.name) == part && !IsPlacement(c.gameObject, roots)) { next = c; break; }
+                var next = FolderChild(cur, part, roots);
                 if (next == null)
                 {
                     var go = new GameObject(part);
