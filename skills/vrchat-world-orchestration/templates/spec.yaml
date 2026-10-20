@@ -17,7 +17,7 @@ world:
 
 tools:                              # detected at intake, confirmed by the user
   blender: C:/Users/me/.blender/blender-5.2.2/blender.exe   # the Blender CLI path
-  blender_mcp: false                # Blender MCP connected: MASTER and ASM tasks use the live Blender
+  blender_mcp: false                # Blender MCP connected: tasks that write MASTER use the live Blender
   unity_project: C:/Users/me/Unity/MyWorld
   substance_designer: false
   substance_painter: false

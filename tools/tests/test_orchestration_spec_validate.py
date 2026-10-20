@@ -243,6 +243,44 @@ class SpecChecks(unittest.TestCase):
         f, _ = run(spec)
         self.assertTrue(any("one assembly per ASM file" in m for m in messages(f, "ERROR")), f.items)
 
+    def single_spec(self):
+        spec = study_spec()
+        for fam in spec["families"].values():
+            fam["file"] = "blender/MASTER.blend"
+        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/MASTER.blend", "size": [4, 0.2, 3],
+                               "uses": {"INT_Wall_2x3_A": 2}}]
+        spec["zones"][0]["placements"].append({"ref": "ASM_WallRun_A", "pos": [1, 5, 0], "rot": 0})
+        return spec
+
+    def test_single_layout_puts_everything_in_master(self):
+        f, ctx = run(self.single_spec())
+        self.assertEqual(ctx.get("layout"), "single")
+        self.assertFalse([m for m in messages(f, "ERROR") if "MASTER" in m or "assembly" in m], f.items)
+        self.assertEqual(run(study_spec())[1].get("layout"), "split")
+
+    def test_mixed_layout_is_an_error(self):
+        spec = self.single_spec()
+        spec["families"]["PROP"]["file"] = "blender/kits/KIT_Props.blend"
+        f, ctx = run(spec)
+        self.assertIsNone(ctx.get("layout"))
+        self.assertTrue(any("mix blender/MASTER.blend" in m for m in messages(f, "ERROR")), f.items)
+
+    def test_layout_against_the_ledger(self):
+        f = SV.Findings()
+        SV.check_layout({"intake": {}, "tasks": []}, "single", f)
+        self.assertTrue(any("blend_layout is not set" in m for m in messages(f, "WARN")), f.items)
+        f = SV.Findings()
+        SV.check_layout({"intake": {"blend_layout": "split"}, "tasks": []}, "single", f)
+        self.assertTrue(any("records the split layout" in m for m in messages(f, "ERROR")), f.items)
+        f = SV.Findings()
+        SV.check_layout({"intake": {"blend_layout": "single"},
+                         "tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/kits/KIT_World.blend"]}]}, "single", f)
+        self.assertTrue(any("T-GREY-WORLD writes blender/kits" in m for m in messages(f, "WARN")), f.items)
+        f = SV.Findings()
+        SV.check_layout({"intake": {"blend_layout": "single"},
+                         "tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/MASTER.blend"]}]}, "single", f)
+        self.assertEqual(f.items, [])
+
     def test_lightmapped_free_piece_without_size_is_warned(self):
         spec = study_spec()
         del spec["pieces"][4]["size"]

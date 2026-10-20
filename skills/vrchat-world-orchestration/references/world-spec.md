@@ -15,11 +15,11 @@ rotations are degrees about Z, counter-clockwise seen from above.
 | `world` | `name`; `platforms`: `pc`, `quest` (the Android build), `ios` (checked against the Quest limits); `scale` (`full`/`small`); `allow_generated_assets`; `mockups` (true only with a confirmed concept-art tool); `style`; `quality` (`pc_lead`: PC gets its own budgets and source sizes, mobile gets them through import overrides; `parity`: PC ships what mobile ships; "Quality tier" below) | 0 |
 | `tools` | `blender` (CLI path), `blender_mcp` (true when the Blender MCP is connected), `unity_project`, `substance_designer`, `substance_painter`, `rizomuv`, `unity_packages` (installed; UdonSharp and ClientSim are inside `com.vrchat.worlds`), `build_modules` (`windows`, `android`, `ios`) | 0 |
 | `grid` | `module` (m), `sub_module` (trim placement: it divides `module` into whole steps), `storey_height` | 2 |
-| `families` | Per family code: `file`, `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m on UV0, from the viewing-distance classes: T2048 under 0.75 m, T1024 0.75-1.5 m, T512 1.5-3 m, T256 3-6 m, T128 6-12 m, T64 beyond; `uv-unwrapping` has the rule), `map_px` (the source size, at most the PC maximum 2048: Android and iOS get 1024 or less from their import overrides at stage 10, QA N8 and X2), `thickness` (m, walls and slabs), optional `detail_map` (true: its materials get a finely tiled detail albedo and normal for the close look, the answer for walls players walk right up to) | 2-3 |
+| `families` | Per family code: `file` (`blender/MASTER.blend` in the `single` layout, the default; its KIT file when `split`), `materials` (1-3), `texturing` (`tiling`/`trim`/`atlas`/`unique`), `texel_density` (px/m on UV0, from the viewing-distance classes: T2048 under 0.75 m, T1024 0.75-1.5 m, T512 1.5-3 m, T256 3-6 m, T128 6-12 m, T64 beyond; `uv-unwrapping` has the rule), `map_px` (the source size, at most the PC maximum 2048: Android and iOS get 1024 or less from their import overrides at stage 10, QA N8 and X2), `thickness` (m, walls and slabs), optional `detail_map` (true: its materials get a finely tiled detail albedo and normal for the close look, the answer for walls players walk right up to) | 2-3 |
 | `budgets` | `world_tris`, `view_tris`, `materials`, `setpass`, `batches`, `texture_vram_mb`: one number for every platform, or a mapping per platform (`setpass: {pc: 100, quest: 50}`); `download_mb` per platform (mobile hard limit 100 MB, where MB = 2^20 bytes). In a mapping, `ios` falls back to the `quest` value, so it is never required; give it only to differ. `piece_tris` per family; `lightmap`: `max_px`, `count`, `texels_per_m` (= Unity's Lightmap Resolution), optional `min_footprint_px` (default 64) | 0 (the template's Quest ceilings), 2 |
 | `pieces` | `name`, `desc`, `collision` (`box`/`mesh`/`none`); optional `tris`, `lods` (LODs after LOD0), `lod_lightmap` (default true: each LOD gets its own lightmap space; `false`: LOD1+ probe-lit), `lightmap` (`false` = probe-lit), `lightmap_scale` (Unity's Scale In Lightmap, default 1), `size` [x, y, z] m (required for a one-number Size, whose extents it gives; for Free pieces, without it a lightmapped one is left out of the lightmap check), `ref` (reference images it is modelled to), `detail` (each feature with its size: what stage 5 models and QA's G4 checks) | 2-3 |
 | `look` | The art direction: `references`, `wear`, `lighting_mood`, `quality_bar`, `lead_family`, `materials` targets ("Look" below) | 2 |
-| `assemblies` | `name`, `file` (`blender/asm/<name>.blend`: one assembly per ASM file), `size` [x, y, z] m, `uses` {piece: count} | 3 |
+| `assemblies` | `name`, `file` (`blender/MASTER.blend` in the `single` layout; `split`: `blender/asm/<name>.blend`, one assembly per ASM file), `size` [x, y, z] m, `uses` {piece: count} | 3 |
 | `zones` | `id`, `name`, `kind` (`exterior`/`interior`), `bounds` [x0, y0, x1, y1], `floor_z`, `placements`, `rooms`; optional `lighting_states` (default 1: the number of states of a light players switch in the zone, each a baked copy of its static geometry; "Lightmap check"), `switch` (the switch those states follow; default the zone's own id) and `mirrors` (below) | 2 |
 | `elevations` | `id`, `zone`, `facing`, `origin`, `courses` | 2 |
 | `views` | `id`, `pos`, `target`, `lens` (mm), `matches` (the mockup's path, or `null` without mockups) | 2 |
@@ -191,14 +191,17 @@ These hold whether or not `blender-kit-library` (which covers kit libraries in d
 
 ### Files
 
-| Layer | File | Holds |
-|---|---|---|
-| KIT | `blender/kits/KIT_<FamilyName>.blend`, one per family (`small` scale: one `KIT_World.blend` may hold every family) | One collection per piece, at the origin, with its LODs, collision and the family materials |
-| ASM | `blender/asm/ASM_<Name>_<Variant>.blend`, one assembly per file, named after it | The one collection `ASM_<Name>_<Variant>`, built from **linked** kit pieces, plus socket empties. Its Unity prefab is `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab` |
-| MASTER | `blender/MASTER.blend` | Linked KIT and ASM instances placed in the world, zone empties, scale figures. No geometry |
+The ledger's `intake.blend_layout` decides: `single` (the default) unless the user explicitly asked for `split`.
 
-Link (collection instances, relative paths), never append. Library overrides only when unavoidable, recorded under
-`flags.overrides` in the ledger.
+| Layer | `single` (default): collections in `blender/MASTER.blend` | `split`: separate files | Holds |
+|---|---|---|---|
+| KIT | `KIT/KIT_<FAMILY>/<piece>`, `KIT` excluded from the view layer | `blender/kits/KIT_<FamilyName>.blend`, one per family (`small` scale: one `KIT_World.blend` may hold every family) | One collection per piece, at the origin, with its LODs, collision and the family materials |
+| ASM | `ASM/ASM_<Name>_<Variant>`, `ASM` excluded from the view layer | `blender/asm/ASM_<Name>_<Variant>.blend`, one assembly per file, named after it | The one collection `ASM_<Name>_<Variant>`, built from instances of kit pieces (`split`: linked), plus socket empties. Its Unity prefab is `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab` |
+| MASTER | The `MASTER` collection (zones may get `MASTER_<Zone>` children); `REF` beside it | `blender/MASTER.blend` | Instances of pieces and assemblies placed in the world, zone empties; scale figures in `REF`. No geometry |
+
+Place collection instances, never copies. `split`: link them by relative paths, never append; library overrides only
+when unavoidable, recorded under `flags.overrides` in the ledger. `single`: the scene property `kit_layout =
+"single"` marks the file, and every task that writes it keeps the user's edits (`SKILL.md`, rule 5).
 
 ### Names
 
@@ -222,9 +225,10 @@ M_<FAMILY>_<Name>                   M_EXT_Brick
 - Regex: `^[A-Z]{2,5}_[A-Za-z0-9]+_(\d+(x\d+){0,2}|Free)_[A-Z]\d?$` and `^ASM_[A-Za-z0-9]+_[A-Z]\d?$`.
 
 Names are load-bearing: linking, FBX file names, Unity prefab names and placement sync all key on them. Renaming a
-piece after stage 4 is a spec change (it re-opens the spec gate) and a task that renames it in the KIT file, its FBX
-and its Unity asset, then in each ASM and MASTER file links the renamed collection and re-points the existing
-instances (`ob.instance_collection = <renamed collection>`), so their placement ids survive. Never delete and
+piece after stage 4 is a spec change (it re-opens the spec gate) and a task that renames it, its FBX and its Unity
+asset: `single`, renaming its collection in MASTER, which every instance follows; `split`, renaming it in the KIT
+file, then in each ASM and MASTER file linking the renamed collection and re-pointing the existing instances
+(`ob.instance_collection = <renamed collection>`), so their placement ids survive. Never delete and
 re-place them: placement sync then sees new pieces and conflicts (the `blender-kit-library` procedure). That task is
 `T-RENAME-<PIECE>`, with its own write row in `stages.md`.
 
@@ -235,7 +239,7 @@ re-place them: placement sync then sees new pieces and conflicts (the `blender-k
 | Unit | 1 Blender unit = 1 m |
 | Grid pivot | Bottom-left corner: the piece extends into +X, +Y, +Z from its origin |
 | Free pivot | Floor centre (props), hinge (doors), base of trunk (trees), back-face centre (wall-mounted: switches, sconces, frames), top centre (ceiling-mounted: lamps). Front faces -Y at rot 0 |
-| In the KIT file | Objects at identity transform, `collection.instance_offset` zero |
+| In the piece collection | Objects at identity transform, `collection.instance_offset` zero |
 | Walls | Run along X; thickness in +Y, constant per family (`families.<F>.thickness`) |
 | Placement | Grid pieces on whole modules (`TRIM` pieces on `sub_module`), rotated in 90-degree steps: the validator errors otherwise, as QA blocks on it. Free pieces and assemblies are exempt. Trims sit on wall faces, so a family's `thickness` should be a multiple of `sub_module` (the validator warns) |
 | LODs | When `lods` > 0: `<Piece>_LOD0` (the main mesh), `<Piece>_LOD1` (about 50%), `<Piece>_LOD2` (about 20%) as siblings in the piece collection |

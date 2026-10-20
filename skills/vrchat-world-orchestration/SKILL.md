@@ -29,16 +29,19 @@ the build lives in files, so any session can resume it.
 
    | Work | Runs in | Its `writes` list |
    |---|---|---|
-   | KIT files | Headless Blender, one process per KIT file | The KIT file |
-   | MASTER and ASM files | The live Blender when the Blender MCP is connected (`tools.blender_mcp`), else headless | The `.blend`, plus `@blender-live` when live |
+   | Kit pieces, assemblies and layout, `single` layout (default) | MASTER in the live Blender when the Blender MCP is connected (`tools.blender_mcp`), else headless; long work on a work file checked out of it | `blender/MASTER.blend`, `blender/MASTER.snapshot.json`, `blender/work/<task id>/`, plus `@blender-live` when live |
+   | `split` layout only | KIT files headless, one process each; MASTER and ASM files as MASTER above | That `.blend` (plus `@blender-live` when live) |
    | Unity work | Unity MCP, the one open Unity project | Its folders, plus `@unity` |
    | QA that drives an editor (Unity checks, the Blender MCP's `look`) | That editor, read-only | Not a ledger task: the master starts no task listing that editor until the QA returns |
-
-   Never run headless on a file that is open in the live Blender.
-4. **Link, never append.** `MASTER.blend` holds layout only: linked instances of pieces from `KIT_*.blend` and of
-   the one assembly in each `ASM_*.blend`. Geometry is edited in its KIT file and nowhere else.
-5. **Nothing is done until QA passes it**, checked by an agent that did not build it.
-6. **Gates are the user's.** Stop and wait for explicit approval; never approve one yourself.
+   | Any `.blend` the live Blender has open | Only through the MCP: never headless | - |
+4. **One MASTER, instanced, never copied.** By default (`intake.blend_layout: single`) `blender/MASTER.blend` holds
+   pieces (`KIT/KIT_<FAMILY>`), assemblies (`ASM`) and the layout (`MASTER`) as collections, placed as collection
+   instances; separate KIT and ASM files (`split`) only when the user asks for them (`blender-kit-library`).
+5. **The user's edits survive.** Every task that writes MASTER reads what changed since the last agent save first
+   (`changes_since`), keeps it, and ends with save and snapshot (`blender-kit-library`, "Editing alongside the
+   user"); one that would have to change what the user changed stops and asks (`flags.user_actions`).
+6. **Nothing is done until QA passes it**, checked by an agent that did not build it.
+7. **Gates are the user's.** Stop and wait for explicit approval; never approve one yourself.
 
 ## Stage 0: intake
 
@@ -54,6 +57,7 @@ Detect first, then ask the user to confirm or change, in one message:
 | Substance Designer / Painter | Use if present, else the Blender fallback. Painter is user-assisted unless a Painter bridge (an MCP or plugin) answers | Substance MCP `sd_ping`, install folders |
 | Blender CLI path | - | `bpy.app.binary_path` through the Blender MCP; else `blender` on PATH, `Program Files\Blender Foundation\*`, portable unzips such as `~/.blender/blender-*`, Steam's `common\Blender`; else ask. A missing Blender MCP does not block the build: kit work is headless |
 | Blender MCP connected | - | A call to it answers (`tools.blender_mcp`) |
+| Blender file layout (`intake.blend_layout`) | **`single`**: one `MASTER.blend` with KIT, ASM and layout collections. `split` (KIT and ASM files) only if the user explicitly asks; do not offer it as an equal choice | - |
 | Unity project path | - | Unity MCP: `mcpforunity://instances` lists the open projects as `Name@hash`; the path is probably in `mcpforunity://project/info` (unverified: read both, and confirm the path with the user) |
 | Packages the plan may lean on (VRC Light Volumes, Bakery, LTCGI, Post Processing for PC) and the Android / iOS build modules | Plan only with what is installed; anything else is a user install, asked now | `Packages/vpm-manifest.json` and `Packages/manifest.json`; `BuildPipeline.IsBuildTargetSupported` through Unity MCP. UdonSharp and ClientSim ship inside the Worlds SDK since 3.4.0 (https://creators.vrchat.com/releases/release-3-4-0, checked 2026-10-17): never detect or add them as packages |
 | Image tool for mockups | Skip stage 1 unless the user confirms a tool | A tool that makes whole-scene concept art to a file; texture, sprite and engine-asset generators (Unity MCP `generate_image`) do not count (`references/mockups.md`) |
@@ -117,11 +121,11 @@ Inputs, outputs, task ids, write paths and QA checks per stage: `references/stag
 | 1 | Mockups (skipped when no image tool) | concept artist | Hero images per zone, key interiors, material swatches |
 | 2 | Spec and diagrams | planner | `spec.yaml`, SVG plans and elevations, drafted tasks. **Spec gate** |
 | 3 | Kit plan | planner | Full piece list, families, materials, texel density, assemblies, sockets |
-| 4 | Greybox | kit modellers, integrator | Greybox pieces in KIT files, ASM and MASTER laid out from the plans. **Greybox gate** |
-| 5 | Kit modelling | kit modellers (parallel, one per KIT file) | Final geometry to each piece's detail list and references, LODs, collision |
+| 4 | Greybox | kit modellers, integrator | Greybox pieces, assemblies and the MASTER layout from the plans. **Greybox gate** |
+| 5 | Kit modelling | kit modellers (one per family; in parallel only with `split` files) | Final geometry to each piece's detail list and references, LODs, collision |
 | 6 | UVs | UV artists | UV0 to the family's texel density, UV2 with gaps of 2 texels at each piece's worst-case lightmap square |
 | 7 | Texturing | texture artist | The lead family first, then the **look gate**, then the other families' materials, trim sheets, unique prop textures |
-| 8 | Assemblies and dressing | integrator | ASM files and MASTER complete with final pieces |
+| 8 | Assemblies and dressing | integrator | Assemblies and the MASTER layout complete with final pieces |
 | 9 | Export | exporter | One FBX per piece |
 | 10 | Unity assembly | Unity integrator | Prefabs, materials, placements synced, VRChat scene set up, Android and iOS overrides in place |
 | 11 | Lighting and bake | lighting artist | Baked lighting, light probes (plus Light Volumes when installed) |
@@ -129,7 +133,7 @@ Inputs, outputs, task ids, write paths and QA checks per stage: `references/stag
 | 13 | Optimisation audit and platform builds | optimiser | Every budget met on every platform; each platform built and validated; ready for the user to upload (PC first for a new world, then the others on its blueprint ID) |
 
 Greybox pieces are the first version of each kit piece, in the same collection with the final name, so stages 5-7
-improve pieces in place and MASTER never needs re-linking. Each piece collection carries a `kit_status` custom
+improve pieces in place and every placement follows. Each piece collection carries a `kit_status` custom
 property: `grey`, `modelled`, `uv`, `textured`, `exported`.
 
 ## Scale the pipeline to the world
@@ -140,7 +144,7 @@ Ask at intake, record as `world.scale` in the spec.
 |---|---|---|
 | Fits | Several zones, a kit of dozens of pieces, cross-platform | One zone or a few rooms, about 30 pieces or fewer |
 | Stages 1-3 | Separate tasks, spec gate after 2 | One planning task, `T-PLAN-01` (mockups, spec, kit plan), spec gate after it |
-| KIT files | One per family | One `KIT_World.blend` may hold every family (pieces and `M_<FAMILY>_*` materials still named by family) |
+| Blender files | `single` by default: `MASTER.blend` (`split`: one KIT file per family) | `single` by default (`split`: one `KIT_World.blend` may hold every family); pieces and `M_<FAMILY>_*` materials are still named by family |
 | QA | One pass per task | One pass per stage, after its last task returns: one verdict per task in `world/reports/qa/stage-<n>/verdict.yaml`. Until then a task waits in `qa`, which its same-stage dependants accept; later stages wait for `done` |
 | Gates | Spec, greybox, look | Spec, greybox, look (never skipped: they are the cheap moments to change course) |
 | Everything else | As written | As written: same names, same spec, same ledger, so a small world can grow into a full one |
@@ -169,7 +173,8 @@ QA return `incomplete` (owner qa) until the user installs or declines it.
 
 1. Read `world/ledger.yaml`, then `world/spec.yaml`. Run `spec_validate.py` with `--ledger`.
 2. Check the live editors first: a dead task may have left Unity (unsaved scene, Play mode) or the live Blender
-   (unsaved MASTER or ASM file) dirty. Do not save or discard on a guess: tell the user what you found and ask.
+   (unsaved MASTER or ASM file) dirty, and the user may have edited MASTER since (`changes_since`: theirs to keep).
+   Do not save or discard on a guess: tell the user what you found and ask.
 3. Then go through the tasks by status:
 
    | Status | Do |
@@ -183,22 +188,17 @@ QA return `incomplete` (owner qa) until the user installs or declines it.
 
 ## Change course
 
-When the user changes their mind mid-build, edit the spec, re-validate and regenerate the diagrams. Through stage 4,
-send the tasks whose inputs changed back to `todo` (attempts 0, old count logged); after it, add a task limited to the
-change (`T-RENAME-<PIECE>`, or one in a resized piece's latest stage), never re-run a finished one. Gate re-opening:
-`references/world-spec.md` ("Changing the spec"); ledger steps: `references/ledger.md`. Change the spec first, always.
+When the user changes their mind mid-build, change the spec first, re-validate and regenerate the diagrams. Through
+stage 4, tasks whose inputs changed go back to `todo` (attempts 0, old count logged); after it, a task limited to the
+change (`T-RENAME-<PIECE>`, or one in a resized piece's latest stage), never a re-run: `references/world-spec.md`.
 
 ## References and scripts
 
 | File | Holds |
 |---|---|
-| `references/stages.md` | Per stage: inputs, outputs, task ids, the write table, QA checks, parallelism |
-| `references/subagent-briefs.md` | Builder and QA brief templates, the essentials of every task's brief |
-| `references/ledger.md` | Ledger fields, the task lifecycle, what the master does at each moment |
+| `references/stages.md`, `references/subagent-briefs.md`, `references/ledger.md` | Per stage: inputs, outputs, task ids, the write table, QA checks, parallelism; builder and QA brief templates; ledger fields, the task lifecycle, what the master does at each moment |
 | `references/world-spec.md`, `references/example-spec.yaml` | Spec schema, the look, the quality tier, the lightmap check, kit rules (files, names, pivots), changing the spec; a complete spec that validates |
-| `references/mechanics.md` | Spawning subagents in Claude Code and Codex, the project layout, running the scripts |
-| `references/mockups.md`, `references/texturing.md` | Stage 1 and stage 7 |
-| `scripts/spec_validate.py` (Python + PyYAML) | Validates the spec and the task graph; `--footprints` for lightmap planning, `--draft` for drafted tasks, `--mermaid` for `tasks.mmd` |
-| `scripts/spec_to_svg.py` (Python + PyYAML) | Regenerates `world/diagrams/` from the spec |
-| `scripts/kit_library.py` (Blender) | Piece collections, linking and placing, reloading libraries, auditing a KIT file |
+| `references/mechanics.md`, `references/mockups.md`, `references/texturing.md` | Spawning subagents in Claude Code and Codex, the project layout, running the scripts; stage 1 and stage 7 |
+| `scripts/spec_validate.py`, `scripts/spec_to_svg.py` (Python + PyYAML) | Validates the spec and the task graph (`--footprints` for lightmap planning, `--draft` for drafted tasks, `--mermaid` for `tasks.mmd`); regenerates `world/diagrams/` |
+| `scripts/kit_library.py` (Blender) | Piece collections and placing, MASTER snapshots, work-file checkout and integrate, auditing |
 | `templates/spec.yaml`, `templates/ledger.yaml` | Copied into `world/` at stage 0 |

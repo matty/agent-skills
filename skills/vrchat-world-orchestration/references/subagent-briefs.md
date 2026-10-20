@@ -39,6 +39,13 @@ Anything else is out of bounds, including files you think need fixing. Report th
 - Blender CLI: <path>. Run headless: blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py
   (the exit code then shows an uncaught exception), the script in your scratch folder, and set
   bpy.context.preferences.filepaths.save_version = 0 before saving (no .blend1 backup).
+- <single layout, a task that writes MASTER: "The user may edit MASTER too. Before changing it, run
+  kit_library.py's changes_since on blender/MASTER.snapshot.json and keep everything the user changed; if your task
+  must change the same thing, stop and return blocked with the diff lines. Edit live through the Blender MCP when it
+  has MASTER open (never headless then), or check the pieces out to blender/work/<task id>/KIT_<FAMILY>.blend, work
+  there, and integrate them back (it refuses if they changed meanwhile). End with changes_since once more (report
+  anything you did not do), save, then save_snapshot." Paste blender-kit-library's "Editing alongside the user" when
+  that skill is not installed.>
 - Python and scripts: <world folder>/.venv/Scripts/python (has PyYAML), run from the world folder;
   <this skill, absolute>/scripts/spec_validate.py and spec_to_svg.py; other skills' scripts by their absolute path
   where the task uses them.
@@ -107,7 +114,7 @@ place of the per-task lines, one row per task: id, checks, brief, report, writab
 one verdict block per task, as a YAML list, go in `world/reports/qa/stage-<n>/verdict.yaml`, `<n>` being the tasks'
 `stage` (`T-PLAN-01`: stage 2).
 
-## Filled example: stage 5, one KIT file
+## Filled example: stage 5, one family in the single MASTER
 
 ```markdown
 # T-MOD-EXT: Model the exterior kit
@@ -115,8 +122,9 @@ one verdict block per task, as a YAML list, go in `world/reports/qa/stage-<n>/ve
 Do the work yourself: do not spawn subagents.
 
 ## Goal
-Every EXT piece in blender/kits/KIT_Arch_Exterior.blend has final geometry in place of its greybox, inside the
-same collection, with the same name, pivot and extents. kit_status = modelled on each piece collection.
+Every EXT piece (KIT/KIT_EXT in blender/MASTER.blend) has final geometry in place of its greybox, inside the same
+collection, with the same name, pivot and extents. kit_status = modelled on each piece collection. Everything else in
+MASTER, including anything the user changed, is as it was.
 
 ## Project
 All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/Users/me/AppData/Local/Temp/T-MOD-EXT/.
@@ -142,23 +150,30 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
 - Nearest walkable viewing distance of the facade: 1.5 m (the square's pavement)
 
 ## You may write ONLY
-- blender/kits/KIT_Arch_Exterior.blend
+- blender/MASTER.blend, blender/MASTER.snapshot.json, blender/work/T-MOD-EXT/
+- @blender-live (the user's Blender has MASTER open; drive it only through the Blender MCP)
 - your scratch folder
 
 ## Steps
-1. Open the file headless. For each piece, model the final mesh at the collection origin, replacing the greybox
-   mesh data; keep the object name.
+1. Through the MCP, load kit_library.py and run changes_since(r"//MASTER.snapshot.json"). Note what the user
+   changed; if they edited an EXT piece, stop and return blocked with the diff lines.
+2. checkout(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). Model on that work file headless: for each piece,
+   the final mesh at the collection origin, replacing the greybox mesh data; keep the object name.
 2. Keep the footprint exactly 2 x 0.3 x 3 m; window and door openings where the greybox has them.
 3. Model every item of each piece's detail list at its size, to its references: relief that shows in stereo at
    1.5 m (blender-mesh-topology's detail_scale.py) is geometry, shallower relief is left to the textures; chamfer
    every edge players see, never a face that meets the next bay.
-4. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save.
-5. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
+4. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save the work
+   file. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
+5. Through the MCP: integrate(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). If it refuses, the user edited
+   a piece meanwhile: return blocked with its message. Then changes_since once more (list anything you did not do in
+   your report), bpy.ops.wm.save_mainfile(), save_snapshot(r"//MASTER.snapshot.json").
 
 ## Tools and hosts
-- Blender CLI: C:/Users/me/.blender/blender-5.2.2/blender.exe, headless only (the live Blender belongs to the
-  integrator): blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py, with
-  bpy.context.preferences.filepaths.save_version = 0 set before saving.
+- Blender CLI: C:/Users/me/.blender/blender-5.2.2/blender.exe, headless on the work file only (never on MASTER,
+  which is open in the live Blender): blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py,
+  with bpy.context.preferences.filepaths.save_version = 0 set before saving.
+- Blender MCP (execute_blender_code) for MASTER: changes_since, checkout, integrate, save, save_snapshot.
 
 ## Acceptance checks
 - M1 names, identity transforms, pivot at the bottom-left corner, extents match Size
@@ -210,16 +225,18 @@ P1-P4, plus C1-C4 with mockups; QA writes `world/reports/qa/stage-2/`.
 pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-kit-library`. Checks: B1. Fallback: the kit rules
 in `world-spec.md` and this skill's `scripts/kit_library.py`.
 
-**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A` in
-`blender/asm/ASM_ShopFront_A.blend`, built from linked pieces with the spec's `uses` counts, relative paths, socket
-empties. Load: `blender-kit-library`. Checks: B2-B3 on the ASM file.
+**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A`, built from instances
+of the pieces with the spec's `uses` counts, plus socket empties: `single`, under `ASM` in MASTER; `split`, in
+`blender/asm/ASM_ShopFront_A.blend` from pieces linked by relative paths. Load: `blender-kit-library`. Checks: B2-B3 on
+the assembly.
 
-**Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: MASTER laid out from
-`zones[].placements` with linked pieces and assemblies, relative paths, scale figures per zone. Checks: B2-B7, with
-overlays against `plan_<zone>.svg` and `elevation_<id>.svg`.
+**Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: the `MASTER`
+collection laid out from `zones[].placements` with instances of pieces and assemblies (`split`: linked, relative
+paths), scale figures per zone in `REF`. Checks: B2-B7, with overlays against `plan_<zone>.svg` and
+`elevation_<id>.svg`.
 
-**Stage 5, T-MOD-MASTER (integrator).** Goal: MASTER reloaded after kit modelling, every link resolving, the greybox
-views spot-checked. Checks: M9.
+**Stage 5, T-MOD-MASTER (integrator).** Goal: the greybox views spot-checked with the modelled pieces (`split`: MASTER
+reloaded first, every link resolving). Checks: M9.
 
 **Stage 6, T-UV-EXT (UV artist).** Goal: UV0 tiling at 512 px/m; a UV2 on every kit render mesh (LODs and probe-lit
 props too, not `_COL`), inside 0-1, no overlaps; on the lightmapped ones, gaps of at least 2 texels packed for the
@@ -251,8 +268,9 @@ A1-A4, M9.
 **Stage 8, T-DRESS-SQUARE (integrator).** Goal: props and trims placed from the spec, plus dressing within budget.
 Checks: A1-A4, M9.
 
-**Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`.
-Load: `blender-to-unity`. Checks: E1-E4. Fallback: the export settings listed in `stages.md`.
+**Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`
+(`single`: exported from a work file checked out just before, the status then set in MASTER). Load:
+`blender-to-unity`. Checks: E1-E4. Fallback: the export settings listed in `stages.md`.
 
 **Stage 10, T-UNITY-IMPORT (Unity integrator).** Goal: one folder, FBX and prefab variant per piece, family materials
 in `_Shared/`, import settings as `stages.md` lists. Load: `blender-to-unity` (install its `KitImport.cs`, and end with
@@ -303,10 +321,10 @@ walk passed, `world/reports/build-quest.md` written; uploads and on-device tests
 Manager keeps the world's blueprint ID across target switches in this one project: nothing to attach. The last
 build task ends by switching the build target back to Windows. Load: `vrchat-world-sdk-setup`. Checks: O5.
 
-**Any stage after 4, T-RENAME-EXT-DOOR-2X3-A (integrator).** Goal: the piece renamed in its KIT file, and in its
-FBX and Unity asset once they exist; the renamed collection linked in each ASM and MASTER file and the existing
-instances re-pointed (`ob.instance_collection = <renamed collection>`), never deleted and re-placed, so placement ids
-survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
+**Any stage after 4, T-RENAME-EXT-DOOR-2X3-A (integrator).** Goal: the piece renamed, and its FBX and Unity asset
+once they exist: `single`, its collection renamed in MASTER (every instance follows); `split`, renamed in its KIT
+file, the renamed collection linked in each ASM and MASTER file and the existing instances re-pointed
+(`ob.instance_collection = <renamed collection>`). Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
 dependencies"; its `stage` is the ledger's stage when it is added. Load: `blender-kit-library`,
 `blender-unity-placement-sync`. Writes: the stage-table row, with `world/placements/`. Checks: B2-B3, M9 (every
 earlier placement keeps its id, position and rotation), and N4-N5 after stage 10.

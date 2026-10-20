@@ -29,8 +29,8 @@ Ids are upper case with hyphens: `<NAME>` is the assembly name without `ASM_` (`
 `<ID>` the spec id (`T-DRESS-SQUARE`, `T-UDON-SHOP-DOORS`). Add `-2`, `-3` when one family needs several tasks
 (`T-UV-PROP-2`), and when a change after stage 4 needs work redone: a finished task is never re-run, so the change
 gets a new task with the next number, limited to what changed (`T-UV-EXT-2` for one resized piece, `T-LIGHT-2` for a
-re-bake; `world-spec.md`, "Changing the spec"). In `small` scale with one `KIT_World.blend`, kit tasks take `WORLD` in
-place of the family: `T-GREY-WORLD`, `T-MOD-WORLD`, `T-UV-WORLD`, `T-TEX-WORLD`, `T-EXP-WORLD`. Only the ids change:
+re-bake; `world-spec.md`, "Changing the spec"). In `small` scale (one task for every family, and in the `split` layout
+one `KIT_World.blend`), kit tasks take `WORLD` in place of the family: `T-GREY-WORLD`, `T-MOD-WORLD`, `T-UV-WORLD`, `T-TEX-WORLD`, `T-EXP-WORLD`. Only the ids change:
 `<FAMILY>` in every path below is still each family's code, so `T-TEX-WORLD` writes `blender/textures/INT/`,
 `blender/textures/STR/` and so on. `T-PLAN-01` records `stage: 2`, the stage its gate follows.
 
@@ -65,6 +65,15 @@ Put these exact paths in each task's `writes` (relative to `<world>/`, or to the
 `ProjectSettings/`). The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets/`,
 `ProjectSettings/` and the `@` editors.
 
+**`single` layout (the default, `intake.blend_layout`):** wherever the table names a KIT file, an ASM file or
+`blender/MASTER.blend`, write `blender/MASTER.blend`, `blender/MASTER.snapshot.json` and `blender/work/<task id>/`
+(its work files), plus `@blender-live` when `tools.blender_mcp` is true. Every such task then writes MASTER, so the
+planner chains them through `deps` (families in the order the spec lists them, then the assemblies, then the MASTER
+task of the stage); the validator rejects two that could run at once. A task that runs long or headless tools
+(modelling, UVs, texturing, export) checks its family's pieces out to `blender/work/<task id>/KIT_<FAMILY>.blend`,
+works there, and integrates them back (`blender-kit-library`, "Work files"). The `split` layout uses the paths below
+as written.
+
 | Stage | Writes |
 |---|---|
 | 1 | `world/mockups/` |
@@ -72,7 +81,7 @@ Put these exact paths in each task's `writes` (relative to `<world>/`, or to the
 | 4-6 | `blender/kits/KIT_<FamilyName>.blend` (one task per file); `T-GREY-ASM-<NAME>` `blender/asm/ASM_<Name>_<Variant>.blend`; MASTER `blender/MASTER.blend` |
 | 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/` (also with the Blender fallback, which keeps its node-setup `.blend` there), and the family's KIT file (materials); `T-TEX-TRIM-LAYOUT` only `blender/substance/<FAMILY>/layout.md` |
 | 8 | `T-ASM-<NAME>` `blender/asm/ASM_<Name>_<Variant>.blend`; `T-DRESS-<ZONE>` `blender/MASTER.blend` |
-| 9 | `export/fbx/<FAMILY>/`, and the KIT file (`kit_status` only) |
+| 9 | `export/fbx/<FAMILY>/`, and the KIT file (`kit_status` only; `single`: MASTER, with the export run on a checked-out work file) |
 | 10 import | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Editor/` (`blender-to-unity`'s `KitImport.cs`, first import only), `@unity` |
 | 10 sync | `Assets/World/PlacementSync/` (the sync scripts, first sync only), `Assets/World/Assemblies/` (`ASM_<Name>_<Variant>.prefab`), `Assets/World/Scenes/`, `world/placements/`, `@unity`; its apply step also writes `blender/MASTER.blend` or the scope's ASM file, plus `@blender-live` when the live Blender holds that file (placement sync then runs its Blender steps through the MCP) |
 | 10 setup | `Assets/World/Scenes/`, `Assets/World/Kits/<FAMILY>/` (static flags, instancing), `ProjectSettings/` (layers, collision matrix), `@unity` |
@@ -171,17 +180,22 @@ agent keeps its own scripts and scratch renders in the scratch folder its brief 
 
 ## 4 - Greybox (kit modellers in parallel, then the integrator)
 
-- `T-GREY-<FAMILY>`, one per KIT file, in parallel: create each piece as a collection in its KIT file with simple
-  box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut where the spec says,
-  `kit_status = grey`. Headless (`mechanics.md`): `blender -b --factory-startup --python-exit-code 1 <KIT> --python
-  <task>.py`, saving at the end with `preferences.filepaths.save_version = 0` set, so no `.blend1` backup appears
-  beside the file.
-- `T-GREY-ASM-<NAME>` (after the kits it uses): build the assembly as the one collection `ASM_<Name>_<Variant>` in
-  its own `blender/asm/ASM_<Name>_<Variant>.blend`, from linked pieces, with its `uses` counts.
+- The first stage-4 task in the `single` layout makes `blender/MASTER.blend` with `kit_library.py`'s
+  `new_master()` (organising collections, `kit_layout = "single"`) and writes the first snapshot.
+- `T-GREY-<FAMILY>`, one per family (`single`: one after another, each in `KIT/KIT_<FAMILY>` in MASTER; `split`: one
+  per KIT file, in parallel): create each piece as a collection with simple box geometry at the exact extents of its
+  Size, pivot at the bottom-left corner, openings cut where the spec says, `kit_status = grey`. Live through the MCP
+  or headless (`mechanics.md`): `blender -b --factory-startup --python-exit-code 1 <file> --python <task>.py`, saving
+  at the end with `preferences.filepaths.save_version = 0` set, so no `.blend1` backup appears beside the file.
+- `T-GREY-ASM-<NAME>` (after the kits it uses): build the assembly as the one collection `ASM_<Name>_<Variant>`
+  (`single`: under `ASM` in MASTER, from instances of the local pieces; `split`: in its own
+  `blender/asm/ASM_<Name>_<Variant>.blend`, from linked pieces), with its `uses` counts.
 - `T-GREY-MASTER` (after all of the above; integrator; the live Blender with `@blender-live` in `writes` when
-  `tools.blender_mcp` is true, else headless): link and place assemblies and pieces from the spec's placements. Add a
-  1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF` collection).
-- QA: B1 for each KIT task; B2-B3 for each `T-GREY-ASM` (on its ASM file) and for `T-GREY-MASTER`; B4-B7 for MASTER.
+  `tools.blender_mcp` is true, else headless): place assemblies and pieces from the spec's placements in the `MASTER`
+  collection (`split`: linked). Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a
+  `REF` collection).
+- QA: B1 for each KIT task (`single`: on MASTER's pieces of that family); B2-B3 for each `T-GREY-ASM` (on its
+  assembly) and for `T-GREY-MASTER`; B4-B7 for MASTER.
 - **Greybox gate**: walkthrough renders from every view plus top and elevation overlays. Show them to the user.
   This is the last cheap moment to change layout or scale.
 
@@ -189,12 +203,14 @@ Kit rules agents need even without other skills: piece = one collection named `<
 mesh objects at identity transform, `instance_offset` zero, walls run along X with thickness in +Y, Size counts
 modules in X, Y, Z skipping any axis under one module (thickness); link with relative paths; MASTER and ASM never hold
 geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit_library.py` path in the brief:
-`new_piece`, `link_piece`, `reload_libraries`, `save_file` (a headless save without a `.blend1`), and `audit_kit`
-(`--audit --module <grid.module>` from the command line) to self-check before reporting.
+`new_piece`, `place_piece` (`split`: `link_piece`, `reload_libraries`), `changes_since`, `checkout`, `integrate`,
+`save_snapshot`, `save_file` (a headless save without a `.blend1`), and `audit_kit` (`--audit --module <grid.module>`
+from the command line) to self-check before reporting.
 
 ## 5 - Kit modelling (kit modellers, parallel per KIT file)
 
-- `T-MOD-<FAMILY>`: replace each greybox mesh with final geometry **inside the same collection**, keeping name,
+- `T-MOD-<FAMILY>` (`single`: checked out to a work file, modelled there, integrated back): replace each greybox
+  mesh with final geometry **inside the same collection**, keeping name,
   pivot and extents. Model every feature in the piece's `detail` list at its size, to its `ref` images: relief deep
   enough to show in stereo at the nearest viewing distance is geometry, shallower relief goes to the normal map or
   the trim bevel, chamfers on every edge players see but never on faces that meet a neighbouring piece. When the
@@ -205,8 +221,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
   anything the detail list leaves open; then topology). Paste each piece's `detail` and `ref` into the brief.
 - Budget: `budgets.piece_tris.<FAMILY>`, or the piece's `tris`.
 - QA: M1-M8.
-- `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): reload libraries in
-  MASTER and spot-check the greybox views again. QA: M9.
+- `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): spot-check the greybox
+  views again with the modelled pieces (`split`: reload the libraries in MASTER first). QA: M9.
 
 ## 6 - UVs (UV artists, parallel per KIT file)
 
@@ -245,7 +261,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 ## 7 - Texturing (texture artist)
 
 - `T-TEX-<FAMILY>`: the family's materials (`M_<FAMILY>_<Name>`), trim sheet or tiling sets or atlas, unique prop
-  textures, a detail map where the family has `detail_map: true`. `kit_status = textured`. Brief: load
+  textures, a detail map where the family has `detail_map: true`. `kit_status = textured`. `single`: integrated with
+  `materials="work"`, so the new materials replace MASTER's of the same name. Brief: load
   `pbr-texturing` (without it, `texturing.md`), with the spec's `look` and the family's `look.materials` targets.
 - **Lead family first.** `look.lead_family`'s `T-TEX-<FAMILY>` runs alone; when its QA passes, the master stops at
   the **look gate** with QA's X5 look-dev renders and X8 numbers beside the mockups or `look.references`. Every other
@@ -262,7 +279,7 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 
 ## 8 - Assemblies and dressing (integrator)
 
-- `T-ASM-<NAME>`: finish each assembly in its own ASM file with final pieces (usually nothing to do but check, since
+- `T-ASM-<NAME>`: finish each assembly (`split`: in its own ASM file) with final pieces (usually nothing to do but check, since
   pieces improved in place), add sockets. QA: A1-A4, M9.
 - `T-DRESS-<ZONE>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
   foliage), within budget. QA: A1-A4, M9.
@@ -270,6 +287,8 @@ geometry. Full rules: `world-spec.md`. Give kit agents this skill's `scripts/kit
 ## 9 - Export (exporter)
 
 - `T-EXP-<FAMILY>`: one FBX per piece collection into `export/fbx/<FAMILY>/<Piece>.fbx`. `kit_status = exported`.
+  `single`: export from a work file checked out just before, then set `kit_status` on the pieces in MASTER (live, or
+  headless when MASTER is open nowhere); never integrate a work file only to carry the status.
 - Brief: load `blender-to-unity` (its batch export exports each piece collection whole). Without it, use these
   settings: Limit to Selected, with every LOD and `_COL` object of the piece unhidden and selected (the exporter skips
   hidden objects without a word), Object Types Mesh, Scale 1.0, Apply Scalings FBX All, -Z Forward, Y Up, Apply Unit
@@ -385,7 +404,7 @@ deeper checklist was unavailable.
 | Every task | Every output the brief lists exists; nothing outside its `writes` changed (file times against the dispatch time); names follow `world-spec.md`; the result matches the spec and its diagrams; the report's claims match what was measured |
 | 1 | One image per requested view (a hero per zone, key interiors, swatches), each with its prompt file, consistent in style |
 | 2-3 | `spec_validate.py` reports no errors, with `--draft` on the drafted tasks; the diagrams regenerate identically; budgets no looser than the platform targets; doors at least 1 x 2.1 m, ceilings at least 2.6 m; every family has a KIT file, 1-3 materials and a texturing approach; pieces are whole modules, with corners and ends or a reason |
-| 4 | `kit_library.py --audit` reports no problems on each KIT file; ASM and MASTER files hold only linked instances (and `REF` aids) by relative paths; a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
+| 4 | `kit_library.py --audit` reports no problems on each KIT file (`single`: on MASTER, layout checks included); assemblies and the layout hold only instances (and `REF` aids), `split`: linked by relative paths; a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
 | 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; every feature in each piece's `detail` list there at its size, judged against its `ref` images from eye height at the nearest walkable distance; MASTER reloads with every link found |
 | 6 | UV0 texel density within 10% of the family's (tiling and trim); no folded or badly stretched faces; a UV2 on every kit render mesh (not `_COL`), inside 0-1, no overlaps; on lightmapped ones, gaps of at least 2 texels at the mesh's real lightmap square (stage 6 above) and 1 texel to the tile edge |
 | 7 | 1-3 materials per family, named `M_<FAMILY>_<Name>`; maps no larger than `map_px`; metallic in R and smoothness in A, normal maps OpenGL; dielectric base colours within 30-240 sRGB luma, raw metal 160 or more, metallic 0 or 1 except blends; colour, value and roughness against the mockups or `look` in a render that shows roughness (EEVEE or Cycles, not Workbench); tiling maps seamless in a 3 x 3 repeat; source files kept |
@@ -400,7 +419,7 @@ deeper checklist was unavailable.
 
 | Can run together | Must wait |
 |---|---|
-| Greybox/modelling/UV tasks for different KIT files | ASM tasks wait for the kits they use; MASTER waits for ASMs |
+| Greybox/modelling/UV tasks for different KIT files (`split` only; `single`: they take turns on MASTER) | ASM tasks wait for the kits they use; MASTER waits for ASMs |
 | Texturing a family while another family is modelled | UVs of a trim family wait for its trim layout |
 | QA of one task while other tasks build, unless the QA drives a live editor: then it holds `@unity` or `@blender-live` like a task until it returns | Anything that writes MASTER, or drives the live Blender (`@blender-live`): one at a time |
 | Planning an Udon system (behaviour, sync, events) for its brief while other tasks build | Anything that drives the Unity editor (`@unity`) or writes into the open project's `Assets/` (a script dropped there recompiles the editor under another task): one at a time; lighting bake waits for final geometry and placements |
