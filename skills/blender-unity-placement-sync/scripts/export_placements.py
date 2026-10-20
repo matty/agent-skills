@@ -2,14 +2,18 @@
 
 Host: Blender 4.1+ (bpy), no add-ons. Pairs with placement_merge.py (plain Python) and PlacementSync.cs (Unity).
 
-A placement is a collection instance: an empty with instance_type COLLECTION, usually a linked KIT piece or ASM
-assembly. Its stable id lives in the custom property `placement_id` on that empty, so renames, re-parenting and moving
+A placement is a collection instance: an empty with instance_type COLLECTION, of a KIT piece or an ASM assembly
+(local collections in a single MASTER, blender-kit-library's default layout; linked from KIT and ASM files when
+split). Its stable id lives in the custom property `placement_id` on that empty, so renames, re-parenting and moving
 it between collections never lose it. Transforms are written in Unity space (left-handed, Y up, metres) relative to
 the world origin, which is the scope root.
 
-A scope covers the collection named like the scope when the file has one (an ASM file's assembly collection
-ASM_<Name>_<Variant>), else the whole scene (MASTER); --collection names another. apply creates new placements inside
-that collection. Library overrides are not placements: dump skips them and warns.
+A scope covers the collection named like the scope when the file has one (in a single MASTER, scene["kit_layout"]
+== "single": the MASTER collection for the MASTER scope and the ASM_<Name>_<Variant> collection under ASM for an
+assembly scope; in a split ASM file its assembly collection), else the whole scene (a split MASTER); --collection
+names another. A single MASTER must have the scope's collection, since its whole scene also holds every assembly's
+insides. apply creates new placements inside that collection. Library overrides are not placements: dump skips them
+and warns. --libraries is for split files: a single MASTER's assets are its own KIT and ASM collections.
 
 Command line (the usual way). One writer per .blend: not while the file is open in a live Blender session.
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
@@ -62,15 +66,33 @@ def from_unity(pos, rot, scl):
     return Matrix.LocRotScale(loc, r.to_quaternion(), s)
 
 
+def is_single(scene=None):
+    """A single MASTER (blender-kit-library): pieces, assemblies and layout as collections in this one file."""
+    return (scene or bpy.context.scene).get("kit_layout") == "single"
+
+
 def scope_collection(scope, name=None):
-    """The local collection a scope covers: `name`, else the one named like the scope, else None (the whole scene)."""
+    """The local collection a scope covers: `name`, else the one named like the scope, else None (the whole scene;
+    refused in a single MASTER, where the scene also holds every assembly's insides)."""
     for want in ([name] if name else [scope]):
         for coll in bpy.data.collections:
             if coll.name == want and coll.library is None:
                 return coll
-    if name:
-        raise KeyError("no local collection %r in %s" % (name, bpy.data.filepath or "this file"))
+    if name or is_single():
+        raise KeyError("no local collection %r in %s%s" % (name or scope, bpy.data.filepath or "this file",
+                                                           " (a single MASTER: the scope's collection is required)"
+                                                           if not name else ""))
     return None
+
+
+def local_assets():
+    """A single MASTER's own piece and assembly collections (everything under KIT and ASM)."""
+    out = set()
+    for root in ("KIT", "ASM"):
+        coll = next((c for c in bpy.data.collections if c.name == root and c.library is None), None)
+        if coll is not None:
+            out |= {c.name for c in coll.children_recursive if not c.children and c.library is None}
+    return out
 
 
 def _instances(scene=None, coll=None):
@@ -98,7 +120,8 @@ def scope_warnings(scene=None, coll=None, items=None):
             offsets.setdefault((o.instance_collection.name, off), []).append(o.name)
     for (name, off), obs in sorted(offsets.items()):
         out.append("collection %s has instance_offset %s: the engine places %s that far from where Blender draws "
-                   "them; zero it in its KIT or ASM file" % (name, off, ", ".join(sorted(obs))))
+                   "them; zero it on the piece or assembly collection (in its KIT or ASM file when split)"
+                   % (name, off, ", ".join(sorted(obs))))
     if coll is not None and any(abs(v) > 1e-4 for v in coll.instance_offset):
         out.append("scope collection %s has instance_offset %s: where MASTER instances it, Blender draws it shifted "
                    "from the Unity prefab; zero it" % (coll.name, tuple(round(v, 4) for v in coll.instance_offset)))
@@ -158,6 +181,8 @@ def dump(directory, scope, libraries=None, collection=None):
                       "pos": pos, "rot": rot, "scl": scl, "key": ob.name})
     assets = {c.name for c in bpy.data.collections if c.library is not None and not c.is_missing}
     assets |= set(_library_index(libraries))
+    if is_single():
+        assets |= local_assets()
     assets |= {i["asset"] for i in items}
     warnings = scope_warnings(coll=coll)
     os.makedirs(directory, exist_ok=True)

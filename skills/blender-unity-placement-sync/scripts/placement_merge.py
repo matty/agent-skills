@@ -252,7 +252,8 @@ def merge(args):
         """Why `side` cannot take `item`, and what to do. A rename is told from a swap by the old asset: after a
         rename the sending side no longer has it; after a swap of some placements it still does. Only targets the
         receiving side lacks count: when the old asset's placements went to several of those, no rename is suggested.
-        An assembly (ASM_) is never exported or added as a KIT piece: it has its own ASM file and sync scope."""
+        An assembly (ASM_) is never exported or added as a KIT piece: it has its own sync scope (its collection
+        under ASM in a single MASTER, or its ASM file when split)."""
         name = item["asset"]
         sender, sender_has = ("Blender", blender_assets) if side == "unity" else ("Unity", unity_assets)
         receiver_has = unity_assets if side == "unity" else blender_assets
@@ -276,8 +277,9 @@ def merge(args):
                        if asm else "renaming the prefab and its FBX to %s" % name)
                 return ("Unity has no prefab called %s (it has %s, which Blender no longer has): finish (or undo) the "
                         "rename on the Unity side, %s" % (name, old, how))
-            how = ("renaming the ASM file and its collection and re-pointing its instances (blender-kit-library, "
-                   "Naming)" if asm else "renaming the collection in its KIT file and re-pointing its instances")
+            how = ("renaming its collection (and, with split files, its ASM file, re-pointing its instances; "
+                   "blender-kit-library, Naming)" if asm else "renaming its collection (with split files, in its KIT "
+                   "file, then re-pointing its instances)")
             return ("Blender has no collection called %s (it has %s, which Unity no longer has): finish (or undo) the "
                     "rename on the Blender side, %s" % (name, old, how))
         if side == "unity":
@@ -293,17 +295,18 @@ def merge(args):
             return "no Unity prefab called %s yet: a new piece, so export and package it" % name
         if old and asm:                                     # swapped in Unity to an assembly Blender lacks
             return ("no Blender collection called %s: a placement was swapped in Unity from %s to an assembly Blender "
-                    "lacks, so build it in blender/asm/%s.blend and sync its scope, or undo the swap in Unity; never "
-                    "rename %s, which Unity still has" % (name, old, name, old))
+                    "lacks, so build it (under ASM in MASTER, or in blender/asm/%s.blend with split files) and sync "
+                    "its scope, or undo the swap in Unity; never rename %s, which Unity still has"
+                    % (name, old, name, old))
         if old:                                             # swapped in Unity to a prefab Blender lacks
             return ("no Blender collection called %s: a placement was swapped in Unity from %s to a prefab Blender "
                     "lacks, so add %s as a KIT piece or undo the swap in Unity; never rename %s, which Unity still has"
                     % (name, old, name, old))
         if asm:
-            return ("no Blender collection called %s: build it in blender/asm/%s.blend and dump with --libraries "
-                    "naming that file" % (name, name))
-        return ("no Blender collection called %s: add it to a KIT file, and dump with --libraries naming that file"
-                % name)
+            return ("no Blender collection called %s: build it under ASM in MASTER (split files: in "
+                    "blender/asm/%s.blend, and dump with --libraries naming that file)" % (name, name))
+        return ("no Blender collection called %s: add it as a piece under KIT in MASTER (split files: to a KIT file, "
+                "and dump with --libraries naming that file)" % name)
 
     def send(side, kind, pid, item, current=None):
         """Plan `kind` of `pid` on `side`; `item` is the new state (for a delete: the state being deleted) and

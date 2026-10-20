@@ -518,8 +518,8 @@ class Blocked(unittest.TestCase):
         sc = Scope(self, copy.deepcopy(base_items), u, snapshot_of(base_items),
                    u_assets={"ASM_Stall_A", "ASM_Stall_B"})
         self.assertEqual(sc.merge(), 3)
-        self.assertIn("so build it in blender/asm/ASM_Stall_B.blend and sync its scope, or undo the swap in Unity",
-                      sc.out)
+        self.assertIn("so build it (under ASM in MASTER, or in blender/asm/ASM_Stall_B.blend with split files) and "
+                      "sync its scope, or undo the swap in Unity", sc.out)
         self.assertNotIn("KIT piece", sc.out)
 
     def test_renamed_assembly_points_at_the_prefab_not_an_fbx(self):

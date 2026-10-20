@@ -17,7 +17,7 @@ Set up with `blender-kit-library` and `blender-to-unity`; this skill only needs 
 | Side | Requirement |
 |---|---|
 | Blender | Each piece or assembly is a collection, placed as collection instances (linked or local). The collection name is the asset name. `instance_offset` is (0, 0, 0) on every placed collection, and placements carry no constraints (the dump warns about both). 1 Blender unit = 1 m |
-| Blender, assemblies | One assembly per ASM file, named after it: `blender/asm/ASM_<Name>_<Variant>.blend` holds the one collection `ASM_<Name>_<Variant>` |
+| Blender, assemblies | Each assembly is one collection `ASM_<Name>_<Variant>`: under `ASM` in a single `blender/MASTER.blend` (the default layout), or, with split files, alone in `blender/asm/ASM_<Name>_<Variant>.blend` |
 | Unity | Each asset is a prefab with the **same file name** under `Assets/World/Kits/` or `Assets/World/Assemblies/` (other roots: `references/unity-apply.md`), its root at identity rotation and scale. An assembly's prefab is `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab` |
 | Export | FBX exported with -Z Forward, Y Up, Apply Scalings FBX All, Use Space Transform on, Bake Space Transform ("Apply Transform") on, Path Mode Strip for kit pieces, so a piece arrives in Unity at scale 1 and rotation 0. Options of `bpy.ops.export_scene.fbx` (https://docs.blender.org/api/current/bpy.ops.export_scene.html, checked 2026-10-17; Apply Transform is marked experimental there, for armatures and animation, not static pieces) |
 
@@ -32,15 +32,18 @@ Set up with `blender-kit-library` and `blender-to-unity`; this skill only needs 
 
 ## Scopes
 
-A scope is one Blender file paired with one Unity target, synced on its own with its own snapshot.
+A scope is one Blender collection (or split file) paired with one Unity target, synced on its own with its own
+snapshot.
 
-| Scope | Blender | Unity target |
-|---|---|---|
-| `MASTER` | `blender/MASTER.blend`, the whole scene (world origin = root) | `scene:MASTER`, a root GameObject called MASTER (`scene:<scene path>#MASTER` when two open scenes have one) |
-| `ASM_ShopFront_A` | `blender/asm/ASM_ShopFront_A.blend`, its collection `ASM_ShopFront_A` | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab`, created by the scope's first Apply |
+| Scope | Blender, single MASTER (default) | Blender, split files | Unity target |
+|---|---|---|---|
+| `MASTER` | `blender/MASTER.blend`, the `MASTER` collection (world origin = root) | `blender/MASTER.blend`, the whole scene | `scene:MASTER`, a root GameObject called MASTER (`scene:<scene path>#MASTER` when two open scenes have one) |
+| `ASM_ShopFront_A` | `blender/MASTER.blend`, the collection `ASM_ShopFront_A` under `ASM` | `blender/asm/ASM_ShopFront_A.blend`, its collection `ASM_ShopFront_A` | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab`, created by the scope's first Apply |
 
 Sync every ASM scope before MASTER, so assembly prefabs exist when MASTER places them. The Blender side of a scope is
-the collection named like the scope when the file has one, else the whole scene; `--collection NAME` names another.
+the collection named like the scope when the file has one, else (split MASTER only) the whole scene; `--collection
+NAME` names another. A single MASTER (`kit_layout = "single"`) refuses a scope it has no collection for, and lists its
+own pieces and assemblies as assets, so it needs no `--libraries`.
 
 Everything under a scope root syncs. Unity-only copies that must never reach Blender (the duplicated static geometry of
 a switchable-light setup, one copy per lighting state, or any other Unity-only duplicate) live under a separate root
@@ -63,12 +66,14 @@ fresh ids and are created in the .blend; the merge report flags several placemen
 Run it in one go, with nobody editing either side: Unity keys in a dump are only valid until the hierarchy changes.
 One writer per .blend: the Blender file must not be open in a live Blender session while a headless apply writes it
 (a live session's next save would overwrite the sync). If it is open there, run the Blender steps in that session
-through Blender MCP instead (`dump` and `apply` from the script's header) and save.
+through Blender MCP instead (`dump` and `apply` from the script's header) and save. The sync itself keeps the user's
+moves (they are what it merges), but a MASTER the user also edits gets `blender-kit-library`'s routine around it:
+`changes_since` before the dump, and `save_snapshot` after the apply's save.
 
 Placeholders: `<skill>` this skill's folder, `<project>` the project root, `<p>` the absolute placements folder,
-`B` = `blender -b --factory-startup --python-exit-code 1`. MASTER shown; an ASM scope differs only in the file
-(`<project>/blender/asm/ASM_ShopFront_A.blend`), `--scope ASM_ShopFront_A`, `--libraries "../kits/*.blend"` and its
-`prefab:` target.
+`B` = `blender -b --factory-startup --python-exit-code 1`. MASTER shown, for split files; in a single MASTER drop
+`--libraries`. An ASM scope differs only in `--scope ASM_ShopFront_A`, its `prefab:` target and, with split files, the
+file (`<project>/blender/asm/ASM_ShopFront_A.blend`) and `--libraries "../kits/*.blend"`.
 
 ```
 1. check   Unity MCP execute_code: return PlacementSync.PlacementSyncTool.Check("scene:MASTER");
