@@ -38,6 +38,18 @@ G1-G5 apply to every task. Run the rest for the task you are checking (`<FAMILY>
 | 13 | `T-BUILD-<platform>` | O5 |
 | Any, after 4 | `T-RENAME-<PIECE>` (a piece renamed after the greybox) | M9 (B2-B3 within it), N4-N5 after stage 10 |
 
+**Single MASTER** (the default layout: `qa_measure` reports `layout: single`; the ledger's `intake.blend_layout`).
+The pieces, assemblies and layout are collections in `blender/MASTER.blend`, so read the file-based checks this way:
+
+| Check | In a single MASTER |
+|---|---|
+| `B1`, `M1`-`M8`, U, X, `E1` (the "KIT file") | The pieces of that family in MASTER (`qa_measure --pieces "<FAMILY>_*"` on MASTER), or on the work file the task left in `blender/work/<task>/` when MASTER is open in the live Blender (then confirm MASTER holds the same: G5) |
+| `B2`, `A1` | The `ASM_` collections and the `MASTER` collection hold only collection instances, zone and socket empties; review aids in `REF`; no `layout_problems` (every piece inside `KIT`, every assembly inside `ASM`, both excluded from the view layer) |
+| `B3` | Nothing is linked: `libraries` empty; no piece mesh duplicated into the layout or an assembly (no `stray_meshes`) |
+| `M9`, `A2` | The kit_status and `instance_offset` of `pieces[]` in MASTER, in place of `linked_pieces[]`; every earlier placement unchanged unless the brief asked |
+| `A3` | Compare only placements whose `assembly` is null with `zones[].placements`; the others are inside an assembly, compared with its `uses` |
+| `G5` (nothing outside `writes`) | Also: the task kept the user's edits. Its report lists the `changes_since` lines it found before and after; anything the task changed that the user had changed is a fail unless the user agreed (the log says so) |
+
 A builder's brief may list only some of these as its own acceptance checks; QA still runs the whole row. A task of a
 kind not listed: run the checks of its stage that touch the files it writes, and say which in `notes`. A task split by
 piece (`T-UV-PROP-2`) is checked on its own pieces: `qa_measure --pieces <its pieces>`.
@@ -159,7 +171,7 @@ prints is a failure of the check listed here; NOTE lines are advisory. `objects`
 
 | Id | Check | How |
 |---|---|---|
-| P1 | Each family has a KIT file path, a material list of 1-3 materials and a texture approach (trim / tiling / atlas / unique) | Spec |
+| P1 | Each family has a file path (`blender/MASTER.blend` in the single layout, its KIT file when split), a material list of 1-3 materials and a texture approach (trim / tiling / atlas / unique) | Spec |
 | P2 | Pieces snap: widths and heights are whole modules; corner and end pieces exist for every wall family, or the piece `desc` says why none is needed and the plan bears it out (for example walls that overlap in the corners and never end in open space) | Spec, plans |
 | P3 | Repeated elements are one piece used many times, not near-duplicates (`_A`/`_B` must differ visibly) | Spec, elevations |
 | P4 | Texel density and map size set per family, consistent across families seen side by side | Spec `families.*.texel_density`, `map_px` |

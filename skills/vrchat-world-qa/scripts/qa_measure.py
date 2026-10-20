@@ -41,9 +41,12 @@ name (globs), --isolate shows one collection only (every KIT piece sits at the o
 Workbench (base colour only); --light lookdev is EEVEE with each material's own nodes (roughness, metallic and normal
 maps), a grey world, the scene's lights hidden and one key light 45 deg above, behind the camera's left (LOOKDEV).
 
-File role, from the file name or --role: KIT_* kit, ASM_* asm, MASTER* master; --import-fbx makes it fbx. A MASTER or
-ASM file must hold no local piece collection; MASTER no local assembly; an ASM file exactly the one assembly named
-after the file. With no .blend open and no --import-fbx (a blank session), the scene is not measured.
+File role, from the file name or --role: KIT_* kit, ASM_* asm, MASTER* master; --import-fbx makes it fbx. A single
+MASTER (scene["kit_layout"] == "single", blender-kit-library's default) holds the pieces under KIT, the assemblies
+under ASM (both excluded from the view layer) and the layout under MASTER: its pieces get the kit checks and its
+layout the placement checks. A split MASTER or ASM file must hold no local piece collection; a split MASTER no local
+assembly; an ASM file exactly the one assembly named after the file. With no .blend open and no --import-fbx (a blank
+session), the scene is not measured.
 
 From a live Blender (Blender MCP execute_blender_code), without saving:
     ns = {"__file__": r"<skill>/scripts/qa_measure.py"}     # pbr() finds pbr_check.py beside it through __file__
@@ -52,11 +55,13 @@ From a live Blender (Blender MCP execute_blender_code), without saving:
     ns["problems"](rep, piece_tris={"EXT": 800}, expect_status="modelled")
     ns["pbr"](["T_EXT_Brick_BaseColor.png", "T_EXT_Brick_Normal.png"], map_px=1024)
 
-Report fields. File: file, role, module, sub_module, libraries [{path, relative, found}], unnamed_collections,
+Report fields. File: file, role, layout (single or null), layout_problems, module, sub_module, libraries [{path,
+relative, found}], unnamed_collections,
 local_assemblies, local_assembly_offsets {name: [x, y, z]}, images [{image, filepath, relative, packed, missing,
 size, channels, colorspace, alpha_mode, materials}], linked_pieces [{piece, library, kit_status, tris,
 instance_offset}], placements [{object, asset, kind (grid, free, asm, other), linked, id, pos, rot_z, rot_xy_ok,
-scale_ok, on_grid, right_angle}], appended, shadowing_linked, ref_meshes, stray_meshes, problems, notes (advisory:
+scale_ok, on_grid, right_angle, assembly (the ASM_ collection holding it in a single MASTER, else null: compare only
+those with null against the zones' placements)}], appended, shadowing_linked, ref_meshes, stray_meshes, problems, notes (advisory:
 LOD0 footprints under 64 px, where only a Free PROP or FOL piece is told to become probe-lit; UV2 box fill under 0.5
 at a footprint of 64 px or more),
 linked_assembly_offsets {name: [x, y, z]}; optional fbx_folded_materials, placement_changes (matched by placement id
@@ -142,6 +147,29 @@ def _is_lod0_name(name):
 
 def _is_lod0(ob):
     return _is_lod0_name(ob.name)
+
+
+def _single_layout(scene, local, local_pieces):
+    """A single MASTER: where its pieces and assemblies sit. Returns (assembly of each object, problems)."""
+    roots = {n: next((c for c in local if c.name == n), None) for n in ("KIT", "ASM", "MASTER")}
+    out = ["no %s collection in a single MASTER" % n for n, c in roots.items() if c is None]
+    under = {n: set(c.children_recursive) if c else set() for n, c in roots.items()}
+    out += ["%s: piece outside KIT in a single MASTER" % c.name for c in local_pieces if c not in under["KIT"]]
+    out += ["%s: assembly outside ASM in a single MASTER" % c.name for c in local
+            if ASM_RE.match(c.name) and c not in under["ASM"]]
+    for n in ("KIT", "ASM"):
+        if roots[n] is None:
+            continue
+        for path in _layer_paths(bpy.context.view_layer.layer_collection, roots[n]):
+            if not any(lc.exclude for lc in path[1:]):
+                out.append("%s is in the view layer: its pieces show at the origin of the layout (exclude it)" % n)
+                break
+    owner = {}
+    for c in local:
+        if ASM_RE.match(c.name):
+            for ob in c.all_objects:
+                owner.setdefault(ob.name, c.name)
+    return owner, out
 
 
 def file_role(path):
@@ -728,11 +756,17 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                             if kind in ("grid", "asm") else None),
                 "right_angle": (min(r90, 90.0 - r90) < 1e-2 if kind in ("grid", "asm") else None),
             })
-    used_locally = {p["asset"] for p in places if not p["linked"]}
+    single = scene.get("kit_layout") == "single"
+    owner, layout_problems = _single_layout(scene, local, local_pieces) if single else ({}, [])
+    for p in places:
+        p["assembly"] = owner.get(p["object"])
+    used_locally = {p["asset"] for p in places if not p["linked"]} if not single else set()
     owned = {o.name for c in local_pieces for o in c.all_objects}
     return {
         "file": bpy.data.filepath,
         "role": role,
+        "layout": "single" if single else None,
+        "layout_problems": layout_problems,
         "module": module,
         "sub_module": sub_module,
         "libraries": [_library_entry(lib) for lib in bpy.data.libraries],
@@ -751,7 +785,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                           for c in sorted(bpy.data.collections, key=lambda c: c.name)
                           if c.library is not None and NAME_RE.match(c.name)],
         "placements": places,
-        # a kit-named local collection that is also placed here is a copy, not a link
+        # a kit-named local collection that is also placed here is a copy, not a link (in a single MASTER, the norm)
         "appended": sorted(n for n in used_locally if NAME_RE.match(n) or ASM_RE.match(n)),
         "shadowing_linked": sorted(c.name for c in local if (NAME_RE.match(c.name) or ASM_RE.match(c.name))
                                    and c.name in linked_names),
@@ -1006,10 +1040,12 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("library %s is linked by an absolute path (link with relative paths)" % lib["path"])
         if not lib["found"]:
             out.append("library %s not found" % lib["path"])
-    if role in ("master", "asm"):
+    single = rep.get("layout") == "single"
+    out += rep.get("layout_problems", [])
+    if role in ("master", "asm") and not single:
         out += ["%s: local piece collection in a %s file, a copy rather than a link" % (p["piece"], role.upper())
                 for p in rep["pieces"]]
-    if role == "master":
+    if role == "master" and not single:
         out += ["%s: local assembly in MASTER; link it from its ASM file" % n for n in rep.get("local_assemblies", [])]
     if role == "asm":
         own = os.path.splitext(os.path.basename(rep.get("file", "")))[0]
@@ -1024,7 +1060,7 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
         if _nonzero(off):
             out.append("linked assembly %s: instance_offset %s; fix it in its ASM file (every placement of it is "
                        "drawn that far off)" % (n, off))
-    for p in rep["pieces"] if role not in ("master", "asm") else []:
+    for p in rep["pieces"] if role not in ("master", "asm") or single else []:
         n = p["piece"]
         if not ours(n):
             continue
@@ -1624,6 +1660,9 @@ def _main():
     hidden, uv_saved = [], []
     if (a.view or a.render) and a.color == "texture" and a.light != "lookdev":
         uv_saved = _set_render_uv(a.uv_layer)
+    shown = contextlib.ExitStack()
+    if (a.view or a.render) and a.isolate and bpy.data.collections.get(a.isolate) is not None:
+        shown.enter_context(_evaluated([bpy.data.collections[a.isolate]]))   # a single MASTER excludes KIT
     if a.view or a.render:
         try:
             out = render_hidden(a.lod, a.show_collision, a.hide_object, a.isolate, a.hide_collection)
@@ -1662,6 +1701,7 @@ def _main():
             ob.hide_render = False
         for me, index in uv_saved:
             me.uv_layers.active_index = index
+        shown.close()
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(rep, f, indent=2)

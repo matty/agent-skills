@@ -41,6 +41,10 @@ JSON; one that did not is unfinished, never clean: fix the command and run it ag
     blender -b --factory-startup --python-exit-code 1 --python <skill>/scripts/qa_measure.py --
             --module <grid.module> --import-fbx "export/fbx/<FAMILY>/*.fbx" --json <ev>/fbx.json
 
+In a single MASTER (the default layout, `kit_layout = "single"`), the kit run is on `blender/MASTER.blend` with
+`--pieces "<FAMILY>_*"` for the task's family, and B2, B3, M9, A1-A3 read as `references/checklists.md` says. When the
+live Blender has MASTER open, measure it there through the MCP without saving (its disk copy may be older).
+
 ## Rules while checking
 
 - **Read-only Blender**: open every .blend headless (`blender -b --factory-startup <file> --python-exit-code 1
