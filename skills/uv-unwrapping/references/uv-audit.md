@@ -197,6 +197,10 @@ run along V.
 
 ## Command line
 
+In a single MASTER (`blender-kit-library`'s default layout) the pieces sit in an excluded `KIT` collection, which
+selection and edit-mode tools cannot reach: unwrap and audit a work file checked out of it (`checkout`, then
+`integrate`).
+
 ```
 blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --td 512
 blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --lightmap-texels 20
