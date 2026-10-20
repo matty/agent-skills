@@ -11,6 +11,8 @@ Headless, a whole KIT file, one FBX per piece collection into <dir>/<FAMILY>/<Pi
   folder is printed. Every mesh in the piece collection is exported, hidden or not (LODs, <Piece>_COL), with its
   modifiers applied, Path Mode Strip, and the written object names are printed. A mesh that reaches the exporter with
   custom normals on faces of 4+ corners gets a warning: the exporter's own triangulation changes them.
+  A single MASTER (blender-kit-library's default layout) holds every family: export one family from a work file
+  checked out of it (kit_library.py checkout), and set kit_status in MASTER itself rather than with --set-status.
 
 Blender Text Editor: set EXPORT_DIR, MODE and PATH_MODE below, select mesh objects, press Run.
 Blender MCP (execute_blender_code): run the file as is to export the selection, or load the functions only:
