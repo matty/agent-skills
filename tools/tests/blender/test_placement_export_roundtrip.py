@@ -444,11 +444,52 @@ def test_full_loop_with_merge():
                               "unity_target": "scene:MASTER"}, snap["source"]
 
 
+def test_names_and_folders():
+    """Labels drop Blender's .001, groups are collection paths; apply renames, regroups (creating collections, deleting
+    none) and is idempotent."""
+    build_kit()
+    build_master()
+    bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+    bpy.data.objects["W2"].name = "W1.001"          # a second "W1": the same label
+    bpy.data.objects["W1"].name = "Shop/Front"      # "/" reads as "-"
+    save_as(MASTER)
+    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    items = by_key(d)
+    assert items["W1.001"]["label"] == "W1" and items["Shop/Front"]["label"] == "Shop-Front", items
+    assert {i["group"] for i in d["items"]} == {"study"}, d["items"]
+    write_plan("MASTER", assign=[{"key": k, "id": "id_" + a, "was": "", "asset": items[k]["asset"]}
+                                 for k, a in (("Shop/Front", "W1"), ("W1.001", "W2"), ("D1", "D1"))])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    assert code == 0, text
+    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    items = {i["id"]: i for i in d["items"]}
+    keep = lambda pid, **kw: dict({k: items[pid][k] for k in ("asset", "pos", "rot", "scl")}, id=pid, key="x", **kw)
+    plan = dict(update=[keep("id_W1", label="Shop front", group="Street/Shops"), keep("id_D1", label="D1", group="")],
+                create=[{"id": "n1", "asset": "PROP_Desk_Free_A", "pos": [-4, 0, -2], "rot": [0, 0, 0, 1],
+                         "scl": [1, 1, 1], "key": "y", "label": "Reception desk", "group": "Lobby"}])
+    for run in (1, 2):                                      # the second run of the same plan changes nothing
+        write_plan("MASTER", **plan)
+        code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+        assert code == 0, text
+        d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+        got = {i["id"]: (i["label"], i["group"]) for i in d["items"]}
+        assert got == {"id_W1": ("Shop front", "Street/Shops"), "id_W2": ("W1", "study"), "id_D1": ("D1", ""),
+                       "n1": ("Reception desk", "Lobby")}, (run, got)
+        bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+        colls = sorted(c.name for c in bpy.data.collections if c.library is None)
+        assert colls == ["Lobby", "Shops", "Street", "study"], (run, colls)
+        w1 = next(o for o in bpy.data.objects if o.get("placement_id") == "id_W1")
+        assert [c.name for c in w1.users_collection] == ["Shops"] and w1.name == "Shop front", (run, w1.name)
+        assert bpy.data.collections["Shops"].name in bpy.data.collections["Street"].children, run
+        d1 = next(o for o in bpy.data.objects if o.get("placement_id") == "id_D1")
+        assert d1.name in bpy.context.scene.collection.objects and len(d1.users_collection) == 1, run
+
+
 CASES = [test_dump_in_unity_space, test_apply_round_trip_without_blend1, test_assign_refuses_a_changed_object,
          test_asm_scope_is_its_collection, test_instance_offset_warning, test_library_override_is_skipped_and_named,
          test_deleting_a_parent_keeps_its_children_in_place, test_moving_a_parent_leaves_its_child_placements,
          test_parent_and_child_both_moved_land_where_planned, test_unmoved_and_constrained_placements_stay_put,
-         test_failed_dump_leaves_no_stale_file,
+         test_failed_dump_leaves_no_stale_file, test_names_and_folders,
          test_full_loop_with_merge]
 
 

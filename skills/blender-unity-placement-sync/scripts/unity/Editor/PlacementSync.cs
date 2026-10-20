@@ -7,6 +7,12 @@
 // belong to the assembly's own scope. Anything else under the root (lights, Udon objects, folder empties) is ignored.
 // Transforms are relative to the scope root, in Unity space.
 //
+// Names and folders sync too: "label" is the instance's name without Unity's " (1)" suffix, "group" the path of the
+// non-placement GameObjects between the scope root and the instance ("Street/Shops"; "" directly under the root).
+// A placement parented under another placement is "nested": its folder is its parent's, so its group is not synced.
+// Apply renames an instance whose label changed and moves it under its group's folder, creating missing folder
+// GameObjects (identity transform) under the root; it never deletes a folder. "/" in a name reads as "-".
+//
 // Scope targets:  "scene:<root name>"                a root GameObject in an open scene (e.g. scene:MASTER)
 //                 "scene:<scene path>#<root name>"   the same, when more than one open scene has such a root
 //                 "prefab:<asset path>"              a prefab asset edited in place (an ASM_ assembly); the first
@@ -28,6 +34,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -35,7 +42,7 @@ using UnityEngine.SceneManagement;
 
 namespace PlacementSync
 {
-    [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; public string name; }
+    [Serializable] public class Item { public string id; public string asset; public float[] pos; public float[] rot; public float[] scl; public string key; public string name; public string label; public string group; public bool nested; }
     [Serializable] public class Dump { public string scope; public string side = "unity"; public string target; public string[] prefabRoots; public string note; public Item[] items; public string[] assets; }
     [Serializable] public class Assign { public string key; public string id; public string was; public string asset; }
     [Serializable] public class Plan { public string scope; public string side; public Assign[] assign; public string[] delete; public Item[] update; public Item[] create; }
@@ -191,6 +198,18 @@ namespace PlacementSync
                         if (t == null && kind == "update") errors.Add($"update: no placement with id {it.id} (creating it)");
                         t = Replace(root, t, prefab, it.id, inScene);
                         byId[it.id] = t;
+                    }
+                    if (it.group != null && !Nested(root, t) && GroupOf(root, t) != CleanGroup(it.group))
+                    {
+                        var folder = EnsureGroup(root, it.group, inScene);
+                        if (inScene) Undo.SetTransformParent(t, folder, "Placement Sync");
+                        else t.SetParent(folder, true);
+                    }
+                    if (!string.IsNullOrEmpty(it.label) && Clean(t.name) != Clean(it.label))
+                    {
+                        if (inScene) Undo.RecordObject(t.gameObject, "Placement Sync");
+                        t.gameObject.name = Clean(it.label);
+                        touched.Add(t.gameObject);
                     }
                     if (inScene) Undo.RecordObject(t, "Placement Sync");
                     SetRelative(root, t, it);
@@ -433,6 +452,54 @@ namespace PlacementSync
             return string.Join("/", parts);
         }
 
+        // A name as every side compares it: Unity's duplicate suffix " (1)" dropped, "/" (Find's path separator) read
+        // as "-", ends trimmed.
+        static string Clean(string name) => Regex.Replace(name ?? "", @" \(\d+\)$", "").Replace("/", "-").Trim();
+
+        static string CleanGroup(string group) =>
+            string.Join("/", (group ?? "").Split('/').Select(Clean).Where(p => p.Length > 0));
+
+        // Whether a placement sits under another placement below root (its folder is then its parent's).
+        static bool Nested(Transform root, Transform t)
+        {
+            var roots = PrefabRoots;
+            for (var c = t.parent; c != null && c != root; c = c.parent)
+                if (IsPlacement(c.gameObject, roots)) return true;
+            return false;
+        }
+
+        // The folder path between root and t: the names of its ancestors below root.
+        static string GroupOf(Transform root, Transform t)
+        {
+            var parts = new List<string>();
+            for (var c = t.parent; c != null && c != root; c = c.parent) parts.Add(Clean(c.name));
+            parts.Reverse();
+            return string.Join("/", parts.Where(p => p.Length > 0));
+        }
+
+        // The folder for `group` under root, creating the missing GameObjects (identity transform). Placements are
+        // never used as folders.
+        static Transform EnsureGroup(Transform root, string group, bool inScene)
+        {
+            var roots = PrefabRoots;
+            var cur = root;
+            foreach (var part in CleanGroup(group).Split('/').Where(p => p.Length > 0))
+            {
+                Transform next = null;
+                foreach (Transform c in cur)
+                    if (Clean(c.name) == part && !IsPlacement(c.gameObject, roots)) { next = c; break; }
+                if (next == null)
+                {
+                    var go = new GameObject(part);
+                    go.transform.SetParent(cur, false);
+                    if (inScene) Undo.RegisterCreatedObjectUndo(go, "Placement Sync");
+                    next = go.transform;
+                }
+                cur = next;
+            }
+            return cur;
+        }
+
         static Item ToItem(Transform root, Transform t)
         {
             var pos = root.InverseTransformPoint(t.position);
@@ -449,6 +516,9 @@ namespace PlacementSync
                 scl = new[] { ls.x / rs.x, ls.y / rs.y, ls.z / rs.z },
                 key = KeyOf(root, t),
                 name = NameOf(root, t),
+                label = Clean(t.name).Length > 0 ? Clean(t.name) : AssetName(t),
+                nested = Nested(root, t),
+                group = Nested(root, t) ? "" : GroupOf(root, t),
             };
         }
 
@@ -523,7 +593,7 @@ namespace PlacementSync
             }
         }
 
-        // Instantiate `prefab` in place of `old` (same parent and sibling index) or, with no old, under root.
+        // Instantiate `prefab` in place of `old` (same parent, sibling index and name) or, with no old, under root.
         static Transform Replace(Transform root, Transform old, GameObject prefab, string id, bool inScene)
         {
             var parent = old != null ? old.parent : root;
@@ -531,6 +601,7 @@ namespace PlacementSync
             if (inScene) Undo.RegisterCreatedObjectUndo(go, "Placement Sync");
             if (old != null)
             {
+                go.name = old.name;                     // a swap keeps the user's name (and its " (1)")
                 go.transform.SetSiblingIndex(old.GetSiblingIndex());
                 Destroy(old.gameObject, inScene);
             }

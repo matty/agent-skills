@@ -26,9 +26,17 @@ this scope's snapshot: empty plans are written); 1 bad input. commit: 0 committe
 
 Item (Unity space: left-handed, Y up, metres, relative to the scope root):
     {"id": "9f2c41d0a7b3", "asset": "EXT_Wall_2x3_A", "pos": [x, y, z], "rot": [x, y, z, w], "scl": [x, y, z],
+     "label": "Shopfront wall", "group": "Street/Shops",
      "key": "<side-local handle: Blender object name / Unity sibling-index path>"}
+"label" is the placement's name (Blender object, Unity GameObject) without the side's duplicate suffix (".001",
+" (1)"); "group" is its folder path below the scope root, "/"-separated (Blender collections, Unity parent
+GameObjects that are not placements; "" = directly under the root), not tracked where the side does not track it (a
+Unity placement parented under another placement is dumped with "nested": true). Every side cleans them the same way ("/" in a name becomes "-",
+ends trimmed). They merge three-way like the pose, each field on its own, so a rename on one side and a move on the
+other is no conflict. A snapshot without them counts as label = the asset name and group = "", so after an upgrade
+the side that renamed or organised wins. A dump without them (an older applier) leaves them as they are.
 Plans: "assign" [{"key", "id", "was", "asset"}] (an applier skips an assign whose object no longer has id `was` and
-asset `asset`), "delete" [id], "update" and "create" [item with the id].
+asset `asset`), "delete" [id], "update" and "create" [item with the id, label and group].
 """
 
 import argparse
@@ -89,8 +97,88 @@ def differences(a, b):
     return out
 
 
+def clean(name):
+    """A name as every side compares it: "/" (Unity's path separator) becomes "-", ends trimmed."""
+    return str(name).replace("/", "-").strip()
+
+
+def clean_group(group):
+    return "/".join(c for c in (clean(part) for part in str(group).split("/")) if c)
+
+
+def meta(item, field):
+    """The item's cleaned label or group, or None when its side does not track it."""
+    v = item.get(field)
+    if v is None or (field == "group" and item.get("nested")):
+        return None
+    if field == "label":
+        return clean(v) or None
+    return clean_group(v)
+
+
+def base_meta(item, field):
+    """A snapshot's label or group; a snapshot from before names synced counts as the defaults."""
+    v = meta(item, field)
+    if v is not None:
+        return v
+    return clean(item["asset"]) if field == "label" else ""
+
+
+META = (("label", "renamed"), ("group", "moved to folder"))
+
+
+def meta_differences(cur, want):
+    """Label and group differences of `cur` from `want`, skipping fields either does not track."""
+    out = []
+    for field, what in META:
+        a, b = meta(cur, field), meta(want, field)
+        if a is not None and b is not None and a != b:
+            out.append("%s %r -> %r" % (what, a, b))
+    return out
+
+
+def all_differences(cur, want):
+    return differences(cur, want) + meta_differences(cur, want)
+
+
+def changes(cur, b):
+    """What changed on one side since the snapshot `b` (its label and group compared with the snapshot's defaults)."""
+    out = differences(cur, b)
+    for field, what in META:
+        v = meta(cur, field)
+        if v is not None and v != base_meta(b, field):
+            out.append("%s %r -> %r" % (what, base_meta(b, field), v))
+    return out
+
+
+def merge_fields(l, u, b):
+    """Three-way merge of a placement both sides hold, field by field: the pose (asset, position, rotation, scale),
+    the label and the group. Returns (merged state, clashes); a clash is (field, blender's change, unity's change)."""
+    lp, up = differences(l, b), differences(u, b)
+    clash = []
+    if lp and up and differences(l, u):
+        clash.append(("pose", "; ".join(lp), "; ".join(up)))
+    merged = {k: (l if lp else (u if up else b))[k] for k in ("asset", "pos", "rot", "scl")}
+    for field in ("label", "group"):
+        bv, lv, uv = base_meta(b, field), meta(l, field), meta(u, field)
+        lch, uch = lv is not None and lv != bv, uv is not None and uv != bv
+        if lch and uch and lv != uv:
+            clash.append((field, "%r" % lv, "%r" % uv))
+        merged[field] = lv if lch else (uv if uch else bv)
+    return merged, clash
+
+
+def clash_text(clash):
+    return "; ".join("%s: blender %s, unity %s" % c for c in clash)
+
+
 def _state(item):
-    return {k: item[k] for k in ("asset", "pos", "rot", "scl")}
+    out = {k: item[k] for k in ("asset", "pos", "rot", "scl")}
+    for field, _what in META:
+        v = meta(item, field)
+        if v is not None:
+            out[field] = v
+    return out
 
 
 def label(it):
@@ -232,10 +320,12 @@ def merge(args):
     state, skip, unity_only, conflicts, blocked, lines, deletes = {}, [], [], [], [], [], []
     counts = {"unchanged": 0}
 
-    def push(side, kind, pid, item):
+    def push(side, kind, pid, item, current=None):
         plans[side][kind].append(dict(_state(item), id=pid, key=item.get("key", "")))
         src = "unity" if side == "blender" else "blender"
-        lines.append("  %-7s -> %-7s %-6s %s %s" % (src, side, kind, pid, item["asset"]))
+        what = "; ".join(all_differences(current, item)) if current else ""
+        lines.append("  %-7s -> %-7s %-6s %s %s%s" % (src, side, kind, pid, item["asset"],
+                                                      " (%s)" % what if what else ""))
 
     # Where each old asset's placements went, per receiving side: {"unity": {old: {new: count}}, "blender": ...}.
     # One new name the receiving side lacks is a rename; several are a split, which no single rename can finish.
@@ -323,8 +413,26 @@ def merge(args):
             skip.append(pid)
             lines.append("  BLOCKED %s %s -> %s: %s" % (kind, pid, side, blocked_why(side, item, current)))
             return
-        push(side, kind, pid, item)
+        push(side, kind, pid, item, current)
         state[pid] = _state(item)
+
+    def settle(pid, merged, l, u):
+        """Bring both sides to `merged`: a side that differs gets an update. When a side cannot take the asset,
+        neither side is sent anything and the placement stays at its synced state until the next merge."""
+        needs = [(side, cur) for side, cur in (("blender", l), ("unity", u)) if all_differences(cur, merged)]
+        if not needs:
+            state[pid] = _state(merged)
+            counts["unchanged"] += 1
+            return
+        for side, cur in needs:
+            if merged["asset"] not in (unity_assets if side == "unity" else blender_assets):
+                blocked.append(pid)
+                skip.append(pid)
+                lines.append("  BLOCKED update %s -> %s: %s" % (pid, side, blocked_why(side, merged, cur)))
+                return
+        for side, cur in needs:
+            push(side, "update", pid, merged, cur)
+        state[pid] = _state(merged)
 
     for pid in sorted(set(base) | set(L) | set(U)):
         b, l, u = base.get(pid), L.get(pid), U.get(pid)
@@ -339,11 +447,14 @@ def merge(args):
         if not b:
             if l and u:
                 diff = differences(l, u)
-                if not diff:
-                    state[pid] = _state(l)
-                    counts["unchanged"] += 1
+                merged, clash = merge_fields(l, u, {k: l[k] for k in ("asset", "pos", "rot", "scl")})
+                if diff:
+                    conflicts.append((pid, "added on both sides, different: " + "; ".join(diff), l, u, None, None))
+                elif clash:
+                    conflicts.append((pid, "added on both sides, different: " + clash_text(clash), l, u, None,
+                                      (merged, clash)))
                 else:
-                    conflicts.append((pid, "added on both sides, different: " + "; ".join(diff), l, u, None))
+                    settle(pid, merged, l, u)
             elif l:
                 send("unity", "create", pid, l)
             elif u["asset"] in blender_assets:
@@ -354,35 +465,43 @@ def merge(args):
                 lines.append("  unity-only %s %s (no such collection in Blender; left to Unity until it has one)"
                              % (pid, u["asset"]))
             continue
-        lc = "gone" if not l else ("changed" if differences(l, b) else "same")
-        uc = "gone" if not u else ("changed" if differences(u, b) else "same")
-        if lc == uc == "same":
-            state[pid] = _state(b)
-            counts["unchanged"] += 1
-        elif lc == "changed" and uc == "same":
-            send("unity", "update", pid, l, u)
-        elif lc == "same" and uc == "changed":
-            send("blender", "update", pid, u, l)
-        elif lc == uc == "gone":
+        if l and u:
+            merged, clash = merge_fields(l, u, b)
+            if clash:
+                conflicts.append((pid, clash_text(clash), l, u, b, (merged, clash)))
+            else:
+                settle(pid, merged, l, u)
+            continue
+        lc = "gone" if not l else ("changed" if changes(l, b) else "same")
+        uc = "gone" if not u else ("changed" if changes(u, b) else "same")
+        if lc == uc == "gone":
             lines.append("  deleted on both sides %s %s" % (pid, b["asset"]))
         elif lc == "gone" and uc == "same":
             send("unity", "delete", pid, b)
         elif lc == "same" and uc == "gone":
             send("blender", "delete", pid, b)
-        elif lc == uc == "changed" and not differences(l, u):
-            state[pid] = _state(l)
-            counts["unchanged"] += 1
         else:
             what = {"gone": "deleted", "changed": "changed"}
             why = "blender %s (%s), unity %s (%s)" % (
-                what[lc], "; ".join(differences(l, b)) if l else "-",
-                what[uc], "; ".join(differences(u, b)) if u else "-")
-            conflicts.append((pid, why, l, u, b))
+                what[lc], "; ".join(changes(l, b)) if l else "-",
+                what[uc], "; ".join(changes(u, b)) if u else "-")
+            conflicts.append((pid, why, l, u, b, None))
 
     unresolved = []
-    for pid, why, l, u, b in conflicts:
+    for pid, why, l, u, b, partial in conflicts:
         winner = take_id.get(pid, take_all)
-        if winner == "blender":
+        if winner and partial:
+            # Both sides hold it: the winner's values for the clashing fields, the merged values for the rest.
+            merged, clash = dict(partial[0]), partial[1]
+            src = l if winner == "blender" else u
+            for field, _a, _b in clash:
+                if field == "pose":
+                    merged.update({k: src[k] for k in ("asset", "pos", "rot", "scl")})
+                else:
+                    merged[field] = meta(src, field)
+            lines.append("  conflict %s resolved: %s wins (%s)" % (pid, winner, why))
+            settle(pid, merged, l, u)
+        elif winner == "blender":
             lines.append("  conflict %s resolved: blender wins (%s)" % (pid, why))
             if l is None:
                 send("unity", "delete", pid, u)
@@ -495,8 +614,8 @@ def commit(args):
             have = side.get(pid)
             if have is None:
                 bad.append("%s missing in %s" % (pid, name))
-            elif differences(have, want):
-                bad.append("%s in %s: %s" % (pid, name, "; ".join(differences(have, want))))
+            elif all_differences(have, want):
+                bad.append("%s in %s: %s" % (pid, name, "; ".join(all_differences(have, want))))
     for name, side in (("blender", L), ("unity", U)):
         for pid in side:
             if pid not in state and pid not in skip:

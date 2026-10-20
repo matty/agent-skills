@@ -15,6 +15,12 @@ names another. A single MASTER must have the scope's collection, since its whole
 insides. apply creates new placements inside that collection. Library overrides are not placements: dump skips them
 and warns. --libraries is for split files: a single MASTER's assets are its own KIT and ASM collections.
 
+Names and folders sync too. Each item carries "label", the empty's name without Blender's ".001" suffix, and
+"group", the path of collections from the scope collection down to the one holding the empty ("Street/Shops"; ""
+directly in the scope collection). apply renames an empty whose label changed and moves it to its group's
+collection, creating missing collections under the scope collection; it never deletes a collection. "/" in a name
+reads as "-" (Unity uses "/" as a path separator).
+
 Command line (the usual way). One writer per .blend: not while the file is open in a live Blender session.
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
         dump  --dir <placements> --scope MASTER [--libraries "kits/*.blend" "asm/*.blend"] [--collection NAME]
@@ -39,6 +45,7 @@ save_version 0 (no .blend1 backup). --libraries globs are relative to the .blend
 import glob
 import json
 import os
+import re
 import sys
 
 import bpy
@@ -50,6 +57,64 @@ PROP = "placement_id"
 # Use Space Transform and Bake Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test (SKILL.md).
 C = Matrix(((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))
 CT = C.transposed()
+
+
+def clean(name):
+    """A name as both sides compare it: Blender's duplicate suffix (.001) dropped, "/" read as "-", ends trimmed."""
+    return re.sub(r"\.\d{3,}$", "", name).replace("/", "-").strip()
+
+
+def _tree(coll):
+    """{collection: parent} for every local collection under `coll` (or the scene's), first parent found."""
+    root = coll if coll is not None else bpy.context.scene.collection
+    parents, todo = {root: None}, [root]
+    while todo:
+        c = todo.pop(0)
+        for child in sorted(c.children, key=lambda x: x.name):
+            if child not in parents and child.library is None:
+                parents[child] = c
+                todo.append(child)
+    return root, parents
+
+
+def _path(c, parents):
+    parts = []
+    while parents.get(c) is not None:
+        parts.append(clean(c.name))
+        c = parents[c]
+    return "/".join(reversed(parts))
+
+
+def groups_of(ob, tree):
+    """The group paths of every collection under the scope that holds `ob`, sorted (the first is its group)."""
+    _root, parents = tree
+    return sorted(_path(c, parents) for c in ob.users_collection if c in parents)
+
+
+def ensure_group(group, tree):
+    """The collection for `group` under the scope collection, creating the missing ones."""
+    cur, parents = tree
+    for part in [p for p in group.split("/") if p]:
+        nxt = next((c for c in sorted(cur.children, key=lambda x: x.name)
+                    if c.library is None and clean(c.name) == part), None)
+        if nxt is None:
+            nxt = bpy.data.collections.new(part)
+            cur.children.link(nxt)
+            parents[nxt] = cur
+        cur = nxt
+    return cur
+
+
+def move_to_group(ob, group, tree):
+    """Link `ob` into its group's collection and out of every other collection under the scope; collections outside
+    the scope (a REF collection, say) keep it."""
+    target = ensure_group(group, tree)
+    _root, parents = tree
+    if target not in ob.users_collection:
+        target.objects.link(ob)
+    for c in list(ob.users_collection):
+        if c is not target and c in parents:
+            c.objects.unlink(ob)
 
 
 def to_unity(mw):
@@ -125,6 +190,11 @@ def scope_warnings(scene=None, coll=None, items=None):
     if coll is not None and any(abs(v) > 1e-4 for v in coll.instance_offset):
         out.append("scope collection %s has instance_offset %s: where MASTER instances it, Blender draws it shifted "
                    "from the Unity prefab; zero it" % (coll.name, tuple(round(v, 4) for v in coll.instance_offset)))
+    tree = _tree(coll)
+    multi = sorted(o.name for o in placements(scene, coll) if len(groups_of(o, tree)) > 1)
+    if multi:
+        out.append("placement(s) in more than one collection under the scope: %s. Each syncs as being in the first "
+                   "(by path), and a folder change from Unity moves it out of the others" % ", ".join(multi))
     cons = sorted(o.name for o in placements(scene, coll) if len(o.constraints))
     if cons:
         out.append("placement(s) with constraints: %s. The sync reads and writes world poses and cannot see "
@@ -174,11 +244,13 @@ def dump(directory, scope, libraries=None, collection=None):
     if os.path.exists(out):
         os.remove(out)          # a dump that fails below leaves no stale file for the merge to read
     coll = scope_collection(scope, collection)
+    tree = _tree(coll)
     items = []
     for ob in placements(coll=coll):
         pos, rot, scl = to_unity(ob.matrix_world)
         items.append({"id": str(ob.get(PROP, "")), "asset": ob.instance_collection.name,
-                      "pos": pos, "rot": rot, "scl": scl, "key": ob.name})
+                      "pos": pos, "rot": rot, "scl": scl, "label": clean(ob.name) or ob.instance_collection.name,
+                      "group": (groups_of(ob, tree) or [""])[0], "key": ob.name})
     assets = {c.name for c in bpy.data.collections if c.library is not None and not c.is_missing}
     assets |= set(_library_index(libraries))
     if is_single():
@@ -290,7 +362,7 @@ def apply(directory, scope, libraries=None, collection=None):
     # Every placement's world pose before anything moves: those the plan does not move keep it, even when a placement
     # they are parented under moves (the update-path twin of keep_children).
     before = {o.name: o.matrix_world.copy() for o in placements(coll=coll)}
-    poses = {}
+    poses, named = {}, []
     for kind in ("update", "create"):
         for it in plan.get(kind, []):
             ob = by_id.get(it["id"])
@@ -305,7 +377,7 @@ def apply(directory, scope, libraries=None, collection=None):
             if ob is None:
                 if kind == "update":
                     errors.append("update: no placement with id %s (creating it)" % it["id"])
-                ob = bpy.data.objects.new(it["asset"], None)
+                ob = bpy.data.objects.new(it.get("label") or it["asset"], None)
                 ob.instance_type = "COLLECTION"
                 ob.empty_display_size = 0.25
                 (coll or bpy.context.scene.collection).objects.link(ob)
@@ -313,8 +385,16 @@ def apply(directory, scope, libraries=None, collection=None):
                 by_id[it["id"]] = ob
             ob.instance_collection = target
             poses[ob.name] = from_unity(it["pos"], it["rot"], it["scl"])
+            named.append((ob, it))
             done[kind] += 1
     set_world_poses(poses, before)
+    # Names and folders last: poses are keyed by object name.
+    tree = _tree(coll)
+    for ob, it in named:
+        if it.get("group") is not None and (groups_of(ob, tree) or [""])[0] != it["group"]:
+            move_to_group(ob, it["group"], tree)
+        if it.get("label") and clean(ob.name) != it["label"]:
+            ob.name = it["label"]
 
     print("[placements] applied to %s: %s" % (scope, ", ".join("%d %s" % (n, k) for k, n in done.items())))
     for e in errors:

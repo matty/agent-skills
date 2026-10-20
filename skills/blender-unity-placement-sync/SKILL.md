@@ -121,6 +121,11 @@ Full table, id handling, exit codes and file formats: `references/merge-rules.md
   has the collection, else kept unity-only until it does.
 - "Changed" covers position, rotation, scale and the asset itself (a piece swapped for another). Positions within
   1 mm, rotations within 0.01 deg and scale within 0.01% count as unchanged.
+- **Names and folders sync both ways**, each merged on its own, so a rename on one side and a move on the other is
+  no conflict. The name is the Blender empty's or Unity instance's name without `.001` or ` (1)`; the folder is the
+  collection path under the scope collection, or in Unity the parent GameObjects under the scope root. Apply creates
+  missing folders and never deletes one. A Unity piece parented under another piece keeps its parent as its folder.
+  `/` in a name becomes `-`.
 
 ## What keeps placements stable
 

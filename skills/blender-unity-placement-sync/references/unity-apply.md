@@ -99,8 +99,13 @@ Editor extensions such as Bakery can mark a scene dirty without changing it; tha
   first, keeping its world pose.
 - A second run of the same plan (way out (a) above, with `force: true`) skips the assigns and deletes the first run
   already did, without errors.
-- An asset swap (same id, another piece) instantiates the new prefab in the old one's place (same parent and sibling
-  index) and copies the id.
+- An asset swap (same id, another piece) instantiates the new prefab in the old one's place (same parent, sibling
+  index and name) and copies the id.
+- Names and folders: an update or create renames the instance when its name without ` (1)` differs from the plan's
+  `label`, and reparents it under the plan's `group` path (keeping its world pose), creating missing folder
+  GameObjects under the scope root at identity transform. Folders are never deleted, and a placement parented under
+  another placement is never moved to a folder. A plan item without `group` is not moved. The renames, reparents and
+  new folders are in the same Undo group (verified 2026-10-20, Unity 2022.3.22f1 batch: 31 of 31 checks).
 - A prefab target is loaded with `LoadPrefabContents` and written with `SaveAsPrefabAsset`: no Undo.
 
 ## Prefab roots

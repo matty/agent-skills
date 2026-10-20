@@ -58,6 +58,7 @@ def find(items, pid):
 
 def apply_side(items, plan, available=None, prefix="new"):
     """Both appliers' rules without the engines. Returns (items after, errors)."""
+    names = any("label" in i for i in items)
     items = copy.deepcopy(items)
     errors = []
     by_key = {i["key"]: i for i in items}
@@ -91,6 +92,11 @@ def apply_side(items, plan, available=None, prefix="new"):
                 items.append(cur)
                 by_id[p["id"]] = cur
             cur.update(asset=p["asset"], pos=list(p["pos"]), rot=list(p["rot"]), scl=list(p["scl"]))
+            if names:               # an applier that syncs names and folders (a nested Unity placement keeps its folder)
+                if p.get("label"):
+                    cur["label"] = p["label"]
+                if p.get("group") is not None and not cur.get("nested"):
+                    cur["group"] = p["group"]
     return items, errors
 
 
@@ -654,6 +660,105 @@ class SamePoseCopies(unittest.TestCase):
         sc = Scope(self, blender_layout(), unity_layout(), base())
         self.assertEqual(sc.merge(), 0)
         self.assertNotIn("same pose", sc.out)
+
+
+def named(items, side):
+    """A layout as the current appliers dump it: labels and folder groups (Blender's .001 already dropped)."""
+    labels = {"a1": ("Wall", "Street"), "b2": ("Wall", "Street"), "c3": ("Desk", "")}
+    out = []
+    for n, i in enumerate(items):
+        label, group = labels.get(i["id"], (i["asset"], ""))
+        out.append(dict(i, label=label, group=group, **({"key": str(n)} if side == "unity" else {})))
+    return out
+
+
+def named_snapshot():
+    snap = snapshot_of(blender_layout())
+    for i in named(blender_layout(), "blender"):
+        snap["items"][i["id"]].update(label=i["label"], group=i["group"])
+    return snap
+
+
+class NamesAndFolders(unittest.TestCase):
+    def test_rename_in_unity_and_move_in_blender_both_land(self):
+        b, u = named(blender_layout(), "blender"), named(blender_layout(), "unity")
+        find(b, "a1")["pos"] = [0, 0, -1]
+        find(u, "a1")["label"] = "Shop wall"
+        sc = Scope(self, b, u, named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.plan_counts(), {"blender": {"update": 1}, "unity": {"update": 1}})
+        self.assertIn("renamed 'Wall' -> 'Shop wall'", sc.out)
+        self.assertEqual(find(sc.bdump["items"], "a1")["label"], "Shop wall")
+        self.assertEqual(find(sc.udump["items"], "a1")["pos"], [0, 0, -1])
+        self.assertIn("unchanged 3", sc.out2)
+
+    def test_folder_change_in_blender_reaches_unity(self):
+        b = named(blender_layout(), "blender")
+        find(b, "c3")["group"] = "Office/Desks"
+        sc = Scope(self, b, named(blender_layout(), "unity"), named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {"update": 1}})
+        self.assertEqual(find(sc.udump["items"], "c3")["group"], "Office/Desks")
+        self.assertEqual(sc.load("synced.json")["items"]["c3"]["group"], "Office/Desks")
+
+    def test_renamed_differently_on_both_sides_conflicts_on_the_name_only(self):
+        b, u = named(blender_layout(), "blender"), named(blender_layout(), "unity")
+        find(b, "a1")["label"] = "North wall"
+        find(u, "a1")["label"] = "Shop wall"
+        find(u, "a1")["pos"] = [0, 0, -2]
+        sc = Scope(self, b, u, named_snapshot())
+        self.assertEqual(sc.merge(), 2)
+        self.assertIn("CONFLICT a1: label: blender 'North wall', unity 'Shop wall'", sc.out)
+        self.assertEqual(sc.loop("--take-id", "a1=blender"), 0)
+        for side in (sc.bdump, sc.udump):
+            self.assertEqual(find(side["items"], "a1")["label"], "North wall")
+            self.assertEqual(find(side["items"], "a1")["pos"], [0, 0, -2])     # Unity's move was no conflict
+
+    def test_first_sync_after_the_upgrade_keeps_whichever_side_renamed(self):
+        """An old snapshot has no names: the asset name and the root count as the starting point."""
+        b = named(blender_layout(), "blender")
+        u = [dict(i, label=i["asset"], group="", key=str(n)) for n, i in enumerate(blender_layout())]
+        find(b, "c3")["label"] = "DESK_A"
+        find(u, "c3")["label"] = "Lobby desk"
+        sc = Scope(self, b, u, base())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.plan_counts(), {"blender": {"update": 1}, "unity": {"update": 2}})
+        self.assertEqual(find(sc.udump["items"], "a1")["label"], "Wall")
+        self.assertEqual(find(sc.udump["items"], "b2")["group"], "Street")
+        self.assertEqual(find(sc.bdump["items"], "c3")["label"], "Lobby desk")
+
+    def test_nested_unity_placement_keeps_its_parent_as_folder(self):
+        b, u = named(blender_layout(), "blender"), named(blender_layout(), "unity")
+        find(b, "c3")["group"] = "Office"
+        find(u, "c3").update(group="", nested=True)
+        sc = Scope(self, b, u, named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {}})
+        self.assertIn("unchanged 3", sc.out2)
+
+    def test_slash_in_a_name_is_cleaned_once(self):
+        b = named(blender_layout(), "blender")
+        find(b, "a1")["label"] = "Shop/Front "
+        sc = Scope(self, b, named(blender_layout(), "unity"), named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(find(sc.udump["items"], "a1")["label"], "Shop-Front")
+        self.assertIn("unchanged 3", sc.out2)
+
+    def test_an_older_applier_without_names_gets_no_renames(self):
+        b = named(blender_layout(), "blender")
+        find(b, "a1")["label"] = "Shop wall"
+        sc = Scope(self, b, unity_layout(), base())
+        self.assertEqual(sc.loop(), 0)
+        self.assertEqual(sc.plan_counts(), {"blender": {}, "unity": {}})
+
+    def test_a_create_carries_its_name_and_folder(self):
+        b = named(blender_layout(), "blender") + [dict(it("", "DESK_A", (-1, 0, -1), key="Desk.002"),
+                                                       label="Reception desk", group="Lobby")]
+        sc = Scope(self, b, named(blender_layout(), "unity"), named_snapshot())
+        self.assertEqual(sc.loop(), 0)
+        made = sc.pu["create"][0]
+        self.assertEqual((made["label"], made["group"]), ("Reception desk", "Lobby"))
+        sc.converged()
 
 
 class BadInput(unittest.TestCase):

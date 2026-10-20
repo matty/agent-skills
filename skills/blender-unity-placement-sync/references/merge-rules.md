@@ -23,6 +23,24 @@ Each placement id is compared on each side against the snapshot (`<scope>.synced
 | - | new | Created in Blender when Blender has the collection; otherwise kept as **unity-only** in the snapshot, and created in Blender by a later merge once it has the collection |
 | new | new, same id | Nothing to do if they match, otherwise a **conflict** |
 
+The table runs for each field on its own: the pose (position, rotation, scale and asset), the name (`label`) and the
+folder (`group`). A rename in Unity and a move in Blender both go across with no conflict. The report says which
+field clashed (`CONFLICT id: label: blender 'North wall', unity 'Shop wall'`), and `--take-id` picks the winner
+for the clashing fields only.
+
+| Field | Blender | Unity | Compared as |
+|---|---|---|---|
+| `label` | The empty's name | The instance root's name | Without the duplicate suffix (`.001`, ` (1)`), `/` read as `-`, ends trimmed. Apply renames only when that differs, so a ` (1)` the user left stays |
+| `group` | The collections from the scope collection down to the empty's (`Street/Shops`; `""` directly in it) | The GameObjects between the scope root and the instance | Each part cleaned like a name. Apply links the empty into that collection and out of the others under the scope (a REF collection outside it keeps it), or reparents the instance, creating missing folders (Unity: identity transform). Neither side deletes an emptied folder |
+
+- A Unity placement parented under another placement is dumped `"nested": true`: its folder is its parent, so its
+  `group` is not compared and apply never moves it. Its name still syncs.
+- A snapshot from before names synced counts as `label` = the asset name and `group` = `""`, so the first sync
+  after the upgrade keeps whichever side renamed or organised; both did, differently, is a conflict.
+- A dump without the fields (an older copy of either applier) leaves names and folders alone on that side.
+- An asset swap keeps the instance's name and place on both sides.
+- A Blender empty in two collections under the scope syncs as being in the first by path; the dump warns.
+
 "Changed" covers position, rotation, scale and the asset (a piece swapped for another). A change pushed to a side that
 has no such asset (no prefab of that name in Unity, no collection of that name in Blender, for example a prefab renamed
 in Unity) is **BLOCKED** instead: the item keeps its snapshot entry and the next merge tries again. The report line
@@ -112,6 +130,9 @@ merge run after a commit as a check just writes empty plans.
 | `<scope>.report.txt` | merge | The printed report, then the unresolved conflicts as JSON |
 | `<scope>.synced.json` | commit | `items` and `source` (Blender file name and collection, Unity target) |
 
-An item is `{"id", "asset", "pos": [x, y, z], "rot": [x, y, z, w], "scl": [x, y, z], "key"}` in Unity space (left
-handed, Y up, metres) relative to the scope root. `key` is the side's handle (the Blender object name, the Unity
-sibling-index path, valid only until the hierarchy changes); Unity adds `name`, the hierarchy path, for reports.
+An item is `{"id", "asset", "pos": [x, y, z], "rot": [x, y, z, w], "scl": [x, y, z], "label", "group", "key"}` in
+Unity space (left handed, Y up, metres) relative to the scope root. `label` and `group` are the name and folder
+(table above; Unity adds `"nested": true` for a placement under another). `key` is the side's handle (the Blender
+object name, the Unity sibling-index path such as `3/0/2`, valid only until the hierarchy changes), never a name;
+Unity adds `name`, the hierarchy path, for reports. Report and plan files are the only place these paths appear: the
+objects themselves keep plain names, and the id lives in `placement_id` / the `PlacementId` component.
