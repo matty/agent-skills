@@ -154,14 +154,14 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
   texel to the tile edge: bilinear filtering reads neighbouring texels, so closer charts bleed.
 - Texel scale: `footprint_px = texels_per_m x sqrt(surface area m2 / b) x lightmap scale x LOD scale` px per UV unit;
   b = the bounding box of all the UV2 charts together as a share of the tile. The engine decides what it packs and
-  each LOD's scale (Unity: that box, so the atlas cost does not depend on the layout, and 0.5^n for `_LOD<n>`, each
-  LOD in its own space: engine notes). `ua.lightmap_footprint(ob, ...)` plans with b = 0.85.
+  each LOD's scale (Unity: that box, its cost blind to the layout, 0.5^n per `_LOD<n>`; Bakery: by area, engine
+  notes). `ua.lightmap_footprint(ob, ...)` plans with b = 0.85; `lightmapper="bakery"` (also `pack_lightmap`, audit).
 - Pack the charts to fill their box, at any aspect ratio: empty space inside it costs texels, effective density
   `texels_per_m x sqrt(charts' area / box area)`; the audit notes a fill under 0.5 at footprints of 64 px or more.
 - `ua.pack_lightmap(objs, texels_per_m, scale)` packs 2 px gaps for b = 1, the smallest texel scale (each LOD for its
   own). A UV2 too small for 2-texel gaps is packed and checked for 64 px, with a note: a Free prop (a Free-sized PROP
   or FOL piece) is probe-lit, LODs follow their piece, other pieces need a higher lightmap scale (the lighting skill
-  decides). Audit with `ua.audit(ob, texels_per_m=..., lightmap_scale=...)`: gaps, bends, bounds, fill.
+  decides). Audit with `ua.audit(ob, texels_per_m=..., lightmap_scale=...)`: gaps, bends, bounds, fill, density.
 - Unwrap it seam-based (`ua.seams_from_hard_edges(objs)`, then `uv.unwrap(method="ANGLE_BASED", margin=0.001)` on
   the second map) or copy a unique UV0 with its stacks and mirrors pulled apart: few, large, straight charts. Smart UV
   Project only with an audit after it (at `island_margin=0.001` it joined a door wall across four 90 deg corners).

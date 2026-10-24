@@ -515,6 +515,66 @@ class UvAuditMaths(unittest.TestCase):
         self.assertAlmostEqual(r["footprint_px"], 438.2, delta=0.1)     # Unity measured a 438.0 px tile
         self.assertAlmostEqual(ua.footprint_px(60.0, 20, 1.0, 0.125), 438.18, places=1)
 
+    def test_bakery_footprint(self):
+        # Bakery (ftBuildGraphics.cs, read 2026-10-24): a rect of side texels/m x sqrt(2 x area x Scale In Lightmap)
+        # on the UV2 box's short side, less its Default packer's 3-texel inset; no LOD factor
+        ua = self.ua
+        self.assertEqual((ua.BAKERY_AREA_FACTOR, ua.BAKERY_INSET_TEXELS, ua.EFFECTIVE_DENSITY_MIN), (2.0, 3, 0.5))
+        self.assertEqual([ua.lightmapper_name(n) for n in (None, "progressive", "Bakery")], ["unity", "unity", "bakery"])
+        with self.assertRaises(ValueError):
+            ua.lightmapper_name("enlighten")
+        side = 20 * math.sqrt(2 * 6.98)                   # the cinema's channelled wall panel: 74.7 px
+        self.assertAlmostEqual(ua.footprint_px(6.98, 20, 1.0, 1.0, "bakery"), side - 6, places=9)
+        self.assertAlmostEqual(ua.footprint_px(6.98, 20, 1.0, 0.25, "bakery"), (side - 6) / 0.5, places=9)   # square
+        self.assertAlmostEqual(ua.footprint_px(6.98, 20, 1.0, 0.25, "bakery", short_side=0.25), (side - 6) / 0.25)
+        self.assertAlmostEqual(ua.footprint_px(6.98, 20, 4.0, 1.0, "bakery"), 2 * side - 6, places=9)   # s = 2: S 4
+        self.assertEqual(ua.footprint_px(0.001, 20, 1.0, 1.0, "bakery"), 0.0)        # a 0.9 px rect: nothing left
+        self.assertEqual((ua.lod_factor(2), ua.lod_factor(2, "bakery")), (0.25, 1.0))
+        self.assertAlmostEqual(ua.scale_factor(32, 64), 2.0)
+        self.assertAlmostEqual(ua.scale_factor(32, 64, "bakery"), (70 / 38.0) ** 2)
+        self.assertAlmostEqual(ua.uv_box_short_side([(0.1, 0.2), (0.9, 0.3)]), 0.1, places=9)
+        self.assertAlmostEqual(ua.uv_box_short_side([(-0.5, 0.2), (0.9, 1.5)]), 0.8, places=9)   # clipped to the tile
+
+    def test_bakery_effective_density_gate(self):
+        ua = self.ua
+        # two 2 x 2 m quads whose charts (0.05 on a side) sit in opposite corners: the box is the whole tile, the
+        # charts cover 0.005 of it. Bakery at 40 texels/m: rect 160 px, footprint 154 px, effective density
+        # 154 x sqrt(0.005 / 8) = 3.85 texels/m, under half of 40: an issue
+        d = islands([square_uv(0.0, 0.0, 0.05), square_uv(0.95, 0.95, 0.05)])
+        d["co"] = d["co"] * np.array([2.0, 2.0, 1.0])
+        r = self.m(d, purpose="lightmap", texels_per_m=40, lightmapper="bakery")
+        self.assertEqual(r["lightmapper"], "bakery")
+        self.assertAlmostEqual(r["footprint_px"], 40 * math.sqrt(16) - 6, places=1)
+        self.assertAlmostEqual(r["effective_texels_per_m"], 154 * math.sqrt(0.005 / 8), places=2)
+        self.assertTrue(any(i.startswith("effective lightmap density 3.9 texels/m, under half the 40 planned")
+                            for i in r["issues"]), r["issues"])
+        self.assertFalse(any("fill" in n for n in r["notes"]), r["notes"])        # the issue says it once
+        unity = self.m(d, purpose="lightmap", texels_per_m=40)                    # Unity: the advisory note only
+        self.assertFalse(any("effective lightmap density" in i for i in unity["issues"]), unity["issues"])
+        self.assertTrue(any("fill" in n for n in unity["notes"]), unity["notes"])
+        # one chart filling its box: no issue; density (154 / 0.9) x sqrt(0.81 / 4) = 77 texels/m
+        d = islands([square_uv(0.05, 0.05, 0.9)])
+        d["co"] = d["co"] * np.array([2.0, 2.0, 1.0])
+        r = self.m(d, purpose="lightmap", texels_per_m=40, lightmapper="bakery")
+        self.assertFalse(any("effective" in i for i in r["issues"]), r["issues"])
+        self.assertAlmostEqual(r["footprint_px"], (40 * math.sqrt(8) - 6) / 0.9, places=1)
+        self.assertAlmostEqual(r["effective_texels_per_m"], (40 * math.sqrt(8) - 6) / 0.9 * 0.45, places=1)
+        # Scale In Lightmap 0.25 on purpose plans half the density (sqrt(0.25)): judged against half of 40, not 80.
+        # Charts 0.3 on a side in opposite corners at 80 texels/m: rect 160 px, (160 - 6) x sqrt(0.18 / 8) = 23.1
+        corners = islands([square_uv(0.0, 0.0, 0.3), square_uv(0.7, 0.7, 0.3)])
+        corners["co"] = corners["co"] * np.array([2.0, 2.0, 1.0])
+        r = self.m(corners, purpose="lightmap", texels_per_m=80, lightmapper="bakery", lightmap_scale=0.25)
+        self.assertAlmostEqual(r["effective_texels_per_m"], 154 * math.sqrt(0.18 / 8), places=1)
+        self.assertLess(r["effective_texels_per_m"], 0.5 * 80)                     # under half the scene's 80 ...
+        self.assertFalse(any("effective" in i for i in r["issues"]), r["issues"])    # ... but not of its own 40
+        # under 64 px the 64 px note governs, as under Unity
+        r = self.m(d, purpose="lightmap", texels_per_m=10, lightmapper="bakery")
+        self.assertTrue(any("under 64" in n for n in r["notes"]), r["notes"])
+        self.assertEqual(r["lod"], 0)
+        r1 = self.m(d, purpose="lightmap", texels_per_m=40, lightmapper="bakery", lod=1)
+        self.assertEqual(r1["footprint_px"], self.m(d, purpose="lightmap", texels_per_m=40,
+                                                    lightmapper="bakery")["footprint_px"])
+
     def test_lod_scale(self):
         ua = self.ua
         self.assertEqual([ua.lod_level(n) for n in ("KIT_Wall_LOD1", "KIT_Wall_LOD2.001", "KIT_Wall", "KIT_LODGE",

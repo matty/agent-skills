@@ -25,7 +25,7 @@ Command line (one line per object; exit code 1 when anything needs a look, 2 for
             --purpose unique|tiling|trim|lightmap --map 1024|2048x1024|165.2 [--layer 0|1|name|active]
             [--material "M_Trim*"] [--pad 16] [--td 512]
             [--baking] [--directional] [--text] [--rows 0-128,128-192] [--lightmap-texels 20 --lightmap-scale 1]
-            [--lod 1] [--shared] [--json r.json]
+            [--lightmapper unity|bakery] [--lod 1] [--shared] [--json r.json]
 
 Purposes: unique (own texture or atlas: inside 0-1, no partial overlaps, gap map/64), tiling and trim (may run
 outside 0-1 and overlap: distortion, density per island, strip direction and rows), lightmap (inside 0-1, nothing
@@ -71,7 +71,11 @@ FOOTPRINT_COVERAGE = 0.85    # b, the UV2 bounding-box share of the 0-1 tile: pl
 LIGHTMAP_BOX_FILL_NOTE = 0.5 # a lightmap audit notes UV2 charts filling less than this share of their bounding box
 LIGHTMAP_MIN_FOOTPRINT_PX = 64  # house guidance: a UV2 too small for 2-texel gaps is packed and checked for 64 px
 LOD_SCALE = 0.5              # each LOD level halves a renderer's lightmap texel scale (LOD1 0.5, LOD2 0.25; Unity)
-UNWRAP_MARGIN = 0.001        # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
+LIGHTMAPPERS = ("unity", "bakery")   # whose footprint the lightmap calls use; "progressive" is accepted for unity
+BAKERY_AREA_FACTOR = 2.0     # Bakery sizes a renderer by the sum of |cross| over its triangles: 2 x its area
+BAKERY_INSET_TEXELS = 3      # Bakery's Default atlas packer insets each rect this much (engine notes)
+EFFECTIVE_DENSITY_MIN = 0.5  # Bakery: an issue when the charts get under this share of the planned texels per metre
+UNWRAP_MARGIN = 0.001       # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
@@ -110,13 +114,44 @@ def default_pad(map_px, purpose="unique"):
     return max(map_size(map_px)) / 64.0
 
 
-def footprint_px(area_m2, texels_per_m, scale=1.0, coverage=FOOTPRINT_COVERAGE):
-    """The lightmap texel scale of a renderer's UV2, in texels per UV unit (the side its whole 0-1 tile would have):
-    texels_per_m x sqrt(area / b) x scale, b (coverage) = the bounding box of ALL its UV2 charts together as a share
-    of the tile, scale = the renderer's lightmap scale x LOD_SCALE^n for LOD n. A lightmapper packs only that box
+def lightmapper_name(name):
+    """unity (also "progressive", the world spec's lighting.baker for it) or bakery; raises ValueError otherwise."""
+    n = str(name or "unity").strip().lower()
+    n = "unity" if n == "progressive" else n
+    if n not in LIGHTMAPPERS:
+        raise ValueError("lightmapper must be unity (or progressive) or bakery, not %r" % (name,))
+    return n
+
+
+def lod_factor(lod, lightmapper="unity"):
+    """The lightmap texel-scale factor of LOD n: Unity's 0.5^n; Bakery sizes each LOD by its own area, so 1."""
+    return LOD_SCALE ** int(lod or 0) if lightmapper_name(lightmapper) == "unity" else 1.0
+
+
+def footprint_px(area_m2, texels_per_m, scale=1.0, coverage=FOOTPRINT_COVERAGE, lightmapper="unity",
+                 short_side=None):
+    """The lightmap texel scale of a renderer's UV2, in texels per UV unit (the side its whole 0-1 tile would have).
+    Unity: texels_per_m x sqrt(area / b) x scale, b (coverage) = the bounding box of ALL its UV2 charts together as a
+    share of the tile, scale = the renderer's lightmap scale x LOD_SCALE^n for LOD n. A lightmapper packs only that box
     (Unity 2022.3, measured 2026-10-17), so the atlas cost is (texels_per_m x scale)^2 x area whatever the layout.
-    b = 0.85 plans before a UV2 exists; b = 1 is the smallest texel scale (what UV2 gaps are packed for)."""
+    b = 0.85 plans before a UV2 exists; b = 1 is the smallest texel scale (what UV2 gaps are packed for).
+    Bakery: a rect of side L = texels_per_m x sqrt(2 x area x scale) on the box's short side (scale = Scale In
+    Lightmap, acting on the area, no LOD factor), its Default packer's 3-texel inset taken off: (L - 6) / short_side,
+    short_side = the box's short side in UV, sqrt(b) (a square box) when not given; 1 is the smallest texel scale."""
+    if lightmapper_name(lightmapper) == "bakery":
+        side = texels_per_m * math.sqrt(BAKERY_AREA_FACTOR * max(float(area_m2), 0.0) * max(float(scale), 0.0))
+        short = math.sqrt(max(float(coverage), 1e-9)) if short_side is None else max(float(short_side), 1e-9)
+        return max(side - 2.0 * BAKERY_INSET_TEXELS, 0.0) / short
     return texels_per_m * math.sqrt(max(float(area_m2), 0.0) / max(float(coverage), 1e-9)) * scale
+
+
+def scale_factor(footprint, want_px, lightmapper="unity"):
+    """How much to multiply Scale In Lightmap by to take a footprint to want_px (with the box filling the tile):
+    Unity's is linear, Bakery's acts on the area (and its inset stays)."""
+    footprint = max(float(footprint), 1e-9)
+    if lightmapper_name(lightmapper) == "bakery":
+        return ((want_px + 2.0 * BAKERY_INSET_TEXELS) / (footprint + 2.0 * BAKERY_INSET_TEXELS)) ** 2
+    return want_px / footprint
 
 
 def lightmap_capacity_px(charts, gap_texels=LIGHTMAP_GAP_TEXELS, edge_texels=1.0):
@@ -127,10 +162,10 @@ def lightmap_capacity_px(charts, gap_texels=LIGHTMAP_GAP_TEXELS, edge_texels=1.0
     return (k - 1) * gap_texels + 2.0 * edge_texels
 
 
-def lightmap_small_note(footprint, reason=None, lod=0):
+def lightmap_small_note(footprint, reason=None, lod=0, lightmapper="unity"):
     """The note for a UV2 whose footprint is under 64 px. reason (from pack_lightmap): why it was packed for 64 px
     instead; without it, the audit's note that it checks the layout as packed for 64 px. The probe-lit advice is
-    judged on LOD0 only: a LOD1+ follows its piece."""
+    judged on LOD0 only: a LOD1+ follows its piece. The Scale In Lightmap factor is the lightmapper's."""
     head = ("UV2 packed for %d px: %.1f px is too small for 2-texel gaps (%s)"
             % (LIGHTMAP_MIN_FOOTPRINT_PX, footprint, reason) if reason else
             "lightmap footprint %.1f px is under %d: checked as packed for %d px"
@@ -139,7 +174,7 @@ def lightmap_small_note(footprint, reason=None, lod=0):
         return ("%s; LOD%d follows its piece: lightmapped with its LOD0, or probe-lit via lod_lightmap: false"
                 % (head, lod))
     return ("%s; probe-light it if it is a Free prop (a Free-sized PROP or FOL piece), else raise its Scale In "
-            "Lightmap %.1fx to light it" % (head, LIGHTMAP_MIN_FOOTPRINT_PX / max(footprint, 1e-9)))
+            "Lightmap %.1fx to light it" % (head, scale_factor(footprint, LIGHTMAP_MIN_FOOTPRINT_PX, lightmapper)))
 
 
 def lod_level(name):
@@ -156,6 +191,15 @@ def uv_box_share(uv):
         return 1.0
     lo, hi = np.clip(uv.min(0), 0, 1), np.clip(uv.max(0), 0, 1)
     return float(max((hi - lo).prod(), 1e-9))
+
+
+def uv_box_short_side(uv):
+    """The short side of that bounding box, clipped to the tile, in UV units (Bakery maps it onto its rect's side)."""
+    uv = np.asarray(uv, float).reshape(-1, 2)
+    if not len(uv):
+        return 1.0
+    lo, hi = np.clip(uv.min(0), 0, 1), np.clip(uv.max(0), 0, 1)
+    return float(max((hi - lo).min(), 1e-9))
 
 
 def parse_rows(rows):
@@ -609,14 +653,18 @@ def _stacked(n, pa_px, pb_px):
 
 
 def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="unique", baking=False, raster=True,
-            directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, lod=0):
+            directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, lod=0,
+            lightmapper="unity"):
     """Measure one UV layer given as flat arrays (what _arrays returns: co, lv, ls, lt, uv, cn, tri, tpoly, and
     optionally layer, layers, low, text, text_up). No bpy. map_px None: 1024 for a texture; for a lightmap, the
-    footprint of its measured UV2 bounding box at texels_per_m x lightmap_scale x LOD_SCALE^lod. text=True checks
-    the faces marked as text (d["text"]) and raises when none is. Returns a report dict whose "issues" list is empty
-    when nothing needs a look and whose "notes" are worth a look; references/uv-audit.md lists every field."""
+    footprint of its measured UV2 bounding box at texels_per_m x lightmap_scale x LOD_SCALE^lod (lightmapper
+    "bakery": Bakery's footprint, see footprint_px). text=True checks the faces marked as text (d["text"]) and
+    raises when none is. Returns a report dict whose "issues" list is empty when nothing needs a look and whose
+    "notes" are worth a look; references/uv-audit.md lists every field."""
     purpose = _purpose(purpose, texels_per_m=texels_per_m)
-    lightmap_scale = float(lightmap_scale) * LOD_SCALE ** int(lod or 0)
+    lightmapper = lightmapper_name(lightmapper)
+    planned_scale = float(lightmap_scale)                    # Scale In Lightmap as set, for the density gate
+    lightmap_scale = planned_scale * lod_factor(lod, lightmapper)
     text = bool(text) and purpose != "lightmap"              # lightmaps carry no text
     npoly = len(d["ls"])
     tmark = d.get("text")
@@ -624,17 +672,19 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     if text and not tmark.any():
         raise ValueError("text=True checks the text faces only: mark the text faces with uv_text (a boolean face "
                          "attribute, True on the faces that carry text or decals)")
-    lightmap_fp = None
+    lightmap_fp = fp_exact = None
     if map_px is None:
         if purpose == "lightmap":
             if not texels_per_m:
                 raise ValueError("a lightmap audit needs map_px (the footprint) or texels_per_m (and lightmap_scale)")
             b = uv_box_share(d["uv"])
-            fp = footprint_px(float(_triangles(d)["a3"].sum()), texels_per_m, lightmap_scale, b)
+            fp = footprint_px(float(_triangles(d)["a3"].sum()), texels_per_m, lightmap_scale, b, lightmapper,
+                              uv_box_short_side(d["uv"]) if lightmapper == "bakery" else None)
             # too small for 2-texel gaps (under 64 px): the UV2 is packed and checked for 64 px, with a note
             graded = max(fp, float(LIGHTMAP_MIN_FOOTPRINT_PX))
-            lightmap_fp = {"footprint_px": round(fp, 1), "uv2_box_share": round(b, 4), "graded_at_px": round(graded, 1)}
-            map_px = graded
+            lightmap_fp = {"footprint_px": round(fp, 1), "uv2_box_share": round(b, 4), "graded_at_px": round(graded, 1),
+                           "lightmapper": lightmapper}
+            map_px, fp_exact = graded, fp
         else:
             map_px = 1024
     w, h = map_size(map_px)
@@ -765,17 +815,31 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     if lightmap_fp:
         rep.update(lightmap_fp)
     rep["notes"] = []
+    low_density = None
     if purpose == "lightmap":
-        # a lightmapper packs the charts' bounding box: empty space inside it costs texels (Unity 2022.3, measured)
+        # a lightmapper packs the charts' bounding box: empty space inside it costs texels (Unity 2022.3, measured;
+        # Bakery maps the box onto a rect sized by the surface area, so the same holds)
         box = uv_box_share(uv)
-        fill = min(1.0, float(np.abs(au[good]).sum()) / max(box, 1e-12))
+        charts = float(np.abs(au[good]).sum())
+        fill = min(1.0, charts / max(box, 1e-12))
+        eff = None
+        if texels_per_m and lightmapper == "bakery" and fp_exact is not None:
+            eff = fp_exact * math.sqrt(charts / max(float(w3.sum()), 1e-30))   # footprint x sqrt(UV area / area)
+        elif texels_per_m:
+            eff = texels_per_m * lightmap_scale * math.sqrt(fill)
         rep.update({"lod": int(lod or 0), "uv2_box_fill": round(fill, 4),
-                    "effective_texels_per_m": (round(texels_per_m * lightmap_scale * math.sqrt(fill), 2)
-                                               if texels_per_m else None)})
+                    "effective_texels_per_m": round(eff, 2) if eff is not None else None})
         fp = rep.get("footprint_px")
+        # Bakery: the density planned for it, texels_per_m x its linear scale sqrt(Scale In Lightmap), at most 1
+        planned = texels_per_m * min(1.0, math.sqrt(planned_scale)) if texels_per_m else None
         if (fp if fp is not None else float(max(w, h))) < LIGHTMAP_MIN_FOOTPRINT_PX:
             if fp is not None:                                     # under 64 px the fallback governs, not the fill
-                rep["notes"].append(lightmap_small_note(fp, lod=int(lod or 0)))
+                rep["notes"].append(lightmap_small_note(fp, lod=int(lod or 0), lightmapper=lightmapper))
+        elif lightmapper == "bakery" and eff is not None and eff < EFFECTIVE_DENSITY_MIN * planned:
+            low_density = ("effective lightmap density %.1f texels/m, under half the %g planned (Bakery sizes the UV2 "
+                           "by its area and bounds; its charts fill %.0f%% of their bounding box): pack them to fill "
+                           "it, or raise Scale In Lightmap and pack again for the larger footprint"
+                           % (eff, round(planned, 2), 100 * fill))
         elif fill < LIGHTMAP_BOX_FILL_NOTE:
             rep["notes"].append("UV2 charts fill %.0f%% of their bounding box: the empty space costs lightmap "
                                 "texels%s; pack the charts to fill their box (any aspect ratio)"
@@ -803,6 +867,8 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
             rep["padding_ok"] = gap is None
             rep["min_gap_px"] = None if gap is None else round(gap / k, 2)
     rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text)
+    if low_density:
+        rep["issues"].append(low_density)
     return rep
 
 
@@ -927,7 +993,7 @@ def measure_shared(named, map_px=1024, pad_px=None, purpose="unique"):
 # ----------------------------------------------------------------------------------------------- audit (bpy)
 def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None, baking=False, lightmap=False,
           directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, material=None, lod=None,
-          evaluated=True, raster=True):
+          evaluated=True, raster=True, lightmapper="unity"):
     """Measure one object's UV map on the evaluated mesh in world space; changes nothing. purpose: unique (default),
     tiling, trim or lightmap; lightmap=True or texels_per_m makes it a lightmap audit, and either with another
     purpose raises. layer: index or name; by default 0 (UV0), or 1 for a lightmap; "active" for the active map.
@@ -938,6 +1004,8 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
     letters' up on +V); raises when none is marked. material: only the faces whose material name matches (a name or
     an fnmatch pattern), for a mesh that mixes tiling, trim and unique materials; raises when no face matches.
     lod: the LOD level of a lightmap audit (texel scale x LOD_SCALE^lod); None reads it from a <Piece>_LOD<n> name.
+    lightmapper: whose footprint a lightmap audit uses, "unity" (default; "progressive") or "bakery" (Bakery's
+    area-based rect, no LOD factor, and an issue when the charts get under half the planned texels per metre).
     rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192"."""
     purpose = _purpose(purpose, lightmap, texels_per_m)
     layer = _resolve_layer(layer, purpose)
@@ -955,7 +1023,8 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
     rep = measure(d, ob.name, map_px=map_px, pad_px=pad_px, px_per_m=px_per_m, purpose=purpose, baking=baking,
                   raster=raster, directional=directional, rows=rows, texels_per_m=texels_per_m,
                   lightmap_scale=lightmap_scale, text=text,
-                  lod=(lod if lod is not None else lod_level(ob.name)) if purpose == "lightmap" else 0)
+                  lod=(lod if lod is not None else lod_level(ob.name)) if purpose == "lightmap" else 0,
+                  lightmapper=lightmapper)
     if material:
         rep["material"] = material
     return rep
@@ -1030,18 +1099,22 @@ def audit_shared(objects, layer=None, map_px=1024, pad_px=None, purpose="unique"
     return measure_shared(named, map_px=map_px, pad_px=pad_px, purpose=purpose)
 
 
-def lightmap_footprint(ob, texels_per_m, scale=1.0, coverage=FOOTPRINT_COVERAGE, measured=False, layer=1, lod=None):
+def lightmap_footprint(ob, texels_per_m, scale=1.0, coverage=FOOTPRINT_COVERAGE, measured=False, layer=1, lod=None,
+                       lightmapper="unity"):
     """The lightmap texel scale of this object's UV2 in texels per UV unit, rounded down: footprint_px of its
     world-space surface area (evaluated mesh). coverage is b, the bounding box of all its UV2 charts as a share of the
     tile: 0.85 plans before a UV2 exists, 1.0 gives the smallest scale (what pack_lightmap packs for); measured=True
-    reads b from the object's lightmap UV (layer, default the second UV map). lod: its LOD level (scale x
-    LOD_SCALE^lod: each LOD gets its own lightmap space); None reads it from a <Piece>_LOD<n> name."""
+    reads b (and, for Bakery, the box's short side) from the object's lightmap UV (layer, default the second UV map).
+    lod: its LOD level (Unity: scale x LOD_SCALE^lod, each LOD in its own lightmap space; Bakery: no factor); None
+    reads it from a <Piece>_LOD<n> name. lightmapper: "unity" (default; "progressive") or "bakery"."""
     d = _arrays(ob, layer if measured else None, evaluated=True, need_uv=measured)
     if d is None:
         raise ValueError("%s has no UV layer %r to measure" % (ob.name, layer))
     b = uv_box_share(d["uv"]) if measured else coverage
-    scale = scale * LOD_SCALE ** (lod if lod is not None else lod_level(ob.name))
-    return max(1, int(math.floor(footprint_px(float(_triangles(d)["a3"].sum()), texels_per_m, scale, b) + 1e-9)))
+    short = uv_box_short_side(d["uv"]) if measured else None
+    scale = scale * lod_factor(lod if lod is not None else lod_level(ob.name), lightmapper)
+    return max(1, int(math.floor(footprint_px(float(_triangles(d)["a3"].sum()), texels_per_m, scale, b, lightmapper,
+                                              short) + 1e-9)))
 
 
 # ----------------------------------------------------------------------------------------------- changes (bpy)
@@ -1301,20 +1374,24 @@ def _lightmap_pack_fails(ob, layer_name, size):
                 or (r["margin_px"] is not None and r["margin_px"] < 1.0 - EDGE_SLACK_PX))
 
 
-def pack_lightmap(objects, texels_per_m, scale=1.0, layer=1, rotate=True, lod=None, notes=None):
+def pack_lightmap(objects, texels_per_m, scale=1.0, layer=1, rotate=True, lod=None, notes=None, lightmapper="unity"):
     """Pack each object's lightmap UV (the second UV map unless layer says otherwise) so its charts stay at least 2
     texels apart, and 1 texel from the tile edge, whatever texel scale the lightmapper gives it: the worst case is a
     chart box that fills the tile (b = 1), so it packs at lightmap_footprint(coverage=1.0) px with a 2 px gap, and
     the packed charts fill their box. scale: the renderer's lightmap scale, one number or {object name: scale}. lod:
     the LOD level (each LOD packs for its own footprint, x LOD_SCALE^n); None reads it from each <Piece>_LOD<n> name.
+    lightmapper "bakery": packs for Bakery's footprint with the box filling the tile, texels_per_m x sqrt(2 x area x
+    scale) - 6 (its Default packer's inset; xatlas has none, so the gaps hold under both), no LOD factor; a linear
+    factor s on Bakery's texel scale needs scale s^2.
     A footprint too small for 2-texel gaps (under lightmap_capacity_px for its charts, or under 64 px where the pack
     misses them) is packed for 64 px instead, never left to spill: a valid UV2 for a probe-lit prop or LOD, or once
     its Scale In Lightmap is raised. The note is printed and, given a dict, stored in notes[object name]. Rotation is
     on: lightmaps have no direction. Returns {object name: the size it packed for, px}."""
     out = {}
+    lightmapper = lightmapper_name(lightmapper)
     for ob in [o for o in objects if o.type == "MESH"]:
         sc = scale.get(ob.name, 1.0) if isinstance(scale, dict) else scale
-        size = lightmap_footprint(ob, texels_per_m, sc, coverage=1.0, lod=lod)
+        size = lightmap_footprint(ob, texels_per_m, sc, coverage=1.0, lod=lod, lightmapper=lightmapper)
         lay = _layer(ob.data, layer)
         if lay is None:
             raise ValueError("%s has no UV layer %r" % (ob.name, layer))
@@ -1330,7 +1407,7 @@ def pack_lightmap(objects, texels_per_m, scale=1.0, layer=1, rotate=True, lod=No
                 reason = "the pack at %d px missed them" % size
         if reason:
             pack([ob], map_px=LIGHTMAP_MIN_FOOTPRINT_PX, pad_px=LIGHTMAP_GAP_TEXELS, layer=layer, rotate=rotate)
-            note = lightmap_small_note(size, reason, lod if lod is not None else lod_level(ob.name))
+            note = lightmap_small_note(size, reason, lod if lod is not None else lod_level(ob.name), lightmapper)
             print("  NOTE   %s: %s" % (ob.name, note))
             if notes is not None:
                 notes[ob.name] = note
@@ -1740,6 +1817,8 @@ def _run(argv):
     ap.add_argument("--lightmap-scale", type=float, default=1.0, help="the renderer's lightmap scale (default 1)")
     ap.add_argument("--lod", type=int, default=None, help="LOD level for a lightmap audit (texel scale x 0.5^n); "
                     "default: read from each object's <Piece>_LOD<n> name, else 0")
+    ap.add_argument("--lightmapper", default="unity", help="whose footprint a lightmap audit uses: unity (default; "
+                    "progressive is the same) or bakery")
     ap.add_argument("--json", default=None, help="write the full reports here")
     ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
                     "check overlaps and gaps between them")
@@ -1760,7 +1839,7 @@ def _run(argv):
     reps = audit_objects(obs, report_path=a.json, layer=layer, map_px=map_px, pad_px=a.pad, px_per_m=a.td,
                          purpose=purpose, baking=a.baking, directional=a.directional, rows=a.rows,
                          texels_per_m=a.lightmap_texels, lightmap_scale=a.lightmap_scale, text=a.text, lod=a.lod,
-                         material=a.material)
+                         material=a.material, lightmapper=lightmapper_name(a.lightmapper))
     bad = any(r["issues"] for r in reps)
     if a.shared:
         sh = audit_shared(obs, layer=layer, map_px=map_px or 1024, pad_px=a.pad, purpose=purpose,

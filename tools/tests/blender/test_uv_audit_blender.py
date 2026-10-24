@@ -539,6 +539,45 @@ def lightmap_pack_and_measured_footprint():
         check(rep["map_px"] == [165, 165] and code in (0, 1), "--map 165.2 read as %s" % rep["map_px"])
 
 
+def lightmap_pack_for_bakery():
+    """lightmapper="bakery" (issue #8): pack_lightmap packs for Bakery's footprint with the box filling the tile,
+    texels/m x sqrt(2 x area x scale) - 6 (its Default packer's inset), with no LOD factor; the audit grades the UV2
+    at Bakery's footprint of its measured box, the short side spanning the rect, and gives its effective density."""
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    ob = bpy.context.active_object
+    ob.scale = (2, 0.2, 3)                                      # 14 m2
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    me = ob.data
+    me.uv_layers.new(name="UV2")
+    me.uv_layers.active_index = 1
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=ua.UNWRAP_MARGIN)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    me.uv_layers.active_index = 0
+    side = 20 * math.sqrt(2 * 14)                              # Bakery's rect side: 105.8 px
+    size = ua.pack_lightmap([ob], texels_per_m=20, lightmapper="bakery")[ob.name]
+    check(size == int(side - 6), "packed for %s px, want %d" % (size, int(side - 6)))
+    r = ua.audit(ob, layer=1, purpose="lightmap", map_px=size)              # the box filling the tile: worst case
+    check(r["padding_ok"] and r["margin_px"] >= 0.9 and not r["issues"], "at %d px: %s, margin %s"
+          % (size, r["issues"], r["margin_px"]))
+    r = ua.audit(ob, layer=1, texels_per_m=20, lightmapper="bakery")       # Bakery's footprint of the measured box
+    short = ua.uv_box_short_side(ua._arrays(ob, 1, evaluated=True)["uv"])
+    check(r["lightmapper"] == "bakery" and not r["issues"], "bakery audit: %s" % r["issues"])
+    check(abs(r["footprint_px"] - (side - 6) / short) <= 0.2, "footprint %s, want %.1f (short side %.3f)"
+          % (r["footprint_px"], (side - 6) / short, short))
+    check(r["effective_texels_per_m"] > 10, "effective density %s texels/m" % r["effective_texels_per_m"])
+    unity = ua.audit(ob, layer=1, texels_per_m=20)
+    check(r["footprint_px"] > unity["footprint_px"], "Bakery %s px vs Unity %s px" % (r["footprint_px"],
+                                                                                    unity["footprint_px"]))
+    # Scale In Lightmap acts on the area: 4 doubles the rect's side (a linear factor of 2)
+    four = ua.lightmap_footprint(ob, 20, 4.0, coverage=1.0, lightmapper="bakery")
+    check(four == int(2 * side - 6), "scale 4: %s px, want %d" % (four, int(2 * side - 6)))
+    ob.name = "KIT_Wall_LOD1"                                   # Bakery sizes each LOD by its own area: no 0.5^n
+    check(ua.lightmap_footprint(ob, 20, coverage=1.0, lightmapper="bakery") == int(side - 6), "a LOD1 under Bakery")
+    check(ua.lightmap_footprint(ob, 20, coverage=1.0) == int(20 * math.sqrt(14) * 0.5), "a LOD1 under Unity")
+
+
 # ----------------------------------------------------------------------------------------------- round 3 cases
 def door_wall(name):
     """A 2 x 0.2 x 3 m wall with a 0.9 x 2.1 m door, built from 22 quads, flat-shaded, with UVMap and UV2."""
@@ -1404,7 +1443,8 @@ CASES = [stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror
          stack_faces_checks_corner_order,
          layout_atlas_together, off_tile_island_is_reported, crate_grain_by_axis_across, merged_mirror_halves_bake,
          unwrap_margin_keeps_seams, lightmap_charts_cut_at_corners, uv0_is_the_default_layer,
-         trim_strip_band_and_rows, stacking_tools, lightmap_pack_and_measured_footprint, active_layer_restored,
+         trim_strip_band_and_rows, stacking_tools, lightmap_pack_and_measured_footprint, lightmap_pack_for_bakery,
+         active_layer_restored,
          seams_see_smooth_by_angle_modifier,
          mirror_modifier_halves, low_marks_survive_modifiers, set_density_in_edit_mode, footprint_helper,
          command_line_exit_code]

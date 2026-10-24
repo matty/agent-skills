@@ -162,6 +162,8 @@ me.uv_layers.active_index = 1                     # every UV operator below writ
    inside it costs texels. What a lightmapper packs (Unity: that box, so the cost does not depend on the layout) and
    each LOD's texel scale (Unity: 0.5^n for `<Piece>_LOD<n>`, each LOD in its own space) are the engine's: engine
    notes. Each LOD's UV2 is packed for its own footprint, which `pack_lightmap` reads from the name (or `lod=`).
+   A scene that bakes with Unity's Bakery: `pack_lightmap(..., lightmapper="bakery")` packs for Bakery's
+   area-based footprint instead (engine notes), and the audit in step 5 takes the same `lightmapper`.
    A footprint too small for 2-texel gaps (fewer texels than `lightmap_capacity_px(charts)`, or under 64 px with a
    pack that misses them) is packed for 64 px instead, never left to spill, with a note: a Free prop (a Free-sized
    PROP or FOL piece) is probe-lit, a LOD follows its piece, any other piece needs its Scale In Lightmap raised.
@@ -169,7 +171,8 @@ me.uv_layers.active_index = 1                     # every UV operator below writ
 5. `ua.audit(ob, texels_per_m=..., lightmap_scale=...)`: no issues. `texels_per_m` makes it a lightmap audit of the
    second map; it measures b, the box of all the UV2 charts as a share of the tile, and checks gaps, edge margin,
    chart bends and bounds at that footprint (x the LOD scale); under 64 px, as packed for 64 px, with the note. At 64
-   px or more, a note when the charts fill under half their box.
+   px or more, a note when the charts fill under half their box (with `lightmapper="bakery"`, an issue when they
+   get under half the planned texels per metre).
 6. `me.uv_layers.active_index = 0`, so later UV work and texture painting target UV0 again.
 7. In the engine, turn automatic lightmap UV generation off for this mesh and check its lightmap overlap view after
    baking (Unity: engine notes). Free props (Free-sized PROP or FOL pieces) under a 64 px footprint are probe-lit
