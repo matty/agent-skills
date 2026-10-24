@@ -51,7 +51,8 @@ Scale figures and other review aids go in `REF` (or `REF_<Name>`) in either layo
 single MASTER the pieces all sit at the origin, which is why `KIT` and `ASM` are excluded: their instances still draw
 in the layout. To look at or edit a piece by hand, tick `KIT` (or just its family) back on, use local view, and
 exclude it again afterwards; scripts in other skills that need the pieces in the view layer (UV, RizomUV, renders)
-run on a work file instead (Work files, below).
+run on a work file instead (Work files, below). A script reading pieces in place includes them first, as `audit_kit`
+does: excluded, their `matrix_world` is stale (identity after a load, Blender 5.2.2) and their bounds lack modifiers.
 
 Edit in the lowest layer that owns the thing: geometry in KIT, arrangement in ASM, placement in MASTER. One assembly
 per collection (and, split, per file) keeps each assembly's collection and engine prefab one-to-one (placement sync

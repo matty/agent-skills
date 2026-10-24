@@ -57,6 +57,7 @@ Paths starting with // are relative to the open .blend, as everywhere in Blender
 """
 
 import array
+import contextlib
 import datetime
 import hashlib
 import json
@@ -134,6 +135,52 @@ def _layer_collection(coll, lc=None):
         if found is not None:
             return found
     return None
+
+
+def _layer_paths(lc, coll, path=()):
+    path = path + (lc,)
+    if lc.collection == coll:
+        yield path
+    for child in lc.children:
+        yield from _layer_paths(child, coll, path)
+
+
+@contextlib.contextmanager
+def _evaluated(colls):
+    """Make every object in colls evaluated by the view layer while it is audited, then restore everything (nothing
+    is saved). An object in an excluded collection (a single MASTER's KIT), a collection or object disabled in
+    viewports, or a collection outside the scene is not evaluated: its matrix_world is stale (identity after a load,
+    measured on Blender 5.2.2) and its bounds leave out its modifiers. Hidden with H or the eye is evaluated anyway."""
+    scene, vl = bpy.context.scene, bpy.context.view_layer
+    undo = []
+    try:
+        for coll in colls:
+            if coll not in scene.collection.children_recursive:
+                scene.collection.children.link(coll)
+                undo.append(lambda c=coll: scene.collection.children.unlink(c))
+            for path in list(_layer_paths(vl.layer_collection, coll)):
+                lcs, stack = list(path[1:]), [path[-1]]
+                while stack:
+                    lc = stack.pop()
+                    lcs.append(lc)
+                    stack.extend(lc.children)
+                for lc in lcs:
+                    if lc.exclude:
+                        lc.exclude = False
+                        undo.append(lambda lc=lc: setattr(lc, "exclude", True))
+                    if lc.collection.hide_viewport:
+                        lc.collection.hide_viewport = False
+                        undo.append(lambda c=lc.collection: setattr(c, "hide_viewport", True))
+            for ob in coll.all_objects:
+                if ob.hide_viewport:
+                    ob.hide_viewport = False
+                    undo.append(lambda ob=ob: setattr(ob, "hide_viewport", True))
+        vl.update()
+        yield
+    finally:
+        for fn in reversed(undo):
+            fn()
+        vl.update()
 
 
 def setup_single_master(scene=None):
@@ -782,7 +829,7 @@ def audit_piece(coll, module, materials=None):
     family, size = m.group(1), m.group(2)
     prefixes = tuple(materials or ("M_%s_" % family, "M_TRIM_"))
     if Vector(coll.instance_offset).length > EPS:
-        issues.append("instance_offset is %s, not zero" % tuple(round(v, 4) for v in coll.instance_offset))
+        issues.append("instance_offset is %s, not zero" % (tuple(round(v, 4) for v in coll.instance_offset),))
 
     objs = list(coll.all_objects)
     meshes = [o for o in objs if o.type == "MESH"]
@@ -817,7 +864,7 @@ def audit_piece(coll, module, materials=None):
     if size != "Free":
         if any(abs(v) > 0.01 for v in lo):
             issues.append("min corner %s is not at the origin (pivot must be bottom-left)"
-                          % tuple(round(v, 3) for v in lo))
+                          % (tuple(round(v, 3) for v in lo),))
         ext = [(hi[i] - lo[i]) / module for i in range(3)]
         grid = [e for e in ext if e > 1.0 - GRID_TOL]       # under one module is thickness: not in the Size token
         want = [int(t) for t in size.split("x")]
@@ -852,7 +899,8 @@ def audit_kit(module, materials=None):
     if not module or module <= 0:
         raise ValueError("audit_kit needs module=<the grid module in metres>, e.g. 0.5 or 1.0")
     pieces = [c for c in bpy.data.collections if c.library is None and NAME_RE.match(c.name)]
-    reps = [audit_piece(c, module, materials) for c in sorted(pieces, key=lambda c: c.name)]
+    with _evaluated(pieces):                  # excluded or disabled pieces audited as they export
+        reps = [audit_piece(c, module, materials) for c in sorted(pieces, key=lambda c: c.name)]
     owned = {o.name for c in pieces for o in c.all_objects}
     refs = [c for c in bpy.data.collections if c.library is None and re.match(r"^REF(_|$)", c.name)]
     owned |= {o.name for c in refs for o in c.all_objects}

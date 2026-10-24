@@ -1,5 +1,6 @@
 """Blender-hosted tests for blender-kit-library's single MASTER helpers in scripts/kit_library.py: new_master and the
-organising collections, new_piece / place_piece defaults, the audit's layout checks, snapshot / diff_snapshots /
+organising collections, new_piece / place_piece defaults, the audit's layout checks (pieces in the excluded KIT read
+as they export, with their transforms and modifiers; off-pivot pieces reported), snapshot / diff_snapshots /
 changes_since, and checkout / integrate (instances follow, names stay clean, materials kept or replaced, refusal when
 the piece changed after checkout), plus the command line.
 
@@ -100,6 +101,50 @@ def test_audit_flags_misplaced_piece_and_visible_kit():
     assert any("INT_Wall_2x3_B is not inside KIT" in p for p in probs), probs
     assert any("KIT is not excluded" in p for p in probs), probs
     assert not any("kit name" in p for p in probs), probs          # MASTER holds empties: an organiser, not odd
+
+
+def test_audit_reads_pieces_in_the_excluded_kit_as_they_export():
+    """KIT is excluded from the view layer, so its objects are not evaluated: their matrix_world reads identity after a
+    load (measured on Blender 5.2.2) and their bounds leave out modifiers. The audit includes them while it reads them,
+    and restores the view layer."""
+    ns = build_master()
+    moved = ns["new_piece"]("INT_Wall_2x3_C")
+    ob = box("INT_Wall_2x3_C", (1.0, 0.1, 1.5))
+    moved.objects.link(ob)
+    ob.location = (4.0, 4.0, 0.0)                                   # off its pivot
+    half = ns["new_piece"]("INT_Wall_2x3_D")
+    mirrored = box("INT_Wall_2x3_D", (0.5, 0.1, 1.5))
+    half.objects.link(mirrored)
+    mod = mirrored.modifiers.new("Mirror", "MIRROR")                  # live: the evaluated wall is 1 m wide
+    mod.mirror_object = None
+    mod.use_axis[0] = True
+    mirrored.data.transform(__import__("mathutils").Matrix.Translation((-0.5, 0.0, 0.0)))
+    mirrored.location = (0.5, 0.0, 0.0)
+    bpy.ops.object.select_all(action="DESELECT")
+    ns["save_file"]()
+    bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+    ns = load_ns()
+    rep = ns["audit_kit"](0.5)
+    issues = {r["piece"]: r["issues"] for r in rep["pieces"]}
+    assert any("transform is not identity" in i for i in issues["INT_Wall_2x3_C"]), issues["INT_Wall_2x3_C"]
+    assert any("min corner (4.0, 4.0, 0.0)" in i for i in issues["INT_Wall_2x3_C"]), issues["INT_Wall_2x3_C"]
+    d = next(r for r in rep["pieces"] if r["piece"] == "INT_Wall_2x3_D")
+    assert d["extent_modules"][0] == 2.0, d                          # 1 m with its Mirror, not the 0.5 m half
+    vl = bpy.context.view_layer.layer_collection
+    assert vl.children["KIT"].exclude and vl.children["ASM"].exclude, "the audit left KIT or ASM included"
+    assert not rep["layout"], rep["layout"]
+
+
+def test_audit_reports_instance_offset_and_min_corner():
+    ns = build_master()
+    coll = ns["new_piece"]("INT_Wall_2x3_E")
+    ob = box("INT_Wall_2x3_E", (1.0, 0.1, 1.5))
+    coll.objects.link(ob)
+    ob.data.transform(__import__("mathutils").Matrix.Translation((0.0, -0.05, 0.0)))
+    coll.instance_offset = (0.0, 0.0, 0.25)
+    issues = next(r for r in ns["audit_kit"](0.5)["pieces"] if r["piece"] == "INT_Wall_2x3_E")["issues"]
+    assert any("instance_offset is (0.0, 0.0, 0.25)" in i for i in issues), issues
+    assert any("min corner (0.0, -0.05, 0.0)" in i for i in issues), issues
 
 
 def test_snapshot_round_trip_and_diff():
@@ -211,7 +256,9 @@ def test_command_line_changes_and_integrate():
     assert not os.path.exists(str(MASTER) + "1")                   # no .blend1 backup
 
 
-CASES = [test_new_master_organises, test_audit_flags_misplaced_piece_and_visible_kit, test_snapshot_round_trip_and_diff,
+CASES = [test_new_master_organises, test_audit_flags_misplaced_piece_and_visible_kit,
+         test_audit_reads_pieces_in_the_excluded_kit_as_they_export, test_audit_reports_instance_offset_and_min_corner,
+         test_snapshot_round_trip_and_diff,
          test_checkout_integrate_replaces_in_place, test_integrate_work_materials_replace,
          test_integrate_refuses_after_master_changed, test_integrate_adds_a_new_piece,
          test_command_line_changes_and_integrate]
