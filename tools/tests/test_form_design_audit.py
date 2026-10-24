@@ -205,6 +205,19 @@ class Bevels(unittest.TestCase):
         self.assertEqual(len(r["bevels"]), 12)
         self.assertIn("over_bevelled", keys(r))
 
+    def test_non_uniform_scale_is_a_note_not_a_crash(self):
+        class Matrix:
+            def to_scale(self):
+                return (1.0, 2.0, 1.0)
+
+        class Ob:
+            matrix_world = Matrix()
+            modifiers = []
+
+        notes = fa.bevel_modifier_notes(Ob())
+        self.assertEqual(len(notes), 1)
+        self.assertIn("non-uniform object scale (1.0, 2.0, 1.0)", notes[0])
+
     def test_tiers(self):
         t = fa.tiers([(0.002, 1.0), (0.0024, 1.0), (0.005, 2.0), (0.006, 1.0), (0.02, 0.5)])
         self.assertEqual([x["count"] for x in t], [2, 2, 1])

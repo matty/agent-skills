@@ -586,7 +586,7 @@ def bevel_modifier_notes(ob):
     scale = ob.matrix_world.to_scale()
     if max(scale) - min(scale) > 1e-4 * max(scale):
         notes.append("non-uniform object scale %s: bevel widths are in object space and come out uneven; apply scale"
-                     % tuple(round(s, 4) for s in scale))
+                     % (tuple(round(s, 4) for s in scale),))
     for md in ob.modifiers:
         if md.type != "BEVEL" or not md.show_viewport:
             continue
