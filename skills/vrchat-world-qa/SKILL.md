@@ -50,6 +50,13 @@ live Blender has MASTER open, measure it there through the MCP without saving (i
 - **Read-only Blender**: open every .blend headless (`blender -b --factory-startup <file> --python-exit-code 1
   --python <script>.py -- ...`) and never save; `--factory-startup` keeps the user's add-ons out of the run. If the
   live Blender holds the file, use the Blender MCP and do not save.
+- **Transforms in your own scripts**: Blender evaluates only what the view layer shows. An object in an excluded
+  collection (bake highs, retained sources, a single MASTER's `KIT` and `ASM`) or one disabled in viewports keeps a
+  stale `matrix_world`, identity after a headless load (measured on Blender 5.2.2: `location` (4, 4, 0),
+  `matrix_world.translation` (0, 0, 0)), and its bounds and mesh leave out its modifiers. Compare `matrix_basis`
+  (after checking `parent is None` and no constraints), or include the collection for the reading and restore it,
+  as `qa_measure` does for pieces; never `matrix_world` of an excluded or disabled object. A QA run that read it
+  reported bake highs "at the origin" and failed a correct task twice.
 - **Read-only Unity**: no saves, no asset changes, no build-target switch, with one exception: at stage 13, QA may
   switch to each platform it measures (O1) or validates (O5), then switches back to the target it found. After Play
   mode, reopen the scene from disk. To see a state the scene does not hold (a light on, a test capsule), add hidden temporary objects
