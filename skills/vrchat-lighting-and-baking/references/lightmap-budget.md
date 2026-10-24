@@ -2,7 +2,8 @@
 
 How big each renderer is in a lightmap, whether its UV2 gaps survive at that size, and whether everything fits.
 Measured in Unity 2022.3.22f1 with the Progressive GPU lightmapper: the dry run (2026-10-16, one room, 17 lightmapped
-renderers) and dedicated packing and LOD bakes (2026-10-17). `scripts/lightmap_budget.py` does the arithmetic below.
+renderers) and dedicated packing and LOD bakes (2026-10-17). Bakery sizes renderers differently: section Bakery.
+`scripts/lightmap_budget.py` does the arithmetic below (`--lightmapper bakery` for Bakery's).
 
 ## What Unity packs: the chart box
 
@@ -11,7 +12,7 @@ unrotated, not its whole 0-1 tile. Measured 2026-10-17: other renderers' boxes s
 but outside its box, boxes sat exactly the Lightmap Padding apart, and one tile even started outside the atlas. Unity
 rounds the box's longer side to whole texels.
 
-## Footprint (texel scale)
+## Footprint (texel scale), Unity Progressive
 
 The footprint is how many lightmap pixels one UV unit spans, the side of the renderer's scaled 0-1 tile:
 
@@ -108,6 +109,73 @@ heights; Unity's own LOD level scale reads 1 / 0.5 / 0.25). So:
 `lightmap_budget.py` takes `lods` (LODs after LOD0) and `lod_lightmap: false` (LOD1+ probe-lit) per piece, read as
 in the world spec, and prints each LOD's footprint, cost and pack gap.
 
+## Bakery: footprint, gaps, density, capacity
+
+Read from Bakery's scripts as installed in a Unity 2022.3.22f1 project, 2026-10-24 (the scripts carry no version
+string): `Assets/Editor/x64/Bakery/scripts/ftBuildGraphics.cs` (the area loop in `CalculateHolderUVBounds`,
+`ApplyAreaToUVBounds`, `Pack`, the xatlas pack, `NormalizeAutoAtlases`) and `Assets/Bakery/BakeryProjectSettings.cs`
+(the defaults). With Bakery's defaults: Alternative Scale In Lightmap off (on, it treats Scale In Lightmap linearly
+and rounds sizes: this section does not apply) and Hole Filling off. Not measured in a bake here; the cinema numbers
+are the repo owner's (GitHub issue #8). `lightmap_budget.py --lightmapper bakery` does the arithmetic.
+
+| | Unity Progressive | Bakery |
+|---|---|---|
+| What sizes a renderer | its area and b: texels_per_m x sqrt(A / b) x S per UV unit | its area only: a rect of side L = texels_per_m x sqrt(2 x A x S) texels. The area loop sums abs(cross) over the triangles (2 x A); the division by the UV area is commented out ("uv layouts always have empty spaces") |
+| Scale In Lightmap S | linear | multiplies the area (`area *= scaleInLm` before `ApplyAreaToUVBounds`): a linear factor s needs S = s^2 |
+| UV2 bounds' aspect | free: the box costs (texels_per_m x S)^2 x A whatever its shape | L goes to the bounds' short side, L x aspect to the long side: a thin column of charts in bounds 0.06 x 1 costs 1 / 0.06, about 17 times L^2 (issue #8: about 15x its area) |
+| Rect edge | Lightmap Padding between boxes | Default packer: the rect is inset `texelPaddingForDefaultAtlasPacker` (3) texels on every side, then the bounds are mapped onto what is left. xatlas: no inset, `texelPaddingForXatlasAtlasPacker` (1 by default) texels between rects. ftBuildGraphics' static default is xatlas; the scene's Bakery settings can pick either |
+| LODs | 0.5^n of LOD0's texel scale | no LOD factor: each LOD is sized by its own area; `Pack` keeps each scene LOD level in lightmaps of its own; a `BakerySharedLodUv` component on the LOD Group makes LOD1+ share LOD0's |
+| A part-empty lightmap | as packed | the Default packer scales every rect up to fill it (`NormalizeAutoAtlases`), never down: the footprint below is a floor |
+| A rect longer than the map | (one tile) | clamped to the map: less density, and uneven when one side is clamped |
+
+Footprint, the same along both axes:
+
+    footprint_px = (L - 2 x p) / w_short,    L = texels_per_m x sqrt(2 x A x S)
+
+- w_short = the short side of the UV2 charts' bounding box in UV units (1 when it fills the tile); p = 3 under the
+  Default packer, 0 under xatlas. The scripts assume p = 3, which holds under both.
+- Gaps: pack for the box filling the tile, gap in UV = 2 / (L - 6), and 1 texel to the edge. `uv-unwrapping`'s
+  `pack_lightmap` and `rizomuv-uv-pipeline` do it with `lightmapper="bakery"`.
+- Against Unity at S = 1 with square bounds, the footprint is sqrt(2) = 1.41 times Unity's before the inset, more for
+  oblong bounds. Gaps packed for Unity's b = 1 footprint (texels_per_m x sqrt(A) x S) hold under Bakery while
+  sqrt(2 x S) >= S x w_short: always up to S = 2 under xatlas. The Default packer's 6 texels break them on small rects
+  (Unity footprints under about 15 px at S = 1), and above S = 2 they can fail anywhere: repack for Bakery.
+
+Effective density, the texels per metre the surface gets, for either lightmapper:
+
+    effective_texels_per_m = footprint_px x sqrt(a / A),    a = the UV2 charts' own area in UV units
+
+- Bakery: about texels_per_m x sqrt(2 x S x a) / w_short (xatlas). Unity: texels_per_m x S x sqrt(charts' area / box
+  area). Neither looks at the charts' area when it sizes a renderer, so charts that fill little of their box bake at
+  little density. The usual cause is many charts packed for a small footprint, where 2-texel gaps take most of the
+  tile; `pack_lightmap`'s 64 px fallback makes exactly that on a many-chart mesh.
+- **Gate (Bakery):** every lightmapped renderer of 64 px or more gets at least 0.5 x texels_per_m x min(1, sqrt(S))
+  effective texels per metre, half the density planned for it. `uv_audit` with `lightmapper="bakery"` reports an
+  issue below it, RizomUV's report a warning, and the snippet below prints it after a bake for either lightmapper.
+  Under Unity the same number drops under half only when the charts fill under a quarter of their box.
+- The cinema (VRChat, Bakery, issue #8): of 1,174 lightmapped renderers, 100 were under 10 effective texels/m; a
+  588-chart channelled wall panel (6.98 m2) had a coverage of 0.0002, so 0.43 texels/m.
+
+Fix a renderer under the gate, in this order:
+
+1. Raise its Scale In Lightmap: S = s^2 for a linear factor s.
+2. Repack its UV2 for the larger footprint: 2-texel gaps at texels_per_m x s x sqrt(2 x A_min) texels (less 6 under
+   the Default packer), A_min = the smallest renderer using the mesh.
+3. Bake with the xatlas packer and 2 px padding (`texelPaddingForXatlasAtlasPacker`), so no rect loses its edge to
+   the inset.
+4. Stretch the UV2 bounds of thin emitters and strips to the tile: a 0.06 x 1 column costs about 17 x L^2, stretched
+   it costs L^2.
+5. Bake again and read the snippet's effective density.
+
+On the cinema: 112 meshes repacked, every lightmapped renderer at 10 texels/m or more, for 0.4 Mpx of extra atlas;
+with the whole recipe above, every lightmapped renderer at 10 texels/m or more with 2-texel gaps in 4.8 Mpx (2
+lightmaps of 2048).
+
+Capacity: a rect costs L^2 x aspect = 2 x A x S x texels_per_m^2 x aspect px^2, each LOD at its own area. That is
+twice Unity's at S = 1 for square bounds, and S scales it linearly (Unity: S^2). Sum it x copies x lighting states
+against the same 0.65 plan and 0.80 limit: those were measured with Unity's packer and are assumed for Bakery's.
+When a lightmap is full Bakery starts another, so a spill shows as an extra lightmap: count them after the bake.
+
 ## Texel density
 
 | Surface | Texels per metre |
@@ -141,11 +209,18 @@ Both snippets are method bodies that end in a `return`: Unity MCP's `execute_cod
 
 This one prints, per lightmapped renderer, its footprint and the smallest UV2 gap it tolerates (2 / footprint), and
 compares that with the gap its mesh was packed with, from `packed` (mesh name -> gap in UV units, from the UV2 brief
-or the packing log). `Lightmapping.HasUVOverlaps` is internal in 2022.3, hence the reflection. Its `overlaps True`
-is Unity's own verdict from the bake and wins: when it disagrees with an "ok", the `packed` entry is wrong or the
-mesh was repacked since, so re-measure that UV2's gap.
+or the packing log). It also prints the effective density, footprint x sqrt(UV2 charts' area / surface area) from
+the mesh in world space, and flags it under half of `texelsPerM`: the gate, for Progressive and Bakery alike, as
+both write `lightmapScaleOffset`. Run it in Edit mode, not Play mode: static batching combines the meshes there,
+and mesh data is readable "in the Unity Editor outside of the game and rendering loop, regardless of" Read/Write
+(https://docs.unity3d.com/2022.3/Documentation/ScriptReference/Mesh-isReadable.html, checked 2026-10-24).
+`Lightmapping.HasUVOverlaps` is internal in 2022.3, hence the reflection. Its `overlaps True` is Unity's own verdict
+from the bake and wins: when it disagrees with an "ok", the `packed` entry is wrong or the mesh was repacked since,
+so re-measure that UV2's gap. The flag is Unity's lightmapper's: after a Bakery bake, rely on Bakery's own UV
+validation for overlaps.
 
 ```csharp
+float texelsPerM = 20f;                     // Lightmap Resolution (Bakery: Texels Per Unit), for the density gate
 var packed = new System.Collections.Generic.Dictionary<string, float>
 {
     { "INT_Wall_2x3_A", 0.0089f },          // one entry per mesh: the gap its UV2 was packed with
@@ -155,14 +230,15 @@ var maps = UnityEngine.LightmapSettings.lightmaps;
 var hasOverlaps = typeof(UnityEditor.Lightmapping).GetMethod("HasUVOverlaps",
     System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 var report = new System.Text.StringBuilder();
-int failing = 0, unknown = 0, overlapping = 0;
+int failing = 0, unknown = 0, overlapping = 0, thin = 0;
 foreach (var r in UnityEngine.Object.FindObjectsOfType<UnityEngine.MeshRenderer>())
 {
     if (r.lightmapIndex < 0 || r.lightmapIndex >= maps.Length) continue;      // not lightmapped
     float px = r.lightmapScaleOffset.x * maps[r.lightmapIndex].lightmapColor.width;
     float needed = 2f / px;                                                     // smallest gap this footprint tolerates
     var filter = r.GetComponent<UnityEngine.MeshFilter>();
-    string mesh = filter != null && filter.sharedMesh != null ? filter.sharedMesh.name : r.name;
+    var m = filter != null ? filter.sharedMesh : null;
+    string mesh = m != null ? m.name : r.name;
     string verdict = "packed gap unknown";
     float gap;
     if (packed.TryGetValue(mesh, out gap))
@@ -171,15 +247,44 @@ foreach (var r in UnityEngine.Object.FindObjectsOfType<UnityEngine.MeshRenderer>
         if (gap < needed) failing++;
     }
     else unknown++;
+    double area = 0, uvArea = 0;                    // world-space surface area, and the lightmap UV's charts' area
+    if (m != null)
+    {
+        var v = m.vertices;
+        var uv = m.uv2.Length == v.Length ? m.uv2 : m.uv;                       // without a UV2 both bake from UV0
+        var t = m.triangles;
+        var w = r.transform.localToWorldMatrix;
+        for (int i = 0; i + 2 < t.Length; i += 3)
+        {
+            var a = w.MultiplyPoint3x4(v[t[i]]);
+            var b = w.MultiplyPoint3x4(v[t[i + 1]]);
+            var c = w.MultiplyPoint3x4(v[t[i + 2]]);
+            area += 0.5 * UnityEngine.Vector3.Cross(b - a, c - a).magnitude;
+            if (uv.Length == v.Length)
+            {
+                var p = uv[t[i]];
+                var q = uv[t[i + 1]];
+                var s = uv[t[i + 2]];
+                uvArea += 0.5 * System.Math.Abs((q.x - p.x) * (s.y - p.y) - (s.x - p.x) * (q.y - p.y));
+            }
+        }
+    }
+    double eff = area > 0 ? px * System.Math.Sqrt(uvArea / area) : 0;          // effective texels per metre
+    string low = eff < 0.5 * texelsPerM ? " UNDER HALF" : "";
+    if (low.Length > 0) thin++;
     object overlap = hasOverlaps != null ? hasOverlaps.Invoke(null, new object[] { r }) : "n/a";
     if (overlap is bool o && o) overlapping++;
     report.AppendLine($"{r.name} ({mesh}): map {r.lightmapIndex}, footprint {px:F1} px, needs gaps >= {needed:F4} UV, " +
-                      $"{verdict}, overlaps {overlap}");
+                      $"{verdict}, effective {eff:F1} texels/m{low}, overlaps {overlap}");
 }
 report.AppendLine($"{failing} renderer(s) with UV2 gaps under 2 texels, {overlapping} with overlapping UVs, " +
-                  $"{unknown} with no packed gap in the table");
+                  $"{thin} under half of {texelsPerM} effective texels/m, {unknown} with no packed gap in the table");
 return report.ToString();
 ```
+
+A renderer whose Scale In Lightmap is under 1 on purpose is judged against half of its own planned density (Unity:
+texels_per_m x S; Bakery: texels_per_m x sqrt(S)); a UNDER HALF on a renderer under 64 px is the 64 px rule's
+business (a probe-lit prop, or a grid piece's note), not the gate's.
 
 Overlap warnings also land in Editor.log (`%LOCALAPPDATA%/Unity/Editor/Editor.log`): "There are N objects in the
 Scene with overlapping UV's". The console loses them once it is cleared.

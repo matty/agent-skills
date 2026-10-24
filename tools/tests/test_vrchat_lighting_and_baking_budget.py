@@ -5,6 +5,7 @@ Run from the repo root: python -B -m unittest discover -s tools/tests -p "test_*
 
 import importlib.util
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -279,6 +280,91 @@ class Plan(unittest.TestCase):
         s = lb.plan([{"name": "w", "area_m2": 14}], 20, 2048, mobile=True)[1]
         self.assertTrue(any("ships to Quest or iOS" in e for e in s["errors"]))
         self.assertFalse(lb.plan([{"name": "w", "area_m2": 14}], 20, 1024, mobile=True)[1]["errors"])
+
+
+class Bakery(unittest.TestCase):
+    """Bakery's sizing (ftBuildGraphics.cs, read 2026-10-24): a rect of side texels/m x sqrt(2 x area x Scale In
+    Lightmap) on the UV2 bounds' short side, the Default packer's 3-texel inset inside it, no LOD factor."""
+
+    def test_constants_and_names(self):
+        self.assertEqual((lb.BAKERY_AREA_FACTOR, lb.BAKERY_INSET_TEXELS), (2.0, 3))
+        self.assertEqual([lb.lightmapper_name(n) for n in (None, "Unity", "progressive", "BAKERY")],
+                         ["unity", "unity", "unity", "bakery"])
+        with self.assertRaises(ValueError):
+            lb.lightmapper_name("enlighten")
+
+    def test_footprint_is_area_based_and_scale_acts_on_area(self):
+        side = 20 * math.sqrt(2 * 6.98)                  # the cinema's channelled wall panel at 20 texels/m: 74.7 px
+        self.assertAlmostEqual(lb.bakery_side_px(20, 6.98), side, places=9)
+        self.assertAlmostEqual(lb.footprint_px(20, 6.98, 1.0, 1.0, 0, "bakery"), side - 6, places=9)
+        self.assertAlmostEqual(lb.footprint_px(20, 6.98, 1.0, 0.25, 0, "bakery"), (side - 6) / 0.5, places=9)
+        # a linear factor of 2 needs Scale In Lightmap 4
+        self.assertAlmostEqual(lb.bakery_side_px(20, 6.98, 4.0), 2 * side, places=9)
+        # bounds 0.25 x 1 (b 0.25, aspect 4): the short side 0.25 spans the rect's side
+        self.assertAlmostEqual(lb.footprint_px(20, 6.98, 1.0, 0.25, 0, "bakery", 4.0), (side - 6) / 0.25, places=9)
+
+    def test_square_bounds_cost_twice_unity_and_scale_is_linear_in_cost(self):
+        self.assertAlmostEqual(lb.box_cost_px2(20, 14, 1.0, 0, "bakery"), 2 * lb.box_cost_px2(20, 14), places=6)
+        self.assertAlmostEqual(lb.box_cost_px2(20, 14, 2.0, 0, "bakery"), 2 * lb.box_cost_px2(20, 14, 1.0, 0, "bakery"))
+        self.assertAlmostEqual(lb.box_cost_px2(20, 14, 2.0), 4 * lb.box_cost_px2(20, 14))
+        self.assertAlmostEqual(lb.box_cost_px2(20, 14, 1.0, 0, "bakery", 1 / 0.06), 2 * 20 ** 2 * 14 / 0.06)
+
+    def test_pack_gap_holds_two_texels_after_the_inset(self):
+        for area in (0.5, 2.0, 6.98, 14.0, 60.0):
+            for scale in (0.5, 1.0, 4.0):
+                g = lb.pack_gap_uv(20, area, scale, 0, "bakery")
+                self.assertAlmostEqual(g * (lb.bakery_side_px(20, area, scale) - 6), 2.0, places=9)
+        self.assertEqual(lb.pack_gap_uv(1, 1.0, 1.0, 0, "bakery"), float("inf"))     # a 1.4 px rect: no texels
+
+    def test_unity_gaps_hold_under_bakery_up_to_scale_2_without_the_inset(self):
+        # sqrt(2 S) >= S with the bounds filling the tile: always for S <= 2, not above
+        for scale in (0.25, 0.5, 1.0, 2.0):
+            self.assertGreaterEqual(math.sqrt(2 * scale) + 1e-12, scale)
+        self.assertLess(math.sqrt(2 * 4.0), 4.0)
+
+    def test_no_lod_factor(self):
+        self.assertEqual(lb.footprint_px(20, 14, 1.0, 1.0, 2, "bakery"), lb.footprint_px(20, 14, 1.0, 1.0, 0, "bakery"))
+        rows, s = lb.plan([{"name": "s", "area_m2": 28, "lods": 2}], 20, 2048, lightmapper="bakery")
+        base = lb.plan([{"name": "s", "area_m2": 28}], 20, 2048, lightmapper="bakery")[1]["need_px2"]
+        self.assertAlmostEqual(s["need_px2"], 3 * base)                 # each LOD sized by its own area
+        self.assertEqual(rows[1]["footprint_px"], rows[0]["footprint_px"])
+
+    def test_plan_and_gap_check(self):
+        # gaps packed for Unity's b = 1 footprint at 20 texels/m hold under Bakery for this wall (75 px -> 100 px)
+        gap = lb.pack_gap_uv(20, 14.0)
+        rows, s = lb.plan([{"name": "INT_Wall_2x3_A", "size": [2, 3, 0.2], "count": 7, "gap_uv": gap}], 20, 1024,
+                          lightmapper="bakery")
+        self.assertEqual(rows[0]["status"], "lightmap")
+        self.assertAlmostEqual(rows[0]["padding_texels"], gap * (20 * math.sqrt(28) - 6), places=6)
+        self.assertAlmostEqual(s["need_px2"], 7 * 2 * 20 ** 2 * 14)
+        self.assertEqual(s["lightmapper"], "bakery")
+        # checked at the worst case, bounds filling the tile: 2 / (105.8 - 6) = 0.02003 UV
+        for gap, status in ((0.0199, "padding"), (0.0201, "lightmap")):
+            rows, s = lb.plan([{"name": "w", "area_m2": 14.0, "gap_uv": gap}], 20, 1024, lightmapper="bakery")
+            self.assertEqual(rows[0]["status"], status, gap)
+
+    def test_aspect_validation_and_the_clamp_warning(self):
+        with self.assertRaises(ValueError):
+            lb.plan([{"name": "x", "area_m2": 1, "aspect": 0.5}], 20, 1024)
+        with self.assertRaises(ValueError):
+            lb.plan([{"name": "x", "area_m2": 1, "b": 0.5, "aspect": 4}], 20, 1024)
+        # a thin column of emitter charts in bounds 0.06 x 1: the long side is 16.7 x the rect's side
+        rows, s = lb.plan([{"name": "EMIT", "area_m2": 2.0, "aspect": 1 / 0.06, "b": 0.06}], 20, 512,
+                          lightmapper="bakery")
+        self.assertTrue(any("clamps it to the map" in w and "stretch its UV2 bounds" in w for w in s["warnings"]))
+        self.assertIn("stretch thin UV2 bounds", s["advice"])
+        self.assertFalse(lb.plan([{"name": "EMIT", "area_m2": 2.0, "aspect": 1 / 0.06, "b": 0.06}], 20, 512)[1]
+                         ["warnings"])                                  # Unity packs the box: aspect costs nothing
+
+    def test_command_line(self):
+        res = subprocess.run([sys.executable, "-B", str(SCRIPT), "--texels-per-m", "20", "--max-px", "1024",
+                              "--lightmapper", "bakery", "--piece", "PANEL:6.98:1"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("lightmapper bakery", res.stdout)
+        self.assertIn(" 75px ", res.stdout)                              # (74.7 - 6) / sqrt(0.85)
+        res = subprocess.run([sys.executable, "-B", str(SCRIPT), "--texels-per-m", "20", "--max-px", "1024",
+                              "--lightmapper", "beast", "--piece", "PANEL:6.98:1"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
 
 
 class Window(unittest.TestCase):

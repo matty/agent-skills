@@ -17,7 +17,7 @@ changes what gets baked), then work in three passes: plan, bake, verify.
 | PC plus Quest/iOS | One scene and one bake for every platform: every light Baked, Max Lightmap Size 1024 | Never: on Quest a realtime sun lights Standard Lite surfaces without shadows (light through walls), and point and spot lights do not show on lightmapped surfaces (section Quest and iOS) |
 | Avatars, pickups, moving props | **Light probes, always** | Add VRC Light Volumes on top when installed, for renderers whose shaders support them |
 | A light players switch | Lighting states: a baked copy of the static geometry per state (method under A light players can switch) | Light Volumes installed and the world's shaders read additive volumes (Standard and Standard Lite do not): an Additive volume. PC-only world with no other realtime light on: a shadowless realtime light |
-| Lightmapper | Progressive GPU | Bakery is installed (Windows with an NVIDIA GPU) and bakes are slow |
+| Lightmapper | Progressive GPU | Bakery is installed (Windows with an NVIDIA GPU) and bakes are slow. Decide before the UV2 is packed: Bakery sizes each renderer differently (plan steps 2, 3 and 5) |
 | Directional Mode | Non-Directional (half the memory) | Normal maps that matter: under Non-Directional, Standard shows them only in reflections and Standard Lite skips them; bake Directional or Bakery MonoSH, decided with the texturing plan (references/final-look.md) |
 
 ## 1. Plan the lightmap before baking
@@ -28,12 +28,13 @@ on both (8 px @ 512 gaps came to 1.76 texels; one 512 map could not give 16 piec
 
 1. Lightmap Resolution (texels per metre) low: 2-10 outdoors (2-5 terrain, 6-10 facades), 10-20 for interiors. Raise
    Scale In Lightmap only on surfaces that show detail. Pick it before the UV2 is packed: it sets every gap.
-2. Footprint: footprint_px = texels/m x sqrt(surface area in m2 / b) x Scale In Lightmap, b = the share of the 0-1
-   tile the UV2 charts' bounding box covers: plan with b = 0.85, check with the measured b. Pack the charts to fill
-   their box: space inside it costs texels too (effective density = texels/m x sqrt(charts' area / box area)).
-3. Gaps: pack the UV2 for 2 texels at the worst case b = 1, gap in UV = 2 / (texels/m x sqrt(area) x Scale In
-   Lightmap), and 1 texel to the tile edge: that holds whatever the packer does. Never lower Scale In Lightmap
-   below what the gaps were packed for.
+2. Footprint, texels per UV unit: texels/m x sqrt(area in m2 / b) x Scale In Lightmap, b = the UV2 charts' bounding
+   box's share of the tile (plan 0.85, check the measured b). **Bakery**: (L - 6) / that box's short side, L =
+   texels/m x sqrt(2 x area x Scale In Lightmap): the scale acts on the area (s^2 for a linear s), no LOD 0.5^n. Pack
+   the charts to fill the box: effective density = footprint x sqrt(charts' UV area / area).
+3. Gaps: pack the UV2 for 2 texels with the box filling the tile, gap in UV = 2 / (texels/m x sqrt(area) x Scale In
+   Lightmap) (Bakery: 2 / (L - 6)), and 1 texel to the tile edge: that holds whatever the packer does. Never lower
+   Scale In Lightmap below what the gaps were packed for.
 4. Under 64 px: a **free prop** (a Free-sized piece of the PROP or FOL family) is probe-lit (Contribute GI on, Receive
    Global Illumination = Light Probes). A **grid piece** (wall, floor, ceiling, facade, any ZONE shell) never is: it
    stays lightmapped and counted, and its size is only a note. A prop that changes with a light switch is lightmapped.
@@ -42,11 +43,10 @@ on both (8 px @ 512 gaps came to 1.76 texels; one 512 map could not give 16 piec
    LODs are lightmapped too, LODn at 0.5^n of the texel scale: LOD1 and LOD2 of similar area add about 0.31x LOD0's
    cost, unless their Receive Global Illumination is Light Probes (no atlas space; the lighting changes at the LOD
    switch). Max Lightmap Size is 1024 whenever the world ships to Quest or iOS (one bake serves every platform),
-   2048 only in a PC-only world.
+   2048 only in a PC-only world. Bakery: L^2 x the box's aspect, each LOD at its own area (twice Progressive's).
 
-`scripts/lightmap_budget.py` runs steps 2-5 for a list of pieces (KIND prop, grid, lightmap or probe; LODs per piece)
-and prints the texels/m windows that keep every piece within them. Measurements and the maths:
-references/lightmap-budget.md.
+`scripts/lightmap_budget.py` runs steps 2-5 for pieces (KIND prop, grid, lightmap or probe; LODs) and prints the
+texels/m windows that fit them all; `--lightmapper bakery` for Bakery. Maths and sources: references/lightmap-budget.md.
 UV2 itself: author it in Blender (how to unwrap it is the `uv-unwrapping` skill), or Unity's Generate Lightmap UVs
 with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
 
@@ -71,7 +71,8 @@ with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
 - [ ] No overlapping UVs: none of "objects in the Scene with overlapping UV's" in Editor.log (the console loses it
       once cleared), and Unity's overlap flag false per renderer.
 - [ ] Real footprints: `lightmapScaleOffset.x` x the lightmap's width per renderer; padding = UV2 gap x footprint
-      >= 2 texels. The snippet in references/lightmap-budget.md prints both and the overlap flag.
+      >= 2 texels; effective density >= 0.5 x texels/m at 64 px or more (else raise Scale In Lightmap and repack,
+      Bakery's recipe in the reference). The snippet in references/lightmap-budget.md prints all three and overlaps.
 - [ ] A grey Standard capsule moved through every reachable area renders lit, never black (probe coverage).
 - [ ] Joints and corners: no seams, splotches or light leaks.
 

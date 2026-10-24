@@ -1,10 +1,10 @@
-"""Plan a Unity lightmap before baking: each renderer's texel scale (footprint) and UV2 padding in texels, the atlas
-space its chart box costs, whether everything fits the lightmaps, and the range of Lightmap Resolution (texels per
-metre) that satisfies all of it.
+"""Plan a Unity lightmap (Progressive or Bakery) before baking: each renderer's texel scale (footprint) and UV2
+padding in texels, the atlas space it costs, whether everything fits the lightmaps, and the range of Lightmap
+Resolution (texels per metre) that satisfies all of it.
 
 Host: plain Python 3.9+, standard library only (no Unity needed).
 
-    python lightmap_budget.py --texels-per-m 20 --max-px 1024 --maps 1 \
+    python lightmap_budget.py --texels-per-m 20 --max-px 1024 --maps 1 [--lightmapper bakery] \
         --piece INT_Wall_2x3_A:2x3x0.2:7:0.0167 --piece PROP_Desk_Free_A:5.5:1:0.0167
 
 A piece is NAME:SIZE:COUNT[:GAP_UV[:SCALE[:KIND[:LODS]]]].
@@ -21,13 +21,16 @@ A piece is NAME:SIZE:COUNT[:GAP_UV[:SCALE[:KIND[:LODS]]]].
   LODS    LODs after LOD0 (default 0), each lightmapped in its own atlas space at LOD scale 0.5^n with the piece's
           area: LOD1 and LOD2 make the piece cost 1.3125x its LOD0. A LOD under 64 px gets a note.
 Or --json FILE holding a list of {"name", "area_m2" or "size": [x, y, z], "count", "gap_uv", "scale", "kind",
-"b", "states", "lightmap", "lods", "lod_lightmap"}; b = the measured chart-box share (0-1] of that mesh's UV2,
-states = its lighting-state copies, "lightmap": false = kind probe, "lod_lightmap": false = LOD1+ probe-lit
-(Receive Global Illumination = Light Probes: no atlas space). A world-spec piece pastes in unchanged: its
-"lightmap_scale" is read as scale, lods and lod_lightmap read the same, and its other keys (collision, tris, desc,
-notes) are ignored. Any other key is warned and ignored.
+"b", "aspect", "states", "lightmap", "lods", "lod_lightmap"}; b = the measured chart-box share (0-1] of that mesh's
+UV2, aspect = that box's long side / short side (default 1; read under Bakery only), states = its lighting-state
+copies, "lightmap": false = kind probe, "lod_lightmap": false = LOD1+ probe-lit (Receive Global Illumination = Light
+Probes: no atlas space). A world-spec piece pastes in unchanged: its "lightmap_scale" is read as scale, lods and
+lod_lightmap read the same, and its other keys (collision, tris, desc, notes) are ignored. Any other key is warned
+and ignored.
 
-Rules (the vrchat-lighting-and-baking skill; measured in Unity 2022.3.22f1, 2026-10-16 and 2026-10-17):
+--lightmapper unity (default; "progressive" is the same: Unity's Progressive CPU or GPU) or bakery.
+
+Rules for unity (the vrchat-lighting-and-baking skill; measured in Unity 2022.3.22f1, 2026-10-16 and 2026-10-17):
   Unity packs each renderer's UV2 chart box (the bounding box of all its charts), not its whole 0-1 tile.
   texel scale  footprint_px = texels_per_m x sqrt(area / b) x scale x LOD scale, b = the chart box's share of the
                tile: 0.85 to plan (no UV2 yet), the measured b to check; LOD scale 0.5^n for LODn
@@ -37,6 +40,16 @@ Rules (the vrchat-lighting-and-baking skill; measured in Unity 2022.3.22f1, 2026
   capacity: sum(cost x count x states) <= 0.65 x max_px^2 x maps; warn above 0.65, error above 0.80
   big boxes: a box whose side (sqrt(cost), near square) is over half the map side cannot share a map with another
              such box (Unity packs by exact geometry): warn when there are more of them than maps
+Rules for bakery (Bakery's ftBuildGraphics.cs as installed in a Unity 2022.3.22f1 project, read 2026-10-24;
+alternativeScaleInLightmap off, its default):
+  rect         side L = texels_per_m x sqrt(2 x area x scale) on the UV2 bounds' short side, L x aspect on the long
+               side: Scale In Lightmap multiplies the area (a linear factor s needs scale s^2), no LOD factor
+  texel scale  footprint_px = (L - 2 x 3) / short side, short side = sqrt(b / aspect) (the Default packer insets
+               each rect by 3 texels; xatlas does not, so this holds under both)
+  a gap to pack = 2 / (L - 6): the bounds filling the tile, the worst case
+  atlas cost   = L^2 x aspect = 2 x area x scale x texels_per_m^2 x aspect px^2 (twice Unity's at scale 1)
+  capacity: the same sums and thresholds (measured with Unity's packer, assumed for Bakery's); a rect whose long
+            side is over the map side is clamped to it (lower, uneven density): warned
 Exit code 0 when the plan has no error (warnings and notes allowed), 1 on a plan error, 2 on bad input.
 """
 
@@ -55,8 +68,11 @@ PROBE_LIT_BELOW_PX = 64.0    # house guidance (no published source): free props 
 MOBILE_MAX_PX = 1024     # one bake serves every platform: 1024 whenever the world ships to Quest or iOS
 PC_MAX_PX = 2048         # the PC cap (vrchat-world-optimization's budgets)
 LOD_SCALE = 0.5          # LODn is lightmapped at 0.5^n of LOD0's texel scale (measured 0.995 / 0.492 / 0.250)
-PLAN_KEYS = ("name", "area_m2", "size", "count", "gap_uv", "scale", "kind", "b", "states", "lightmap", "lods",
-             "lod_lightmap")
+LIGHTMAPPERS = ("unity", "bakery")      # "progressive" is accepted for unity (the world spec's lighting.baker)
+BAKERY_AREA_FACTOR = 2.0  # Bakery sums |cross| over the triangles: 2 x the world area (ftBuildGraphics.cs, 2026-10-24)
+BAKERY_INSET_TEXELS = 3   # its Default atlas packer insets each rect this much (texelPaddingForDefaultAtlasPacker)
+PLAN_KEYS = ("name", "area_m2", "size", "count", "gap_uv", "scale", "kind", "b", "aspect", "states", "lightmap",
+             "lods", "lod_lightmap")
 SPEC_KEYS = ("lightmap_scale", "collision", "tris", "desc", "notes")   # world-spec piece keys: lightmap_scale = scale
 PROBE_LIT_FAMILIES = ("PROP", "FOL")    # Free-sized pieces of these families default to prop; ZONE and the rest to grid
 
@@ -83,19 +99,43 @@ def surface_area(size):
     return area
 
 
-def footprint_px(texels_per_m, area_m2, scale=1.0, b=COVERAGE, lod=0):
-    """Texel scale: pixels per UV unit (the side of the renderer's scaled 0-1 tile)."""
+def lightmapper_name(name):
+    """unity (also "progressive", the world spec's name for it) or bakery; raises ValueError for anything else."""
+    n = str(name or "unity").strip().lower()
+    n = "unity" if n == "progressive" else n
+    if n not in LIGHTMAPPERS:
+        raise ValueError("lightmapper must be unity (or progressive) or bakery, not %r" % (name,))
+    return n
+
+
+def bakery_side_px(texels_per_m, area_m2, scale=1.0):
+    """Bakery's rect side on the UV2 bounds' short side: texels_per_m x sqrt(2 x area x Scale In Lightmap)."""
+    return texels_per_m * math.sqrt(BAKERY_AREA_FACTOR * area_m2 * scale)
+
+
+def footprint_px(texels_per_m, area_m2, scale=1.0, b=COVERAGE, lod=0, lightmapper="unity", aspect=1.0):
+    """Texel scale: pixels per UV unit (the side of the renderer's scaled 0-1 tile). Unity: texels_per_m x
+    sqrt(area / b) x scale x 0.5^lod. Bakery: (L - 2 x the Default packer's inset) / the bounds' short side,
+    sqrt(b / aspect), with no LOD factor."""
+    if lightmapper == "bakery":
+        short = math.sqrt(b / aspect)
+        return max(bakery_side_px(texels_per_m, area_m2, scale) - 2.0 * BAKERY_INSET_TEXELS, 0.0) / short
     return texels_per_m * math.sqrt(area_m2 / b) * scale * LOD_SCALE ** lod
 
 
-def box_cost_px2(texels_per_m, area_m2, scale=1.0, lod=0):
-    """Atlas space of one renderer: its UV2 chart box, whatever the UV2 layout."""
+def box_cost_px2(texels_per_m, area_m2, scale=1.0, lod=0, lightmapper="unity", aspect=1.0):
+    """Atlas space of one renderer whatever the UV2 layout: Unity, its UV2 chart box; Bakery, its rect L x L x
+    aspect (no LOD factor)."""
+    if lightmapper == "bakery":
+        return bakery_side_px(texels_per_m, area_m2, scale) ** 2 * aspect
     return (texels_per_m * scale * LOD_SCALE ** lod) ** 2 * area_m2
 
 
-def pack_gap_uv(texels_per_m, area_m2, scale=1.0, lod=0):
-    """UV2 gap that keeps 2 texels at the worst case b = 1."""
-    return MIN_PADDING_TEXELS / (texels_per_m * math.sqrt(area_m2) * scale * LOD_SCALE ** lod)
+def pack_gap_uv(texels_per_m, area_m2, scale=1.0, lod=0, lightmapper="unity"):
+    """UV2 gap that keeps 2 texels at the worst case, charts whose bounds fill the tile (b = 1); inf when that
+    footprint has no texels at all (a Bakery rect of 6 texels or less)."""
+    fp = footprint_px(texels_per_m, area_m2, scale, 1.0, lod, lightmapper)
+    return MIN_PADDING_TEXELS / fp if fp > 0 else float("inf")
 
 
 def default_kind(name):
@@ -142,13 +182,19 @@ def normalise(p, default_states=1):
         b = float(b)
         if not 0 < b <= 1:
             raise ValueError("%s: b (UV2 chart-box share) must be in (0, 1]" % name)
+    aspect = p.get("aspect", 1.0)
+    if isinstance(aspect, bool) or not isinstance(aspect, (int, float)) or not aspect >= 1:
+        raise ValueError("%s: aspect (the UV2 box's long side / short side) must be a number of at least 1" % name)
+    aspect = float(aspect)
+    if b is not None and b * aspect > 1 + 1e-9:
+        raise ValueError("%s: b %g with aspect %g puts the box's long side outside the tile" % (name, b, aspect))
     states = whole(p.get("states", default_states), "states", name, 1)
     lods = whole(p.get("lods", 0), "lods after LOD0", name, 0)
     lod_lightmap = p.get("lod_lightmap", True)
     if not isinstance(lod_lightmap, bool):
         raise ValueError("%s: lod_lightmap must be true or false (false = LOD1+ probe-lit)" % name)
     return {"name": name, "area": area, "count": count, "scale": scale, "gap": gap, "kind": kind, "b": b,
-            "states": states, "lods": lods, "lod_lightmap": lod_lightmap,
+            "aspect": aspect, "states": states, "lods": lods, "lod_lightmap": lod_lightmap,
             "unknown": [k for k in p if k not in PLAN_KEYS + SPEC_KEYS]}
 
 
@@ -189,12 +235,14 @@ def parse_piece(text):
     return piece
 
 
-def fill_advice(pieces, rows, max_px, mobile):
+def fill_advice(pieces, rows, max_px, mobile, lightmapper="unity"):
     """What can bring the fill down, given the platform, the lighting states and what is lightmapped now."""
     adv = ["lower texels/m (before the UV2 is packed: after, it shrinks the gaps)"]
     if max_px < (MOBILE_MAX_PX if mobile else PC_MAX_PX):
         adv.append("raise Max Lightmap Size (up to %d)" % (MOBILE_MAX_PX if mobile else PC_MAX_PX))
     adv.append("allow more lightmaps")
+    if lightmapper == "bakery" and any(p["aspect"] > 1 for p in pieces):
+        adv.append("stretch thin UV2 bounds to the tile (a Bakery rect costs L^2 x aspect)")
     switched = any(p["states"] > 1 for p in pieces)
     if any(r["kind"] == "prop" and r["status"] != "probe-lit" for r in rows):
         adv.append("make small free props that do not change with the switch probe-lit" if switched
@@ -206,17 +254,21 @@ def fill_advice(pieces, rows, max_px, mobile):
     return ", ".join(adv)
 
 
-def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
+def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False, lightmapper="unity"):
     """Plan at one texels_per_m. pieces: normalised dicts. Returns (rows, summary)."""
+    lm = lightmapper_name(lightmapper)
     rows, errors, warnings, notes = [], [], [], []
     need = 0.0
     big, big_names = 0, []      # chart boxes over half the map side, and which pieces they come from
     for p in pieces:
-        fp = footprint_px(texels_per_m, p["area"], p["scale"], p["b"] or COVERAGE)
-        fp_check = footprint_px(texels_per_m, p["area"], p["scale"], p["b"] or 1.0)
+        asp = p["aspect"] if lm == "bakery" else 1.0
+        # b to plan with, and the worst case to check gaps at: the box's long side filling the tile (b = 1 / aspect)
+        b_plan, b_worst = p["b"] or min(COVERAGE, 1.0 / asp), p["b"] or 1.0 / asp
+        fp = footprint_px(texels_per_m, p["area"], p["scale"], b_plan, 0, lm, asp)
+        fp_check = footprint_px(texels_per_m, p["area"], p["scale"], b_worst, 0, lm, asp)
         row = {"name": p["name"], "kind": p["kind"], "count": p["count"], "states": p["states"],
                "area_m2": p["area"], "footprint_px": fp, "cost_px2": 0.0, "padding_texels": None,
-               "pack_gap_uv": pack_gap_uv(texels_per_m, p["area"], p["scale"]), "status": "lightmap"}
+               "pack_gap_uv": pack_gap_uv(texels_per_m, p["area"], p["scale"], 0, lm), "status": "lightmap"}
         if p["kind"] == "probe" or (p["kind"] == "prop" and fp < PROBE_LIT_BELOW_PX):
             row["status"] = "probe-lit"
             if p["kind"] == "prop":
@@ -229,8 +281,15 @@ def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
             notes.append("%s: grid piece at %.0f px < %.0f: still lightmapped and counted; raise its Scale In "
                          "Lightmap where its lighting detail matters" % (p["name"], fp, PROBE_LIT_BELOW_PX))
         copies = p["count"] * p["states"]
-        row["cost_px2"] = box_cost_px2(texels_per_m, p["area"], p["scale"]) * copies
+        row["cost_px2"] = box_cost_px2(texels_per_m, p["area"], p["scale"], 0, lm, asp) * copies
         need += row["cost_px2"]
+        long_side = bakery_side_px(texels_per_m, p["area"], p["scale"]) * asp if lm == "bakery" else 0.0
+        if long_side > max_px:
+            warnings.append("%s: its Bakery rect is %.0f px on its long side, over the %d px map: Bakery clamps it to "
+                            "the map, which lowers its density (unevenly when only the long side is clamped); %s"
+                            % (p["name"], long_side, max_px, "stretch its UV2 bounds to the tile, split the mesh or "
+                               "lower its Scale In Lightmap" if asp > 1 else "split the mesh or lower its Scale In "
+                               "Lightmap"))
         if p["gap"] is not None:
             row["padding_texels"] = p["gap"] * fp_check
             if row["padding_texels"] < MIN_PADDING_TEXELS:
@@ -242,7 +301,7 @@ def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
         rows.append(row)
         small_lods = []
         for n in range(p["lods"] + 1):
-            side = math.sqrt(box_cost_px2(texels_per_m, p["area"], p["scale"], n))
+            side = math.sqrt(box_cost_px2(texels_per_m, p["area"], p["scale"], n, lm, asp))
             if n and not p["lod_lightmap"]:
                 side = 0.0
             if side > max_px / 2.0:
@@ -252,8 +311,8 @@ def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
                 continue
             lod = {"name": "%s LOD%d" % (p["name"], n), "kind": p["kind"], "count": p["count"],
                    "states": p["states"], "area_m2": p["area"], "cost_px2": side * side * copies,
-                   "footprint_px": footprint_px(texels_per_m, p["area"], p["scale"], p["b"] or COVERAGE, n),
-                   "padding_texels": None, "pack_gap_uv": pack_gap_uv(texels_per_m, p["area"], p["scale"], n),
+                   "footprint_px": footprint_px(texels_per_m, p["area"], p["scale"], b_plan, n, lm, asp),
+                   "padding_texels": None, "pack_gap_uv": pack_gap_uv(texels_per_m, p["area"], p["scale"], n, lm),
                    "status": "lod" if p["lod_lightmap"] else "probe-lit"}
             need += lod["cost_px2"]
             rows.append(lod)
@@ -270,7 +329,7 @@ def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
     if mobile and max_px > MOBILE_MAX_PX:
         errors.append("Max Lightmap Size %d in a world that ships to Quest or iOS: one bake serves every platform, "
                       "so use %d" % (max_px, MOBILE_MAX_PX))
-    advice = fill_advice(pieces, rows, max_px, mobile)
+    advice = fill_advice(pieces, rows, max_px, mobile, lm)
     if fill > ERROR_FILL:
         errors.append("fill %.3f of %d x %d px is past the %.2f limit: %s"
                       % (fill, maps, max_px, ERROR_FILL, advice))
@@ -283,7 +342,7 @@ def evaluate(pieces, texels_per_m, max_px, maps=1, mobile=False):
                         "mesh, or allow more lightmaps" % (big, max_px, ", ".join(big_names), big, maps))
     summary = {"texels_per_m": texels_per_m, "max_px": max_px, "maps": maps, "need_px2": need, "have_px2": have,
                "fill": fill, "big_boxes": big, "errors": errors, "warnings": warnings, "notes": notes,
-               "advice": advice}
+               "advice": advice, "lightmapper": lm}
     return rows, summary
 
 
@@ -307,21 +366,23 @@ def intervals(flags, values):
     return out
 
 
-def window(pieces, max_px, maps=1):
+def window(pieces, max_px, maps=1, lightmapper="unity"):
     """Texels/m ranges, from every piece re-planned at every sample: (clean, workable). Clean: no error, fill
     <= 0.65 and no more boxes over half the map side than maps. Workable: no error. The mobile map-size rule is left
     out: it does not depend on texels/m."""
     values = [round(SCAN_STEP * i, 1) for i in range(1, int(SCAN_MAX / SCAN_STEP) + 1)]
     clean, ok = [], []
     for t in values:
-        rows, s = evaluate(pieces, t, max_px, maps)
+        rows, s = evaluate(pieces, t, max_px, maps, lightmapper=lightmapper)
         ok.append(not s["errors"])
         clean.append(is_clean(rows, s))
     return intervals(clean, values), intervals(ok, values)
 
 
-def plan(pieces, texels_per_m, max_px, maps=1, states=1, mobile=False):
-    """Validate, evaluate at texels_per_m, and add the texels/m windows. Raises ValueError on bad input."""
+def plan(pieces, texels_per_m, max_px, maps=1, states=1, mobile=False, lightmapper="unity"):
+    """Validate, evaluate at texels_per_m, and add the texels/m windows. lightmapper: unity (or progressive) or
+    bakery. Raises ValueError on bad input."""
+    lightmapper = lightmapper_name(lightmapper)
     if not texels_per_m > 0:
         raise ValueError("texels per metre must be above 0")
     if isinstance(max_px, bool) or not isinstance(max_px, int) or max_px < 1:
@@ -331,9 +392,9 @@ def plan(pieces, texels_per_m, max_px, maps=1, states=1, mobile=False):
     if not isinstance(pieces, list) or not pieces:
         raise ValueError("pieces must be a non-empty list")
     norm = [normalise(p, states) for p in pieces]
-    rows, summary = evaluate(norm, texels_per_m, max_px, maps, mobile)
+    rows, summary = evaluate(norm, texels_per_m, max_px, maps, mobile, lightmapper)
     summary["warnings"] = key_warnings(norm) + summary["warnings"]
-    summary["window_clean"], summary["window_ok"] = window(norm, max_px, maps)
+    summary["window_clean"], summary["window_ok"] = window(norm, max_px, maps, lightmapper)
     return rows, summary
 
 
@@ -342,6 +403,10 @@ def fmt_windows(ws):
 
 
 def report(rows, summary, out=sys.stdout):
+    if summary.get("lightmapper") == "bakery":
+        out.write("lightmapper bakery: rect side texels/m x sqrt(2 x area x Scale In Lightmap), footprint less the "
+                  "Default packer's %d-texel inset; fill thresholds measured with Unity's packer\n"
+                  % BAKERY_INSET_TEXELS)
     out.write("%-26s %-8s %5s %8s %9s %10s %8s %9s  %s\n" % ("piece", "kind", "count", "area m2", "footprint",
                                                            "cost px2", "padding", "pack gap", "status"))
     for r in rows:
@@ -373,6 +438,7 @@ def main(argv=None):
     ap.add_argument("--maps", type=int, default=1, help="lightmaps the plan allows (default 1)")
     ap.add_argument("--states", type=int, default=1, help="lighting states: copies of every piece (default 1)")
     ap.add_argument("--mobile", action="store_true", help="the world ships to Quest or iOS (max 1024)")
+    ap.add_argument("--lightmapper", default="unity", help="unity (default; progressive is the same) or bakery")
     ap.add_argument("--piece", action="append", default=[],
                     help="NAME:SIZE:COUNT[:GAP_UV[:SCALE[:KIND[:LODS]]]] (repeat)")
     ap.add_argument("--json", help="JSON file with a list of pieces")
@@ -390,7 +456,7 @@ def main(argv=None):
             pieces += data
         if a.states < 1:
             raise ValueError("--states must be at least 1")
-        rows, summary = plan(pieces, a.texels_per_m, a.max_px, a.maps, a.states, a.mobile)
+        rows, summary = plan(pieces, a.texels_per_m, a.max_px, a.maps, a.states, a.mobile, a.lightmapper)
     except (ValueError, TypeError, KeyError, OSError) as e:
         sys.stderr.write("lightmap_budget: %s\n" % e)
         return 2
