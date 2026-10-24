@@ -1345,6 +1345,12 @@ def check_lightmap(spec, pieces, asms, module, families, f):
         f.error("budgets.lightmap.texels_per_m must be a positive number (Unity's Lightmap Resolution, texels per "
                 "metre), got %r: the lightmap check waits for it" % (tpm,))
         return {}
+    lighting = spec.get("lighting") if isinstance(spec.get("lighting"), dict) else {}
+    if lighting.get("baker") == "bakery":
+        f.note("lighting.baker is bakery: this lightmap check plans with Unity Progressive's footprint and cost; Bakery "
+               "sizes a renderer by its area, about 2 x A x lightmap_scale x texels_per_m^2 px^2 (twice Progressive's "
+               "at scale 1, each LOD at its own area), so re-plan with vrchat-lighting-and-baking's lightmap_budget.py "
+               "--lightmapper bakery and pack UV2s with lightmapper='bakery' at stage 6")
     small = lm.get("min_footprint_px", MIN_FOOTPRINT_PX)
     if not number(small) or small <= 0:
         f.error("budgets.lightmap.min_footprint_px must be a positive number of pixels (default %d), got %r"

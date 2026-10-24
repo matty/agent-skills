@@ -24,7 +24,7 @@ rotations are degrees about Z, counter-clockwise seen from above.
 | `elevations` | `id`, `zone`, `facing`, `origin`, `courses` | 2 |
 | `views` | `id`, `pos`, `target`, `lens` (mm), `matches` (the mockup's path, or `null` without mockups) | 2 |
 | `interactivity` | `id` (unique: it names the `T-UDON-<ID>` task), `desc`, `sync` (`none`/`manual`/`continuous`) | 2 |
-| `lighting` | `baker` (`progressive`/`bakery`), `mode` (`baked`: every light Baked, required with `quest` or `ios`: a cross-platform world shares one bake, and Quest/iOS show no realtime shadows (Standard Lite takes the main directional light unshadowed; Lightmapped takes none); `mixed`: PC-only worlds). A light players switch is planned with `vrchat-lighting-and-baking` and recorded as the zone's `lighting_states`, `light_volumes` (true only when the package is installed), optional `notes` | 2 |
+| `lighting` | `baker` (`progressive`/`bakery`; it also sets whose footprint stage 6 packs the UV2 for, passed as `lightmapper`), `mode` (`baked`: every light Baked, required with `quest` or `ios`: a cross-platform world shares one bake, and Quest/iOS show no realtime shadows (Standard Lite takes the main directional light unshadowed; Lightmapped takes none); `mixed`: PC-only worlds). A light players switch is planned with `vrchat-lighting-and-baking` and recorded as the zone's `lighting_states`, `light_volumes` (true only when the package is installed), optional `notes` | 2 |
 
 The planner writes every section except `version`, `world` and `tools`, which the master owns.
 

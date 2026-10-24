@@ -302,6 +302,17 @@ class SpecChecks(unittest.TestCase):
         _, ctx = run(spec)
         self.assertAlmostEqual(ctx["side"]["INT_Wall_2x3_A"], 2 * ctx["side"]["INT_Door_2x3_A"], places=6)
 
+    def test_bakery_gets_a_note_to_replan(self):
+        # the lightmap check plans with Progressive's footprint: under Bakery a NOTE points at the Bakery planner
+        spec = study_spec()
+        self.assertFalse([m for m in messages(run(spec)[0], "NOTE") if "lighting.baker is bakery" in m])
+        spec["lighting"]["baker"] = "bakery"
+        f, _ = run(spec)
+        notes = [m for m in messages(f, "NOTE") if "lighting.baker is bakery" in m]
+        self.assertEqual(len(notes), 1, notes)
+        self.assertIn("--lightmapper bakery", notes[0])
+        self.assertEqual(f.warnings, 0, f.items)                         # a note: the clean spec stays clean
+
     def test_lightmap_fill_thresholds(self):
         # Canon: on box cost, warn above 0.65 of the maps' area (below every spill measured at Lightmap Padding 2)
         # and error above 0.80, where a spill is likely (kit-like sets spilled at 0.79-0.90).

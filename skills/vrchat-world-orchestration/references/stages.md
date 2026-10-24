@@ -241,10 +241,14 @@ from the command line) to self-check before reporting.
   gaps sized from the box came out at 1.73 texels), and QA's U4 measures the real mesh. The spec's `--footprints`
   table plans the lightmap fill only. Per mesh:
   - `--map` = that square rounded down: with `uv-unwrapping`, `uv_audit.lightmap_footprint(ob, texels_per_m,
-    scale, coverage=1)`, which applies an LOD mesh's 0.5^n itself (from its `_LOD<n>` name); otherwise the formula
-    `texels_per_m x sqrt(A) x scale x 0.5^n` with `qa_measure --lightmap-texels <texels_per_m>`'s `area_m2` as A, or
-    without either skill the evaluated mesh's summed polygon areas
+    scale, coverage=1, lightmapper=<lighting.baker>)`, which applies an LOD mesh's 0.5^n itself (from its `_LOD<n>`
+    name); otherwise the formula `texels_per_m x sqrt(A) x scale x 0.5^n` with `qa_measure --lightmap-texels
+    <texels_per_m>`'s `area_m2` as A, or without either skill the evaluated mesh's summed polygon areas
     (`sum(p.area for p in ob.evaluated_get(depsgraph).to_mesh().polygons)`);
+  - `lighting.baker: bakery` changes that square: Bakery sizes a renderer by `texels_per_m x sqrt(2 x A x scale)`,
+    the scale on the area, minus 6 texels and with no LOD factor (`vrchat-lighting-and-baking`, Bakery). Pass the
+    spec's `lighting.baker` as `lightmapper=` to `pack_lightmap`, `lightmap_footprint` and `rizomuv-uv-pipeline`'s
+    `unwrap_objects`, and as `--lightmapper` to the UV2 audit;
   - the gap = `2 / --map` in UV units, the Smart UV margin half of it;
   - put those numbers in the UV brief, and audit with `uv_audit ... --layer 1 --lightmap --map <--map> --pad 2`.
 - Without `uv-unwrapping`: Smart UV Project with `margin_method='FRACTION'` and `island_margin` = half the mesh's

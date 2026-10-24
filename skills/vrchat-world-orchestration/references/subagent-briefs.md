@@ -241,10 +241,11 @@ reloaded first, every link resolving). Checks: M9.
 **Stage 6, T-UV-EXT (UV artist).** Goal: UV0 tiling at 512 px/m; a UV2 on every kit render mesh (LODs and probe-lit
 props too, not `_COL`), inside 0-1, no overlaps; on the lightmapped ones, gaps of at least 2 texels packed for the
 worst case (UV2 bounding box filling the tile) and at least 1 texel to the tile edge; `kit_status = uv`. Give the
-world's `texels_per_m` and each piece's `lightmap_scale`, and have the builder size each modelled mesh from its real
-surface area, not the spec table (which plans the fill only): `--map` = `uv_audit.lightmap_footprint(ob, texels_per_m,
-scale, coverage=1)` (a whole number, rounded down; it applies an LOD mesh's 0.5^n itself, from its `_LOD<n>`
-name), gap = `2 / --map` in UV units,
+world's `texels_per_m`, its `lighting.baker` and each piece's `lightmap_scale`, and have the builder size each modelled
+mesh from its real surface area, not the spec table (which plans the fill only): `--map` =
+`uv_audit.lightmap_footprint(ob, texels_per_m, scale, coverage=1, lightmapper=<lighting.baker>)` (a whole number,
+rounded down; it applies an LOD mesh's 0.5^n itself, from its `_LOD<n>` name; Bakery's footprint has none), gap =
+`2 / --map` in UV units,
 Smart UV margin = half the gap, charts packed to fill their bounding box (`stages.md`, stage 6). Load: `uv-unwrapping`
 (+ `rizomuv-uv-pipeline` if RizomUV is installed). Checks: U1-U6, the UV2 audit run per mesh as `uv_audit ... --layer
 1 --lightmap --map <--map> --pad 2`. Fallback: Smart UV Project with `margin_method='FRACTION'` and `island_margin` =
