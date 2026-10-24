@@ -84,6 +84,42 @@ class PackSpec(unittest.TestCase):
         self.assertIn("KIT_Wall", w)
         self.assertIsNone(self.ru.lightmap_warning(40.0, "KIT_Wall_LOD1"))     # LOD1+ follow their piece
 
+    def test_bakery_footprint_and_spec(self):
+        # Bakery (ftBuildGraphics.cs, read 2026-10-24): a rect of side texels/m x sqrt(2 x area x Scale In Lightmap)
+        # on the UV2 box's short side, less its Default packer's 3-texel inset; no LOD factor
+        ru = self.ru
+        self.assertEqual((ru.BAKERY_AREA_FACTOR, ru.BAKERY_INSET_TEXELS, ru.EFFECTIVE_DENSITY_MIN), (2.0, 3, 0.5))
+        self.assertEqual([ru.lightmapper_name(n) for n in (None, "progressive", "Bakery")], ["unity", "unity", "bakery"])
+        with self.assertRaises(ValueError):
+            ru.lightmap_spec(1.0, 20, lightmapper="enlighten")
+        side = 20 * math.sqrt(2 * 6.98)
+        self.assertAlmostEqual(ru.bakery_side(6.98, 20), side, places=9)
+        self.assertAlmostEqual(ru.lightmap_footprint(6.98, 20, 1.0, 1.0, "bakery"), side - 6, places=9)
+        self.assertAlmostEqual(ru.lightmap_footprint(6.98, 20, 1.0, 0.25, "bakery"), (side - 6) / 0.5, places=9)
+        self.assertAlmostEqual(ru.lightmap_footprint(6.98, 20, 1.0, 0.25, "bakery", 0.25), (side - 6) / 0.25)
+        self.assertAlmostEqual(ru.lightmap_footprint(6.98, 20, 4.0, 1.0, "bakery"), 2 * side - 6, places=9)   # s 2
+        self.assertAlmostEqual(ru.scale_factor(32, 64, "bakery"), (70 / 38.0) ** 2)
+        self.assertEqual((ru.lod_scale("KIT_Wall_LOD2"), ru.lod_scale("KIT_Wall_LOD2", "bakery")), (0.25, 1.0))
+        for area in (0.25, 1.0, 6.0, 14.0, 40.0):
+            for tpm in (10, 20, 40):
+                for scale in (0.5, 1.0, 4.0):
+                    s = ru.lightmap_spec(area, tpm, scale, lightmapper="bakery")
+                    foot = max(ru.bakery_side(area, tpm, scale) - 6, 0.5)
+                    self.assertEqual(s["lightmapper"], "bakery")
+                    self.assertAlmostEqual(s["packed_for_px"], foot, delta=0.006)
+                    worst_gap = (s["pad_px"] - ru.PACK_GRID_SLACK_PX) * foot / s["map_px"]
+                    self.assertGreaterEqual(worst_gap, 2.0 - 1e-9, (area, tpm, scale, s))
+        self.assertEqual(ru.lightmap_spec(1.0, 20, lod=1, lightmapper="bakery")["packed_for_px"],
+                         ru.lightmap_spec(1.0, 20, lightmapper="bakery")["packed_for_px"])
+        tiny = ru.lightmap_spec(0.01, 20, lightmapper="bakery")                 # a 2.8 px rect: nothing left
+        self.assertEqual(tiny["packed_for_px"], 0.5)
+        self.assertEqual(ru.lightmap_too_small(tiny, 1), "1 charts need 2 px")
+        fb = ru.lightmap_fallback_spec(ru.lightmap_spec(6.0, 20, users={"a": (6.0, 1.0), "b": (1.5, 0.5)},
+                                                        lightmapper="bakery"), 64)
+        self.assertEqual(fb["lightmapper"], "bakery")
+        self.assertAlmostEqual(fb["packed_for_px"], 64.0, delta=0.01)      # the smallest user's rect: 70 px less 6
+        self.assertAlmostEqual(fb["users"]["b"][1], 0.5 * (70 / ru.bakery_side(1.5, 20, 0.5)) ** 2, places=9)
+
     def test_lightmap_spec_is_graded_by_layer_report_not_report_args(self):
         with self.assertRaises(ValueError):
             self.ru.report_args(self.ru.lightmap_spec(1.0, 20))
@@ -285,6 +321,44 @@ class Gated(unittest.TestCase):
         gap = lambda s: s["pad_px"] / s["map_px"]                        # gap in UV
         self.assertGreaterEqual(gap(lod1), 2 * (2.0 / lod0["packed_for_px"]))   # 2 texels at half the footprint
         self.assertGreater(gap(lod1), gap(lod0))
+
+    def test_bakery_lightmap_is_graded_at_bakery_footprints(self):
+        spec = self.ru.lightmap_spec(box_mesh(), 20, users={"KIT_Box": (6.0, 1.0)}, lightmapper="bakery")
+        res = self.ru.unwrap_gated(FakeLink(), box_mesh(), "hard", {"uv0": self.ru.pack_spec(1024), "uv2": spec})
+        rep = res["reports"]["uv2"]
+        self.assertEqual(rep["lightmapper"], "bakery")
+        short = rep["bbox_short_side"]
+        self.assertTrue(0 < short <= 1)
+        self.assertAlmostEqual(rep["footprints_px"]["KIT_Box"], (20 * math.sqrt(12) - 6) / short, delta=0.02)
+        self.assertEqual(res["failures"]["uv2"], [])
+        self.assertTrue(rep["padding_pairs_below_min"] == 0 and rep["margin_ok"])
+        uv_area = self.ru._areas(box_mesh(), res["packs"]["uv2"]["uvw_ids"], res["packs"]["uv2"]["uvw"])[1]
+        self.assertAlmostEqual(rep["effective_texels_per_m"]["KIT_Box"],
+                               rep["footprints_px"]["KIT_Box"] * math.sqrt(uv_area / 6.0), delta=0.05)
+
+    def test_bakery_effective_density_warning(self):
+        # six 1 x 1 m faces as 0.02 squares down the diagonal: the box spans 0.98 of the tile, the charts 0.0024.
+        # Bakery at 40 texels/m: 132.6 / 0.98 = 135 px, effective 135 x sqrt(0.0024 / 6) = 2.7 texels/m
+        mesh = box_mesh()
+        ids = list(range(24))
+        uvw = []
+        for f in range(6):
+            u0 = 0.01 + f * 0.192
+            uvw += [u0, u0, 0.0, u0 + 0.02, u0, 0.0, u0 + 0.02, u0 + 0.02, 0.0, u0, u0 + 0.02, 0.0]
+        bakery = self.ru.lightmap_spec(mesh, 40, lightmapper="bakery")
+        rep = self.ru.layer_report(mesh, ids, uvw, bakery)
+        self.assertAlmostEqual(rep["bbox_short_side"], 0.98, places=6)
+        self.assertAlmostEqual(rep["footprint_px"], (40 * math.sqrt(12) - 6) / 0.98, delta=0.01)
+        self.assertAlmostEqual(rep["effective_texels_per_m"][""], rep["footprint_px"] * math.sqrt(0.0024 / 6),
+                               delta=0.01)
+        low = [w for w in rep["warnings"] if "under half" in w]
+        self.assertEqual(len(low), 1, rep["warnings"])
+        self.assertTrue(low[0].startswith("lightmap charts fill 0% of their box: effective density 2.7 texels/m of "
+                                          "40 planned"), low[0])
+        self.assertFalse([w for w in rep["warnings"] if "lightmaps the whole box" in w])    # said once
+        unity = self.ru.layer_report(mesh, ids, uvw, self.ru.lightmap_spec(mesh, 40))
+        self.assertFalse([w for w in unity["warnings"] if "under half" in w])
+        self.assertTrue([w for w in unity["warnings"] if "Unity lightmaps the whole box" in w], unity["warnings"])
 
     def test_lightmap_report_has_its_box_fill(self):
         res = self.ru.unwrap_gated(FakeLink(), box_mesh(), "hard",

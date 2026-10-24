@@ -103,6 +103,19 @@ How the scripts meet it:
 Resolution). Measured 17 Oct 2026: a mesh shared by a 1 m box and a half-size copy, 20 texels/m: footprints 67.5
 and 33.7 px, closest gap 2.9 texels at 33.7 px.
 
+**Bakery** sizes renderers differently, so pass `lightmapper="bakery"` (to `unwrap_objects`, or to
+`rizom_uv.lightmap_spec`) when the scene bakes with it. Read from Bakery's `ftBuildGraphics.cs` as installed in a
+Unity 2022.3.22f1 project (2026-10-24, its defaults; `vrchat-lighting-and-baking` owns the numbers): a renderer gets
+a rect of side L = texels_per_m x sqrt(2 x area x Scale In Lightmap) texels on its UV2 bounding box's short side, the
+UV area ignored, Scale In Lightmap acting on the area (a linear factor s needs s^2) and no LOD factor; its Default
+atlas packer insets each rect 3 texels on every side (xatlas does not). So the footprint is (L - 6) / the box's short
+side: `lightmap_spec` packs for a short side of 1 (L - 6 px, which holds under xatlas too), `layer_report` grades at
+the measured short side (`bbox_short_side`), and the 64 px fallback raises Scale In Lightmap by ((64 + 6) / L)^2.
+Every lightmap report gives `effective_texels_per_m` per renderer (footprint x sqrt(UV2 charts' area / its surface
+area)); under Bakery a renderer of 64 px or more under half its planned density (texels_per_m x sqrt(Scale In
+Lightmap), at most texels_per_m) gets a warning, shown on the line as `UV2 box N% full`: raise Scale In Lightmap and
+pack again for the larger footprint.
+
 Under 64 px (house guidance, no published source): a Free prop (a Free-sized PROP or FOL piece; props in a zone
 with lighting states stay lightmapped) is probe-lit (Receive Global Illumination: Light Probes, still Contribute
 GI); every other piece, grid pieces (walls, floors, ceilings) included, is never made probe-lit by this rule: raise

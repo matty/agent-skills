@@ -1,5 +1,5 @@
 """Measure a UV layout: distortion, texel density, coverage, overlaps, padding, margin, flips, fragmentation,
-bounds. Gate it.
+bounds, and where its seams run (visible_seams). Gate it.
 
 Host: any Python with numpy (Blender's bundled Python has it). No bpy, no RizomUV: it works on the same flat
 arrays RizomUV uses (see rizom_uv.py for the layout), so it can grade UVs from any tool. blender_rizom.py has
@@ -36,6 +36,8 @@ Definitions (area-weighted over those triangles):
               FRAGMENT_FREE_ISLANDS islands and into more islands than it has regions counts, as its islands beyond
               its regions per 100 of its faces; 0 when none does. A crate of planks, a mitred frame (16 faces, 16
               regions) and a 5-step stair (14 regions) are not fragmented; one flat or smooth shell in confetti is
+    visible seams  metres of UV seam through smooth surface (dihedral < 15 deg) facing up or to the front (-Y), not
+              marked in the seed: report()["seams"]; advisory (visible_seam_warning), never part of grade()
 Polygon areas (texel density, linear ratio) use the exact polygon area (Newell in 3D, shoelace in UV).
 """
 
@@ -58,6 +60,15 @@ SHAPE_COVERAGE_SHARE = 0.8      # a long thin piece cannot fill a square tile: i
 FILL_COVERAGE_MAX_ISLANDS = 100 # sprawl means few islands: with hundreds the map/64 gaps take the tile (a craggy
                                 # 5120-face rock, 532 islands: 0.20), so the floor applies up to this many islands
 FRAGMENT_REGION_ANGLE = 40.0    # degrees: the hard preset's SharpEdges.AngleMin (unwrap_gated passes each attempt's)
+# Visible seams (visible_seams): advisory, never a gate failure (see the function and distortion-and-quality.md).
+VIEW_DIRS = ((0.0, 0.0, 1.0), (0.0, -1.0, 0.0))   # seen from above (+Z) and from the front (-Y, a kit piece's front)
+SMOOTH_SEAM_DEG = 15.0          # dihedral under which a seam runs through smooth surface, not along an edge: a
+                                # hard-surface seam sits on an edge of 30 deg or more (3-segment chamfer, 90 deg box)
+VIEW_FACING = 0.5               # cos 60 deg: a face turned further from the viewer shows under half its area
+SEAM_UV_TOL = 1e-5              # UV units (0.01 px at 1024): unwelded corners closer than this are not a seam
+VISIBLE_SEAM_NOTE_M = 0.25      # note unmarked visible seams from this many metres (one 25 cm checker square at
+VISIBLE_SEAM_NOTE_SHARE = 0.25  # 1 UV/m), or from this share of the bounding-box diagonal on a smaller piece.
+                                # Measured 2026-10-24: autoseams on cushions 0.34-2.04 m, panel seams marked 0.0
 
 
 # ----------------------------------------------------------------------------------------------- input
@@ -571,6 +582,104 @@ def flipped_polygons(mesh, uvw_ids, uvw):
     return int(np.count_nonzero(s < 0))
 
 
+def visible_seams(mesh, uvw_ids, uvw, view_dirs=VIEW_DIRS, smooth_deg=SMOOTH_SEAM_DEG, facing=VIEW_FACING,
+                  uv_tol=SEAM_UV_TOL):
+    """Where the UV seams run, in mesh units (metres for world-space input). The grade measures distortion only, so
+    an autoseam cut across a smooth, visible top passes it; with a tiling texture the pattern jumps at that cut.
+    A seam edge is an interior edge (exactly two faces) whose UV coordinates differ across it at either end (more
+    than uv_tol): unwelded corners with equal coordinates are not a seam. It is smooth when its two faces meet at a
+    dihedral under smooth_deg (a hard-surface seam on a sharp edge never is), and visible when the mean normal of its
+    two faces has a component of at least `facing` along one of view_dirs (default: up +Z and the front -Y; None
+    counts every direction), with each closed shell turned outward first (an inverted shell would read its top as
+    its bottom). Marked: split in the seed topology mesh["uvw_ids"] (the seams you marked; rizom_uv and
+    blender_rizom.mesh_arrays seed with them), so the rest are the cuts the unwrapper chose.
+    Returns seam_m (every seam), smooth_seam_m, visible_seam_m, visible_seam_unmarked_m, visible_seam_bounds
+    ([min xyz, max xyz] of the unmarked visible seams, or None) and size_m (the bounding-box diagonal: the scale of
+    visible_seam_warning)."""
+    sizes, xid, xyz, uid, uv = _arrays(mesh, uvw_ids, uvw)
+    used = xyz[np.unique(xid)]
+    size = round(float(np.linalg.norm(used.max(0) - used.min(0))), 3)
+    starts, nxt, foc = _starts(sizes), _next_corner(sizes), _face_of_corner(sizes)
+    P = xyz[xid] - xyz[xid][starts][foc]
+    nrm = np.add.reduceat(np.cross(P, P[nxt]), starts, axis=0)                 # Newell: 2 x the area vector
+    a, b = xid, xid[nxt]
+    key = np.stack([np.minimum(a, b), np.maximum(a, b)], 1)
+    order = np.lexsort((key[:, 1], key[:, 0]))
+    k = key[order]
+    same = np.all(k[1:] == k[:-1], axis=1) & (k[1:, 0] != k[1:, 1])
+    lone = np.r_[True, ~same[:-1]] & np.r_[~same[1:], True]                    # exactly two corners on the edge
+    i = np.flatnonzero(same & lone)
+    # A closed shell whose normals point inward (bmesh's recalc_face_normals did that to a thin bevelled box) would
+    # read its top as its bottom: turn each closed shell outward by the sign of its volume, sum(centroid . area)/3.
+    paired = np.zeros(len(xid), dtype=bool)
+    paired[order[i]] = paired[order[i + 1]] = True
+    shell = islands(sizes, xid)
+    open_shell = np.bincount(shell[foc[~paired]], minlength=int(shell.max()) + 1) > 0
+    cen = np.add.reduceat(xyz[xid] - xyz.mean(0), starts, axis=0) / sizes[:, None]
+    vol = np.bincount(shell, weights=np.einsum("ij,ij->i", cen, nrm), minlength=len(open_shell))
+    nrm = np.where(((vol < 0) & ~open_shell)[shell][:, None], -nrm, nrm)
+    ln = np.linalg.norm(nrm, axis=1, keepdims=True)
+    nrm = np.where(ln > 1e-300, nrm / np.maximum(ln, 1e-300), np.nan)          # zero-area faces: never smooth
+    c1, c2 = order[i], order[i + 1]
+    out = {"seam_m": 0.0, "smooth_seam_m": 0.0, "visible_seam_m": 0.0, "visible_seam_unmarked_m": 0.0,
+           "visible_seam_bounds": None, "size_m": size}
+    if not len(c1):
+        return out
+    agree = xid[c2] == xid[c1]                       # the second face runs the edge the same way: flipped winding
+    a1, b1 = c1, nxt[c1]
+    a2, b2 = np.where(agree, c2, nxt[c2]), np.where(agree, nxt[c2], c2)
+
+    def split(ids, coords=None):
+        if coords is None:                                                      # the seed: split ids are a seam
+            return (ids[a1] != ids[a2]) | (ids[b1] != ids[b2])
+        with np.errstate(invalid="ignore"):
+            return ((np.abs(coords[ids[a1]] - coords[ids[a2]]).max(1) > uv_tol)
+                    | (np.abs(coords[ids[b1]] - coords[ids[b2]]).max(1) > uv_tol))
+    seam = split(uid, uv)
+    f1, f2 = foc[c1], foc[c2]
+    n1, n2 = nrm[f1], np.where(agree[:, None], -nrm[f2], nrm[f2])
+    with np.errstate(invalid="ignore"):
+        smooth = np.einsum("ij,ij->i", n1, n2) > np.cos(np.radians(float(smooth_deg)))
+        mean = n1 + n2
+        mean /= np.maximum(np.linalg.norm(mean, axis=1, keepdims=True), 1e-300)
+        if view_dirs is None:
+            seen = np.ones(len(c1), dtype=bool)
+        else:
+            D = np.asarray(view_dirs, dtype=np.float64).reshape(-1, 3)
+            D = D / np.linalg.norm(D, axis=1, keepdims=True)
+            seen = (mean @ D.T).max(1) >= float(facing)
+    seed = mesh.get("uvw_ids") if hasattr(mesh, "get") else None
+    marked = split(np.asarray(seed, dtype=np.int64)) if seed is not None and len(seed) == len(uid) else \
+        np.zeros(len(c1), dtype=bool)
+    length = np.linalg.norm(xyz[xid[c1]] - xyz[xid[nxt[c1]]], axis=1)
+    vis = seam & smooth & seen
+    hidden = vis & ~marked
+    out.update(seam_m=round(float(length[seam].sum()), 3), smooth_seam_m=round(float(length[seam & smooth].sum()), 3),
+               visible_seam_m=round(float(length[vis].sum()), 3),
+               visible_seam_unmarked_m=round(float(length[hidden].sum()), 3))
+    if hidden.any():
+        ends = np.concatenate([xyz[xid[c1[hidden]]], xyz[xid[nxt[c1[hidden]]]]])
+        out["visible_seam_bounds"] = [[round(float(x), 3) for x in ends.min(0)],
+                                      [round(float(x), 3) for x in ends.max(0)]]
+    return out
+
+
+def visible_seam_warning(seams):
+    """The advisory note for a visible_seams() result, or None: unmarked seams on visible smooth faces of at least
+    VISIBLE_SEAM_NOTE_M, or VISIBLE_SEAM_NOTE_SHARE of the piece's size when that is smaller. Never a gate failure:
+    a closed smooth body (an urn, a rock) needs its seams somewhere, the facing directions are a guess for a piece
+    seen from every side, and the retry ladder only adds cuts; moving a seam takes a marked one."""
+    if not seams:
+        return None
+    m = seams.get("visible_seam_unmarked_m") or 0.0
+    if m <= 0 or m < min(VISIBLE_SEAM_NOTE_M, VISIBLE_SEAM_NOTE_SHARE * (seams.get("size_m") or 0.0)):
+        return None
+    lo, hi = seams.get("visible_seam_bounds") or ([0, 0, 0], [0, 0, 0])
+    return ("visible seams %.2f m: cuts across smooth faces that face up or to the front (between %s and %s); a "
+            "tiling texture jumps there. Mark the structural seams (panel edges, welts, the back or underside) and "
+            "unwrap again, or check checker_preview(ob, cell_m=0.25)" % (m, tuple(lo), tuple(hi)))
+
+
 def report(mesh, uvw_ids, uvw, map_px, pad_px=None, margin_px=None, raster_px=None, pad_tol_px=PAD_TOL_PX,
            region_angle=FRAGMENT_REGION_ANGLE):
     """Everything at once. raster_px defaults to map_px clamped to 256-2048 (coverage and overlap are counted in
@@ -594,7 +703,7 @@ def report(mesh, uvw_ids, uvw, map_px, pad_px=None, margin_px=None, raster_px=No
            "margin_px_min": None if margin is None else round(margin, 3),
            "texel": texel_density(mesh, uvw_ids, uvw, map_px), "distortion": dist,
            "shape_coverage_limit": round(shape_coverage_limit(mesh, uvw_ids, uvw), 4),
-           "pad_px": pad_px, "margin_px": margin_px}
+           "seams": visible_seams(mesh, uvw_ids, uvw), "pad_px": pad_px, "margin_px": margin_px}
     if margin_px is not None:
         out["margin_ok"] = bool(margin is not None and margin >= float(margin_px) - pad_tol_px)
     if pad_px:

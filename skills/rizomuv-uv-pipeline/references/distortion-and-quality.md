@@ -13,6 +13,7 @@ skill's (it owns them); this file states the same numbers.
 - The sweep that chose the presets
 - RizomUV against Blender's own unwrappers
 - Seams: what the generator must mark
+- Visible seams: where the cuts run
 - The grade and the retry ladder
 - Reading a report
 - Validation checklist
@@ -31,6 +32,7 @@ uses, so they grade UVs from any tool.
 | Texel CV | coefficient of variation of per-polygon texels/unit (exact polygon areas) | the same idea as global area, in the units a texture budget uses |
 | Islands per 100 faces | fragmentation, per connected shell, against its planar regions (`uv_metrics.planar_regions`: faces joined across non-seam edges at under the preset's SharpEdges.AngleMin): a shell cut into more than 12 islands and more islands than regions scores its islands beyond its regions per 100 faces | a flat shell cut into one island per face scores 97; a mitred frame (16 regions), a stair (14) and a crate of separate planks score 0 (`islands_per_100_faces_all` keeps the whole-mesh figure) |
 | Split-sensitive quads | convex quads whose two possible splits differ by more than 10% | non-planar quads whose look depends on the engine's triangulation |
+| Visible seams | metres of UV seam through smooth surface (dihedral < 15 deg) whose faces face up or to the front (-Y), not marked by you (`uv_metrics.visible_seams`; next to the grade, never in it) | 0 = no cut crosses a visible smooth face. A seat cushion's autoseams: 1.08 m across its top. Shows as a checker that steps or jumps, or a tiling texture's patch |
 
 Use the 95th percentile, not the mean: one badly stretched band on a curved body hides behind a good average
 (baseline urn: mean 1.14 looked fine, p95 1.44 and max 3.5 did not).
@@ -175,6 +177,66 @@ lifted it to 62% (UV0) and 42% (UV2). So a mesh generator should mark the cuts a
 
 They reach RizomUV through the seed topology (`blender_rizom.mesh_arrays` splits at `use_seam`).
 
+## Visible seams: where the cuts run
+
+The grade measures distortion and layout, not where the seams are, and RizomUV's Auto cuts to lower distortion
+without knowing which side is seen. On a quad-remeshed seat cushion with nothing marked, `organic` put a stepped cut
+across the top that passed the gate (angular p95 1.04, area p95 0.04); a tiling fabric at 1 UV/m shows a patch with
+stepped edges there. `uv_metrics.visible_seams` measures it; `report()` carries it as `seams`:
+
+| Field | Definition |
+|---|---|
+| `seam_m` | every UV seam: an interior edge (exactly two faces) whose UVs differ across it at either end by more than 1e-5 (`SEAM_UV_TOL`; unwelded corners with equal UVs and open borders are not seams) |
+| `smooth_seam_m` | the seams whose two faces meet at a dihedral under 15 deg (`SMOOTH_SEAM_DEG`): through a surface, not along an edge |
+| `visible_seam_m` | the smooth seams whose faces' mean normal has a component of at least 0.5 (`VIEW_FACING`) up (+Z) or to the front (-Y) (`VIEW_DIRS`) |
+| `visible_seam_unmarked_m` | of those, the ones not split in the seed `mesh["uvw_ids"]` (`mesh_arrays` splits it at `use_seam`): the cuts the unwrapper chose. The note uses this one |
+| `visible_seam_bounds` | the box `[min xyz, max xyz]` round the unmarked visible seams, in the mesh's (world) metres: where to look |
+| `size_m` | the bounding-box diagonal: the note's scale |
+
+Why these values:
+
+- **15 deg.** A hard-surface seam sits on an edge of 30 deg or more (a 3-segment chamfer's steps, a 1-segment
+  chamfer's 45, a box's 90), so it never counts; a subdivided or remeshed round (a cushion's welt, about 11 deg per
+  step) is smooth. A 24-segment revolve is 15 deg round its body, on the boundary: the urn's tapered rows count.
+- **0.5, up and the front.** cos 60 deg: a face turned further from the viewer shows under half its area. Tops,
+  fronts and the rounds between them count; the back (+Y), the underside and the sides (+-X) do not. The directions
+  are world space as placed: unwrap a piece at rot 0, its front at -Y, as the kit holds it. For a piece seen from
+  every side pass `view_dirs=None` (every smooth seam counts).
+- **Closed shells are turned outward** by the sign of their volume before the facing test: bmesh's
+  `recalc_face_normals` turned a thin bevelled cushion inward (24 Oct 2026), which read its top as its bottom.
+- **Marked seams are not noted.** A seam you marked on a welt or a back line is a decision; the defect is a cut
+  nobody chose.
+
+The note, `visible seams N m` on the object's line (`uv_metrics.visible_seam_warning`, in UV0's report `warnings`),
+starts at 0.25 m unmarked (one 25 cm checker square at 1 UV/m; shorter runs rarely read as a line), or a quarter of
+`size_m` on a smaller piece. It is advisory, never a gate failure: a closed smooth body (an urn, a rock) needs its
+seams somewhere, the facing directions are a guess for a piece seen from every side, and the retry ladder only adds
+cuts (`Quality`, Mosaic), so a failure would spend the attempts and end in REVIEW with the same seams. Moving a seam
+takes a marked one.
+
+Measured 24 Oct 2026 on RizomUV 2027.0.598 and Blender 5.2.2 (UV0 1024 px, filled). Rounded-box cushions: a box cut
+7 times each way, its edges bevelled in 4 segments, one subdivision level, then QuadriFlow to 2,100-2,350 quads (a
+quad remesh): a seat 0.6 x 0.6 x 0.15 m, a back cushion 0.6 x 0.15 x 0.55 m tilted back 12 deg, a bench pad 1.4 x
+0.45 x 0.06 m. Panels: welts on the 45 deg line of the rounds, one band cut on the hidden side (the seat's back, the
+back cushion's bottom, both short ends of the pad). Every unwrap below passed the gate:
+
+| Piece | `organic`, nothing marked | Panels, `organic` | Panels, `hard` |
+|---|---|---|---|
+| Seat cushion | 1.08 m (8 islands) | 0 (4) | 0 (4) |
+| Back cushion | 0.34 m (3) | 0 (4) | 0.50 m (10) |
+| Bench pad | 2.04 m (12) | 0 (4) | 1.96 m (34) |
+
+With nothing new marked: the urn (`organic`) 1.17 m, Suzanne (`organic`) 0.88 m, the 5120-face rock (`organic`)
+5.91 m, a 1 m cube with 8-segment rounded bevels (`hard`) 5.88 m; the arch (`hard`, generator seams marked) 0 of
+1.57 m visible, a 1-segment chamfered cube 0. The same seat without the remesh (bevel and subdivision, 3,456 faces):
+1.25 m, and 0 with panels, but its one band cut left a 2.4 m band and coverage 0.19 (REVIEW); cuts on both sides as
+well gave 0.50 and OK, still 0.
+
+To see it: `br.checker_preview(ob, cell_m=0.25)` puts 25 cm squares in world space on `UVMap` (a procedural checker,
+scaled per object by its `rizom_checker_scale` property, 1 / (UV units per metre x 0.25)), so it shows what a tiling
+material at 1 UV/m shows whatever the pack's density. On the seat above the top showed squares offset along a
+staircase line; with the panels marked it was one unbroken checker.
+
 ## The grade and the retry ladder
 
 `uv_metrics.grade(report)` is the one verdict, for every attempt and every written layer:
@@ -233,9 +295,9 @@ are `null`):
 | `islands`, `faces` | of the chosen attempt |
 | `failures` | every failure that made the line REVIEW: UV0's grade, then `UVMap_Lightmap: ...` layout failures |
 | `gate_failures` | UV0's grade alone |
-| `warnings` | modifiers applied (and a mesh name that could not be kept), a layer renamed or left at index 1, a renderer's lightmap footprint under 64 px, a lightmap UV not written (too small, or failed its layout), a thin piece, a stretch map not written, shared meshes at different scales |
+| `warnings` | modifiers applied (and a mesh name that could not be kept), a layer renamed or left at index 1, a renderer's lightmap footprint under 64 px, a lightmap UV not written (too small, or failed its layout), a thin piece, visible seams (UV0), a stretch map not written, shared meshes at different scales |
 | `written` | the layers written (also on a `FAIL` entry, with `error`) |
-| `layers.<name>` | per layer: `fits`, `written`, `skipped` (the note when it was not packed), `px_per_unit` (texels per metre; at the footprint for the lightmap), `pack` (map, padding and margin in pixels), `coverage`, `shape_coverage_limit`, `bbox_share`, `shells`, `overlap_px`, `flipped_polygons`, `in_unit_tile`, `padding_min_px` and `padding_pairs_below_min`, `margin_px_min` and `margin_ok`, `texel` (mean and CV), `distortion`, `failures` |
+| `layers.<name>` | per layer: `fits`, `written`, `skipped` (the note when it was not packed), `px_per_unit` (texels per metre; at the footprint for the lightmap), `pack` (map, padding and margin in pixels), `coverage`, `shape_coverage_limit`, `bbox_share`, `shells`, `overlap_px`, `flipped_polygons`, `in_unit_tile`, `padding_min_px` and `padding_pairs_below_min`, `margin_px_min` and `margin_ok`, `texel` (mean and CV), `distortion`, `seams` (where the seams run: Visible seams above), `failures` |
 | `layers.UVMap_Lightmap` also | `footprint_px` (this object's footprint at the measured `bbox_share`), `footprints_px` (every renderer of the mesh, with its LOD scale) and `graded_at_px` (the smallest: padding and margin are in texels there), `box_fill` (charts' area / their box), `fallback` and `packed_for_px` when it was packed for 64 px |
 | `removed` | an older `UVMap_Lightmap` removed because the new one failed |
 | `shared_by`, `px_per_unit_per_user` | linked duplicates and the texture density each ends up with |
@@ -248,7 +310,9 @@ To grade UVs made any other way (Blender's unwrap, a hand layout): `mesh, ids, u
 then `spec = br.ru.pack_spec(1024)`, `rep = br.ru.layer_report(mesh, ids, uv, spec)` and
 `br.ru.layer_failures(rep, spec, first=True)`: the same verdict as the pipeline's, coverage floor included (a
 cube-projected plank: `coverage 0.15 < 0.24`). For a lightmap layer, pass `br.ru.lightmap_spec(mesh, texels_per_m)`
-as the spec and grade with `br.ru.layer_failures(rep, spec)`.
+as the spec and grade with `br.ru.layer_failures(rep, spec)`. The texture report's `seams` and `warnings` carry
+the visible seams of that layout too, measured against the seams marked on the object (`uv_arrays` seeds with
+them); `br.um.visible_seams(mesh, ids, uv, view_dirs=None)` counts every side.
 
 ## Validation checklist
 
@@ -266,3 +330,4 @@ as the spec and grade with `br.ru.layer_failures(rep, spec)`.
 | Texel density | within 0.8-1.25x of the class for unique textures, within 10% for shared trims and tiling materials (`texel-density.md`); CV <= 0.15 inside a piece |
 | Direction | for `directional` packs, the grain or world up along U or +V on every island (the smoke test checks it) |
 | Repeatability | run twice: islands within about 5%, angular p95 within 0.01, coverage within 0.02, density exact |
+| Seam placement | a piece that takes a tiling material, or is seen from above or the front: no `visible seams` note, or the seams it names looked at with `checker_preview(ob, cell_m=0.25)` and accepted (advisory, not graded) |

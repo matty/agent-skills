@@ -8,7 +8,8 @@ modifiers='apply', the thin-piece note, a lightmap UV packed for 64 px when too 
 one removed) when it fails, a timeout that does not stick to the next object, LOD1 at half the footprint, and the
 revert that keeps another job's save, a failing lightmap fallback climbing to a larger footprint, and hard-surface
 routes A and B after uv-unwrapping's apply_stack: never refused, their Triangulate and Weighted Normal kept, and
-the kit FBX export's normals unchanged (modifiers='apply' bakes only a Mirror above them).
+the kit FBX export's normals unchanged (modifiers='apply' bakes only a Mirror above them), the visible-seams note
+(advisory, the line stays OK; marked seams are not noted) and checker_preview's 25 cm world checker.
 
 Host: Blender 4.2+ (bpy; tested on 5.2.2), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_rizomuv_bridge.py
@@ -211,6 +212,52 @@ def test_checker_preview_leaves_the_mesh_alone():
     check(bare.material_slots[0].material.name == "RIZOM_UVGrid", "a mesh with no slot shows the checker")
     br.checker_clear(bare)
     check(len(bare.data.materials) == 0 and "rizom_checker" not in bare, "the added slot is removed")
+
+
+def grid(name, loc, n=3, size=1.0):
+    me = bpy.data.meshes.new(name)
+    bm = bmesh.new()
+    bmesh.ops.create_grid(bm, x_segments=n, y_segments=n, size=size / 2)       # faces up (+Z)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    ob.location = loc
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def test_visible_seams_are_a_note_and_marked_ones_are_not():
+    ob = grid("KIT_FlatTop", loc=(0, 93, 0))                     # the fake cuts every face: 4 m of seams on a top
+    reps = br.unwrap_objects([ob], kind="organic", uv2=None)
+    line = br._line(reps[0])
+    check(line.strip().startswith("OK") and "visible seams 4.00 m" in line, line)     # advisory: still OK
+    check(abs(reps[0]["layers"]["UVMap"]["seams"]["visible_seam_unmarked_m"] - 4.0) < 1e-6, reps[0]["layers"])
+    br.raise_on_failure(reps, review=True)
+    for e in ob.data.edges:
+        e.use_seam = True                                       # the same cuts, marked: deliberate
+    reps = br.unwrap_objects([ob], kind="organic", uv2=None)
+    seams = reps[0]["layers"]["UVMap"]["seams"]
+    check(seams["visible_seam_m"] == 4.0 and seams["visible_seam_unmarked_m"] == 0.0, seams)
+    check("gate ok" in br._line(reps[0]), br._line(reps[0]))
+
+
+def test_world_checker_is_25_cm_whatever_the_pack():
+    ob = grid("KIT_CheckerTop", loc=(3, 93, 0))
+    br.unwrap_objects([ob], kind="organic", uv2=None)
+    ratio = br.ru.linear_ratio(*br.uv_arrays(ob, "UVMap"))       # UV units per metre of this pack
+    br.checker_preview(ob, cell_m=0.25)
+    mat = ob.material_slots[0].material
+    check(mat.name == "RIZOM_WorldChecker" and any(n.type == "TEX_CHECKER" for n in mat.node_tree.nodes), mat.name)
+    check(abs(ob["rizom_checker_scale"] * ratio * 0.25 - 1.0) < 1e-6, "one checker cell = 25 cm as placed")
+    br.checker_clear(ob)
+    check("rizom_checker_scale" not in ob and "rizom_checker" not in ob and len(ob.data.materials) == 0,
+          "checker_clear removes the world checker too")
+    bare = grid("KIT_NoUV", loc=(6, 93, 0))
+    try:
+        br.checker_preview(bare, cell_m=0.25)
+        raise AssertionError("a world checker on a mesh without UVs")
+    except ValueError as ex:
+        check("no UV layer" in str(ex), str(ex))
 
 
 def test_linked_mesh_is_refused():
@@ -633,6 +680,30 @@ def test_apply_bakes_only_the_modifiers_that_count():
     check(ang < 0.01, "exported normals %.2f deg off the live stack" % ang)
 
 
+def test_bakery_lightmapper_reaches_the_lightmap_pack():
+    """lightmapper="bakery" (issue #8): the UV2 is packed and graded at Bakery's footprint, (20 x sqrt(2 x 6) - 6) /
+    the box's short side for a 1 m cube at 20 texels/m, and a LOD1 gets no 0.5^n; a bad name fails before RizomUV."""
+    ob = cube("LM_BAKERY", loc=(0, 120, 0))
+    lod = cube("LM_BAKERY_LOD1", loc=(3, 120, 0))
+    reps = br.unwrap_objects([ob, lod], kind="hard", lightmap_texels_per_m=20, lightmapper="bakery")
+    for r in reps:
+        l2 = r["layers"]["UVMap_Lightmap"]
+        want = (20 * 12 ** 0.5 - 6) / l2["bbox_short_side"]
+        check(l2["lightmapper"] == "bakery" and abs(l2["footprint_px"] - want) < 0.02,
+              "%s: %s px, want %.2f" % (r["object"], l2["footprint_px"], want))
+        check(not l2["failures"] and "UVMap_Lightmap" in r["written"], br._line(r))
+        check(l2["effective_texels_per_m"][r["object"]] > 10, l2["effective_texels_per_m"])
+    unity = br.unwrap_objects([lod], kind="hard", lightmap_texels_per_m=20)[0]["layers"]["UVMap_Lightmap"]
+    check(abs(unity["footprint_px"] - 20 * (6.0 / unity["bbox_share"]) ** 0.5 * 0.5) < 0.02, "a LOD1 under Unity")
+    before = len(FakeSession.instances)
+    try:
+        br.unwrap_objects([ob], lightmapper="enlighten")
+        raise AssertionError("an unknown lightmapper was accepted")
+    except ValueError as ex:
+        check("unity" in str(ex) and "bakery" in str(ex), str(ex))
+    check(len(FakeSession.instances) == before, "no session was started")
+
+
 def test_save_writes_no_backup():
     path = TMP / "scene.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(path))
@@ -646,7 +717,8 @@ for fn in (test_seams_split_the_seed_topology, test_layers_and_strict_report,
            test_apply_modifiers_on_linked_duplicates_unwraps_each, test_plain_linked_duplicates_share,
            test_failed_stretch_map_is_a_warning_not_a_failure, test_failure_after_the_write_says_what_was_written,
            test_distortion_prints_review_with_the_failure, test_partial_gate_keeps_the_other_checks,
-           test_checker_preview_leaves_the_mesh_alone, test_linked_mesh_is_refused,
+           test_checker_preview_leaves_the_mesh_alone, test_visible_seams_are_a_note_and_marked_ones_are_not,
+           test_world_checker_is_25_cm_whatever_the_pack, test_linked_mesh_is_refused,
            test_per_object_directional_and_lightmap_scale,
            test_shared_mesh_lightmap_is_packed_for_the_smallest_renderer,
            test_low_coverage_takes_the_organic_preset, test_bad_arguments_fail_before_rizomuv_starts,
@@ -657,7 +729,8 @@ for fn in (test_seams_split_the_seed_topology, test_layers_and_strict_report,
            test_old_lightmap_is_removed_when_the_new_one_fails, test_timeout_then_a_refusal_reports_the_refusal,
            test_lod1_gets_half_the_lightmap_footprint, test_revert_after_another_jobs_save_keeps_its_work,
            test_a_failing_fallback_climbs_to_a_larger_footprint, test_hard_surface_after_apply_stack_keeps_its_normals,
-           test_apply_bakes_only_the_modifiers_that_count, test_save_writes_no_backup):
+           test_apply_bakes_only_the_modifiers_that_count, test_bakery_lightmapper_reaches_the_lightmap_pack,
+           test_save_writes_no_backup):
     case(fn)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)          # let go of scene.blend before removing the folder

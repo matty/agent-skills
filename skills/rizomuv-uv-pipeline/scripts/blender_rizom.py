@@ -53,10 +53,14 @@ What is written
     mesh keeps a valid UV2. A lightmap layer that fails is not written, and an older UVMap_Lightmap is removed
     rather than left at index 1 for another footprint. The report says why.
   - LODs: a <Piece>_LOD<n> object (or mesh) is lightmapped at 0.5^n of the texel scale (Unity gives each LOD its
-    own atlas space), so its UV2 is packed for that smaller footprint.
+    own atlas space), so its UV2 is packed for that smaller footprint. lightmapper="bakery" (the scene bakes with
+    Bakery) packs for Bakery's footprint instead, texels_per_m x sqrt(2 x area x Scale In Lightmap) less its
+    Default packer's 6 texels with the box filling the tile, with no LOD factor (rizom_uv.lightmap_footprint).
   - Every written layer is graded: UV0 on the distortion gate, its layout (padding and margin in map pixels) and
     a coverage floor; the lightmap layer on its layout in lightmap texels at each renderer's footprint, measured
     from the layout's bounding box (gaps >= 2 texels, >= 1 to the edge). A layer that fails prints REVIEW.
+    UV0's seams on smooth faces that face up or to the front, not marked by you, are noted ("visible seams N m",
+    uv_metrics.visible_seams): advisory, the line stays OK.
   - Linked duplicates share one mesh, so unwrap_objects() unwraps each mesh once, packs its lightmap UV for the
     smallest of its renderers and reports the texel density and lightmap footprint every user ends up with.
 """
@@ -405,22 +409,24 @@ def world_area(ob):
     return float(um.polygon_areas(mesh, mesh["uvw_ids"], mesh["uvw"])[0].sum())
 
 
-def renderers(ob, lightmap_scale=1.0):
+def renderers(ob, lightmap_scale=1.0, lightmapper="unity"):
     """Every object that renders ob's mesh, ob first: {name: (surface area in m2 as placed, lightmap scale)}. The
     scale is the object's "rizom_lightmap_scale" property, else lightmap_scale, times 0.5^n for a <Piece>_LOD<n>
-    object or mesh (rizom_uv.lod_scale)."""
+    object or mesh under Unity (rizom_uv.lod_scale; Bakery has no LOD factor)."""
     users = [ob] + [o for o in bpy.data.objects if o.data == ob.data and o != ob]
 
     def lod(o):
-        return ru.lod_scale(o.name) if ru.lod_level(o.name) else ru.lod_scale(o.data.name)
+        return ru.lod_scale(o.name if ru.lod_level(o.name) else o.data.name, lightmapper)
     return {o.name: (world_area(o), float(o.get("rizom_lightmap_scale", lightmap_scale)) * lod(o)) for o in users}
 
 
-def lightmap_spec_for(ob, mesh, uv2, lightmap_texels_per_m, lightmap_scale):
+def lightmap_spec_for(ob, mesh, uv2, lightmap_texels_per_m, lightmap_scale, lightmapper="unity"):
     """The lightmap pack for ob: uv2="footprint" packs for the smallest renderer of its mesh at the scene's texels
-    per metre and each renderer's Scale In Lightmap (rizom_uv.lightmap_spec); a pack_spec dict is used as given."""
+    per metre and each renderer's Scale In Lightmap, at the lightmapper's footprint (rizom_uv.lightmap_spec); a
+    pack_spec dict is used as given."""
     if uv2 == "footprint":
-        return ru.lightmap_spec(mesh, lightmap_texels_per_m, users=renderers(ob, lightmap_scale))
+        return ru.lightmap_spec(mesh, lightmap_texels_per_m, users=renderers(ob, lightmap_scale, lightmapper),
+                                lightmapper=lightmapper)
     return uv2
 
 
@@ -436,12 +442,14 @@ def _directional(ob, directional):
 
 def unwrap_object(link, ob, kind="hard", uv0=UV0, uv2="footprint", gate=None, stretch_png=None, grade=True,
                   modifiers="refuse", lightmap_texels_per_m=20.0, lightmap_scale=1.0, directional=False,
-                  time_budget=None, progress=None):
+                  time_budget=None, progress=None, lightmapper="unity"):
     """Unwrap ob once, pack UV0 and (unless uv2 is None) the lightmap UV from the same islands, write the layers
     that fit, and return a report: attempt used, failures, warnings and per-layer metrics.
     uv2="footprint" (default) packs the lightmap UV with gaps >= 2 texels for the smallest renderer of the mesh at
     lightmap_texels_per_m (the scene's Lightmap Resolution) x its Scale In Lightmap ("rizom_lightmap_scale", else
     lightmap_scale), and grades it at each renderer's footprint from the layout's measured bounding box.
+    lightmapper: "unity" (default; "progressive", the world spec's lighting.baker) or "bakery" (Bakery's area-based
+    footprint, rizom_uv.lightmap_footprint, and a warning when the charts get under half the planned density).
     directional ("rizom_directional" wins): "grain" (or True) lays each island's long side along U, "upright" turns
     world up to +V, another string is Pack's Rotate.Initial. progress (a dict) receives "written" as soon as
     layers are written, so a later failure can still say what changed."""
@@ -458,7 +466,8 @@ def unwrap_object(link, ob, kind="hard", uv0=UV0, uv2="footprint", gate=None, st
                             % (old_name, ob.name, ob.data.name))
     mesh = mesh_arrays(ob)
     packs = {UV0_NAME: ru.directional(uv0, direction)}
-    spec2 = lightmap_spec_for(ob, mesh, uv2, lightmap_texels_per_m, lightmap_scale) if uv2 else None
+    spec2 = (lightmap_spec_for(ob, mesh, uv2, lightmap_texels_per_m, lightmap_scale, ru.lightmapper_name(lightmapper))
+             if uv2 else None)
     if spec2:
         packs[UV2_NAME] = spec2
     _layer_plan(ob, list(packs))                      # refuse now, not after the unwrap, if layers cannot fit
@@ -564,6 +573,7 @@ def unwrap_objects(objects, kind="hard", report_path=None, stretch_dir=None, str
       for dense meshes (an 82k-face auto-seam: 15-29 s on an idle machine, up to 158 s with other jobs running)."""
     objects = list(objects)
     um.merge_gate(kw.get("gate"))                       # a bad gate fails now, not once per object
+    ru.lightmapper_name(kw.get("lightmapper"))          # and so does a lightmapper other than unity or bakery
     if report_path and not os.path.isdir(os.path.dirname(os.path.abspath(report_path))):
         raise FileNotFoundError("the folder of report_path %s does not exist" % report_path)
     guard_blend()
@@ -645,19 +655,60 @@ def save():
     bpy.ops.wm.save_mainfile()
 
 
-def checker_preview(ob, size=1024):
-    """Show a colour grid on ob without touching its mesh: each material slot is switched to an object-level link
-    showing RIZOM_UVGrid (a mesh with no slot gets one). checker_clear(ob) puts everything back."""
-    mat = bpy.data.materials.get("RIZOM_UVGrid") or bpy.data.materials.new("RIZOM_UVGrid")
+def _world_checker():
+    """RIZOM_WorldChecker: a two-tone checker on UVMap, scaled per object by its "rizom_checker_scale" property."""
+    mat = bpy.data.materials.get("RIZOM_WorldChecker") or bpy.data.materials.new("RIZOM_WorldChecker")
     if getattr(mat, "node_tree", None) is None:
         mat.use_nodes = True
     nt = mat.node_tree
-    tex = next((n for n in nt.nodes if n.type == "TEX_IMAGE"), None) or nt.nodes.new("ShaderNodeTexImage")
-    img = bpy.data.images.get("RIZOM_UVGrid") or bpy.data.images.new("RIZOM_UVGrid", size, size)
-    img.generated_type = "COLOR_GRID"
-    tex.image = img
-    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
-    nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    if not any(n.type == "TEX_CHECKER" for n in nt.nodes):
+        uvn = nt.nodes.new("ShaderNodeUVMap")
+        uvn.uv_map = UV0_NAME
+        att = nt.nodes.new("ShaderNodeAttribute")
+        att.attribute_type, att.attribute_name = "OBJECT", "rizom_checker_scale"
+        mul = nt.nodes.new("ShaderNodeVectorMath")
+        mul.operation = "SCALE"
+        chk = nt.nodes.new("ShaderNodeTexChecker")
+        chk.inputs["Scale"].default_value = 1.0
+        chk.inputs["Color1"].default_value = (0.8, 0.8, 0.8, 1.0)
+        chk.inputs["Color2"].default_value = (0.1, 0.1, 0.1, 1.0)
+        nt.links.new(uvn.outputs["UV"], mul.inputs[0])
+        nt.links.new(att.outputs["Fac"], mul.inputs["Scale"])
+        nt.links.new(mul.outputs["Vector"], chk.inputs["Vector"])
+        bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+        nt.links.new(chk.outputs["Color"], bsdf.inputs["Base Color"])
+    return mat
+
+
+def checker_preview(ob, size=1024, cell_m=None):
+    """Show a checker on ob without touching its mesh: each material slot is switched to an object-level link
+    (a mesh with no slot gets one). checker_clear(ob) puts everything back.
+    cell_m=None: RIZOM_UVGrid, a colour grid over the 0-1 tile (its squares scale with each piece's pack).
+    cell_m=0.25: RIZOM_WorldChecker, 25 cm squares in world space on UVMap whatever the pack's texel density: what a
+    tiling material at 1 UV/m shows. Squares must stay square, keep one size and run on unbroken across the visible
+    faces; a step or a jump in the squares is a seam there (uv_metrics.visible_seams measures them)."""
+    if cell_m:
+        layer = UV0_NAME if UV0_NAME in ob.data.uv_layers else (ob.data.uv_layers[0].name if ob.data.uv_layers
+                                                                else None)
+        if layer is None:
+            raise ValueError("%s has no UV layer to show a checker on" % ob.name)
+        ratio = ru.linear_ratio(*uv_arrays(ob, layer))               # UV units per metre as placed
+        if not ratio > 0:
+            raise ValueError("%s: layer %s has no UV area" % (ob.name, layer))
+        mat = _world_checker()
+        next(n for n in mat.node_tree.nodes if n.type == "UVMAP").uv_map = layer
+        ob["rizom_checker_scale"] = 1.0 / (ratio * float(cell_m))
+    else:
+        mat = bpy.data.materials.get("RIZOM_UVGrid") or bpy.data.materials.new("RIZOM_UVGrid")
+        if getattr(mat, "node_tree", None) is None:
+            mat.use_nodes = True
+        nt = mat.node_tree
+        tex = next((n for n in nt.nodes if n.type == "TEX_IMAGE"), None) or nt.nodes.new("ShaderNodeTexImage")
+        img = bpy.data.images.get("RIZOM_UVGrid") or bpy.data.images.new("RIZOM_UVGrid", size, size)
+        img.generated_type = "COLOR_GRID"
+        tex.image = img
+        bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     if "rizom_checker" not in ob:
         if not ob.material_slots:
             ob.data.materials.append(None)
@@ -680,6 +731,8 @@ def checker_clear(ob):
     if ob.get("rizom_checker_added_slot"):
         ob.data.materials.pop(index=len(ob.data.materials) - 1)
         del ob["rizom_checker_added_slot"]
+    if "rizom_checker_scale" in ob:
+        del ob["rizom_checker_scale"]
     del ob["rizom_checker"]
 
 
@@ -715,6 +768,8 @@ def _line(r):
             notes.append("old UV2 removed")
         elif w.startswith("thin piece"):
             notes.append("thin piece")
+        elif w.startswith("visible seams"):
+            notes.append(w.split(":")[0])            # advisory: the state stays OK
     return ("  %s %-28s %-7s %3d isl  cov %s  ang p95 %s  area p95 %s  %s  [%s] %.2fs"
             % (state, r["object"], r["kind"], r["islands"], l0.get("coverage"), d.get("angular_p95"),
                d.get("area_local_p95"), "; ".join(notes) or "gate ok", r["attempt"], r["seconds"]))

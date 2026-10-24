@@ -82,6 +82,13 @@ LIGHTMAP_COVERAGE = 0.85      # b, the UV2 bounding-box share: planning estimate
 LIGHTMAP_GAP_TEXELS, LIGHTMAP_EDGE_TEXELS = 2.0, 1.0
 LIGHTMAP_MIN_FOOTPRINT_PX = 64
 LIGHTMAP_MIN_BOX_FILL = 0.5   # charts' area / their bounding box: Unity lightmaps the whole box (canon, 2026-10-17)
+# Bakery (ftBuildGraphics.cs as installed in a Unity 2022.3.22f1 project, read 2026-10-24; references/texel-density.md):
+# a rect of side texels_per_m x sqrt(2 x A x Scale In Lightmap) on the UV2 box's short side, no LOD factor; its
+# Default atlas packer insets each rect 3 texels (xatlas does not, so packing for the inset holds under both).
+LIGHTMAPPERS = ("unity", "bakery")      # whose footprint the lightmap specs use; "progressive" is accepted for unity
+BAKERY_AREA_FACTOR = 2.0      # Bakery sums |cross| over the triangles: 2 x the surface area
+BAKERY_INSET_TEXELS = 3       # texelPaddingForDefaultAtlasPacker's default
+EFFECTIVE_DENSITY_MIN = 0.5   # Bakery: a warning when the charts get under this share of the planned texels per metre
 LOD_SCALE = 0.5               # a <Piece>_LOD<n> renderer gets its own lightmap space at 0.5^n of the texel scale
 LOD_RE = re.compile(r"_LOD(\d+)(\.\d{3})?$")   # vrchat-world-qa's: <Piece>_LOD<n>, a Blender .001 suffix allowed
 LIGHTMAP_FALLBACK_STEPS = 4    # a too-small or failing UV2 is re-packed for 64 px (or 2F), then 2x, 4x, 8x that
@@ -128,13 +135,52 @@ def directional(spec, mode):
     return dict(spec, rotate_step=0.0, rotate_initial=initial)
 
 
-def lightmap_footprint(area_m2, texels_per_m, scale_in_lightmap=1.0, bbox_share=LIGHTMAP_COVERAGE):
-    """Side in texels that a lightmapper gives one renderer's whole 0-1 UV2 tile: texels_per_m x sqrt(area / b) x
-    Scale In Lightmap, area = the mesh's surface area in m2, b = the UV2 bounding-box share of the tile (the
-    planning estimate 0.85 by default; 1 for packing; the measured share for checking). Unity 2022.3: a 2 x 3 x 0.2 m
-    wall at 60 texels/m with b 0.850 got 242.8 px."""
+def lightmapper_name(name):
+    """unity (also "progressive", the world spec's lighting.baker for it) or bakery; raises ValueError otherwise."""
+    n = str(name or "unity").strip().lower()
+    n = "unity" if n == "progressive" else n
+    if n not in LIGHTMAPPERS:
+        raise ValueError("lightmapper must be unity (or progressive) or bakery, not %r" % (name,))
+    return n
+
+
+def bakery_side(area_m2, texels_per_m, scale_in_lightmap=1.0):
+    """Bakery's rect side on the UV2 box's short side: texels_per_m x sqrt(2 x area x Scale In Lightmap)."""
+    return float(texels_per_m) * math.sqrt(BAKERY_AREA_FACTOR * max(float(area_m2), 0.0)
+                                           * max(float(scale_in_lightmap), 0.0))
+
+
+def lightmap_footprint(area_m2, texels_per_m, scale_in_lightmap=1.0, bbox_share=LIGHTMAP_COVERAGE, lightmapper="unity",
+                       short_side=None):
+    """Side in texels that a lightmapper gives one renderer's whole 0-1 UV2 tile (texels per UV unit). Unity:
+    texels_per_m x sqrt(area / b) x Scale In Lightmap, area = the mesh's surface area in m2, b = the UV2 bounding-box
+    share of the tile (the planning estimate 0.85 by default; 1 for packing; the measured share for checking). Unity
+    2022.3: a 2 x 3 x 0.2 m wall at 60 texels/m with b 0.850 got 242.8 px. Bakery: (bakery_side - 2 x 3) / the box's
+    short side in UV (short_side; sqrt(b), a square box, when not given; 1 for packing)."""
     b = min(max(float(bbox_share), 1e-6), 1.0)
+    if lightmapper_name(lightmapper) == "bakery":
+        short = math.sqrt(b) if short_side is None else min(max(float(short_side), 1e-6), 1.0)
+        return max(bakery_side(area_m2, texels_per_m, scale_in_lightmap) - 2.0 * BAKERY_INSET_TEXELS, 0.0) / short
     return float(texels_per_m) * math.sqrt(max(float(area_m2), 0.0) / b) * float(scale_in_lightmap)
+
+
+def scale_factor(footprint, want_px, lightmapper="unity"):
+    """What Scale In Lightmap must be multiplied by to take a footprint (the box filling the tile) to want_px:
+    linear under Unity; on the area under Bakery, its inset staying."""
+    footprint = max(float(footprint), 1e-9)
+    if lightmapper_name(lightmapper) == "bakery":
+        return ((want_px + 2.0 * BAKERY_INSET_TEXELS) / (footprint + 2.0 * BAKERY_INSET_TEXELS)) ** 2
+    return want_px / footprint
+
+
+def bbox_short_side(uvw_ids, uvw):
+    """The short side, in UV, of the bounding box of the UVs the corners use (Bakery maps it onto its rect's side)."""
+    used = set(int(i) for i in uvw_ids)
+    if not used:
+        return 1.0
+    us = [float(uvw[3 * i]) for i in used]
+    vs = [float(uvw[3 * i + 1]) for i in used]
+    return max(min(max(us) - min(us), max(vs) - min(vs)), 1e-9)
 
 
 def lightmap_warning(footprint_px, who=""):
@@ -153,11 +199,12 @@ def lod_level(name):
     return int(m.group(1)) if m else 0
 
 
-def lod_scale(name):
+def lod_scale(name, lightmapper="unity"):
     """The lightmap texel scale Unity gives a <Piece>_LOD<n> renderer: 0.5^n (LOD0 1, LOD1 0.5, LOD2 0.25), each LOD
     in its own atlas space. Measured 2026-10-17, Unity 2022.3.22f1 Progressive GPU: 0.995 / 0.492 / 0.250, whatever
-    the LOD transition heights (vrchat-lighting-and-baking owns the number)."""
-    return LOD_SCALE ** lod_level(name)
+    the LOD transition heights (vrchat-lighting-and-baking owns the number). Bakery sizes each LOD by its own area
+    with no LOD factor: 1."""
+    return LOD_SCALE ** lod_level(name) if lightmapper_name(lightmapper) == "unity" else 1.0
 
 
 def lightmap_capacity_px(charts, gap_texels=LIGHTMAP_GAP_TEXELS, edge_texels=LIGHTMAP_EDGE_TEXELS, chart_texels=0.0):
@@ -177,38 +224,58 @@ def lightmap_too_small(spec, charts):
 
 
 def lightmap_fallback_spec(spec, px=LIGHTMAP_MIN_FOOTPRINT_PX):
-    """spec re-aimed so its smallest b = 1 footprint is px (64): every renderer's scale times px / smallest."""
-    feet = [lightmap_footprint(a, spec["texels_per_m"], s, 1.0) for a, s in spec["users"].values()]
-    k = float(px) / min(feet)
+    """spec re-aimed so its smallest b = 1 footprint is px (64): every renderer's scale times px / smallest (Bakery:
+    times ((px + 6) / its smallest rect side)^2, as its scale acts on the area)."""
+    k = _scale_up(spec, px)
     return lightmap_spec(0.0, spec["texels_per_m"], users={n: (a, s * k) for n, (a, s) in spec["users"].items()},
                          gap_texels=spec["gap_texels"], edge_texels=spec["edge_texels"],
-                         rotate_step=spec["rotate_step"], device=spec.get("device", "CPU"))
+                         rotate_step=spec["rotate_step"], device=spec.get("device", "CPU"),
+                         lightmapper=spec.get("lightmapper", "unity"))
+
+
+def _scale_up(spec, px):
+    """The factor on every user's Scale In Lightmap that takes the smallest b = 1 footprint to px."""
+    if spec.get("lightmapper") == "bakery":
+        return ((float(px) + 2.0 * BAKERY_INSET_TEXELS)
+                / min(bakery_side(a, spec["texels_per_m"], s) for a, s in spec["users"].values())) ** 2
+    return float(px) / min(lightmap_footprint(a, spec["texels_per_m"], s, 1.0) for a, s in spec["users"].values())
 
 
 def lightmap_spec(mesh_or_area, texels_per_m, scale_in_lightmap=1.0, users=None, gap_texels=LIGHTMAP_GAP_TEXELS,
-                  edge_texels=LIGHTMAP_EDGE_TEXELS, rotate_step=90.0, device="CPU", lod=0):
+                  edge_texels=LIGHTMAP_EDGE_TEXELS, rotate_step=90.0, device="CPU", lod=0, lightmapper="unity"):
     """Packing target for a lightmap UV: gaps >= gap_texels and an edge >= edge_texels at the worst case b = 1,
     i.e. gap in UV = 2 / (texels_per_m x sqrt(area) x scale), so they hold whatever bounding box the packer makes.
     users={name: (area_m2, scale_in_lightmap)} lists every renderer of a shared mesh (each at its own placed size
     and Scale In Lightmap): the pack is made for the smallest. Packs at map_px = max(128, next_pow2(that b = 1
     footprint)) with padding and margin in those pixels, plus the 0.5 px PaddingPerfect can lose. Grade the result
     with layer_report(), which measures b and checks the gaps in texels at every user's real footprint. lod=n (or
-    lod_scale(name) in a user's scale) packs a <Piece>_LOD<n> mesh at 0.5^n of the footprint: larger gaps in UV."""
+    lod_scale(name) in a user's scale) packs a <Piece>_LOD<n> mesh at 0.5^n of the footprint: larger gaps in UV.
+    lightmapper="bakery": Bakery's footprint with the box filling the tile, texels_per_m x sqrt(2 x area x scale) - 6
+    (its Default packer's inset; xatlas has none, so the gaps hold under both), and no LOD factor (lod is ignored)."""
+    lm = lightmapper_name(lightmapper)
     if users is None:
         area = mesh_area(mesh_or_area) if isinstance(mesh_or_area, dict) else float(mesh_or_area)
-        users = {"": (area, scale_in_lightmap * LOD_SCALE ** int(lod))}
+        users = {"": (area, scale_in_lightmap * (LOD_SCALE ** int(lod) if lm == "unity" else 1.0))}
     users = {str(k): (float(a), float(s)) for k, (a, s) in users.items()}
-    feet = {k: lightmap_footprint(a, texels_per_m, s, 1.0) for k, (a, s) in users.items()}
-    foot = min(feet.values())
-    if foot <= 0:
+    if min(lightmap_footprint(a, texels_per_m, s, 1.0) for a, s in users.values()) <= 0:
         raise ValueError("lightmap footprint is 0: give the mesh area in m2, texels_per_m > 0 and a scale > 0")
+    feet = {k: lightmap_footprint(a, texels_per_m, s, 1.0, lm) for k, (a, s) in users.items()}
+    foot = min(feet.values())
+    if lm == "bakery":
+        foot = max(foot, 0.5)                 # a rect of 6 texels or less keeps nothing: pack_lightmap's fallback
     map_px = max(128, 2 ** int(math.ceil(math.log2(foot))))
     pad = int(math.ceil(gap_texels * map_px / foot + PACK_GRID_SLACK_PX))
     margin = int(math.ceil(edge_texels * map_px / foot + PACK_GRID_SLACK_PX))
     spec = pack_spec(map_px, pad, margin, rotate_step=rotate_step, device=device)
-    spec.update({"lightmap": True, "texels_per_m": float(texels_per_m), "users": users,
+    spec.update({"lightmap": True, "texels_per_m": float(texels_per_m), "users": users, "lightmapper": lm,
                  "packed_for_px": round(foot, 2), "gap_texels": float(gap_texels), "edge_texels": float(edge_texels)})
     return spec
+
+
+def _footprints(spec, b=1.0, short_side=None):
+    """Every user's footprint at a box share b (Bakery: and the box's short side)."""
+    lm = spec.get("lightmapper", "unity")
+    return {n: lightmap_footprint(a, spec["texels_per_m"], s, b, lm, short_side) for n, (a, s) in spec["users"].items()}
 
 
 def layer_report(mesh, uvw_ids, uvw, spec, region_angle=None):
@@ -234,21 +301,51 @@ def layer_report(mesh, uvw_ids, uvw, spec, region_angle=None):
                     "thin piece: coverage %.3f is about what its shape allows (%.2f): a square tile cannot hold it "
                     "better; pack it at a texel density or put it on a trim" % (rep["coverage"],
                                                                                rep["shape_coverage_limit"]))
+        seam_note = um.visible_seam_warning(rep["seams"])         # advisory: where the cuts are, not distortion
+        if seam_note:
+            rep["warnings"].append(seam_note)
         return rep
-    b = um.bbox_share(uvw_ids, uvw) if in_unit_tile(uvw) else 1.0
-    feet = {k: lightmap_footprint(a, spec["texels_per_m"], s, b) for k, (a, s) in spec["users"].items()}
+    lm = spec.get("lightmapper", "unity")
+    inside = in_unit_tile(uvw)
+    b = um.bbox_share(uvw_ids, uvw) if inside else 1.0
+    short = (bbox_short_side(uvw_ids, uvw) if inside else 1.0) if lm == "bakery" else None
+    feet = _footprints(spec, b, short)
     smallest = min(feet.values())
     rep = um.report(mesh, uvw_ids, uvw, smallest, pad_px=spec["gap_texels"], margin_px=spec["edge_texels"],
                     pad_tol_px=0.0)
     fill = min(1.0, rep["coverage"] / b) if b > 0 else 0.0
+    eff, low = _density(spec, feet, _areas(mesh, uvw_ids, uvw)[1], fill)
     rep.update({"bbox_share": round(b, 4), "footprint_px": round(next(iter(feet.values())), 2),
                 "footprints_px": {k: round(v, 2) for k, v in feet.items()}, "graded_at_px": round(smallest, 2),
-                "box_fill": round(fill, 3)})
+                "box_fill": round(fill, 3), "effective_texels_per_m": eff, "lightmapper": lm})
+    if short is not None:
+        rep["bbox_short_side"] = round(short, 4)
     rep["warnings"] = [w for w in (lightmap_warning(v, k) for k, v in feet.items()) if w]
-    if fill < LIGHTMAP_MIN_BOX_FILL and smallest >= LIGHTMAP_MIN_FOOTPRINT_PX:     # smaller: 2-texel gaps dominate
-        rep["warnings"].append("lightmap charts fill %.0f%% of their box: Unity lightmaps the whole box, so the empty "
-                               "part costs texels" % (100 * fill))
+    if low:
+        rep["warnings"].append(low)
+    elif fill < LIGHTMAP_MIN_BOX_FILL and smallest >= LIGHTMAP_MIN_FOOTPRINT_PX:   # smaller: 2-texel gaps dominate
+        rep["warnings"].append("lightmap charts fill %.0f%% of their box: %s lightmaps the whole box, so the empty "
+                               "part costs texels" % (100 * fill, "Bakery" if lm == "bakery" else "Unity"))
     return rep
+
+
+def _density(spec, feet, uv_area, fill):
+    """Every user's effective lightmap density, footprint x sqrt(the layout's UV area / its surface area), in texels
+    per metre, and under Bakery the warning when a user at 64 px or more gets under half the density planned for it
+    (texels_per_m x sqrt(its Scale In Lightmap), at most texels_per_m), or None."""
+    eff, low = {}, []
+    for n, (a, s) in spec["users"].items():
+        eff[n] = feet[n] * math.sqrt(max(uv_area, 0.0) / a) if a > 0 else 0.0
+        planned = spec["texels_per_m"] * min(1.0, math.sqrt(s))
+        if (spec.get("lightmapper") == "bakery" and feet[n] >= LIGHTMAP_MIN_FOOTPRINT_PX
+                and eff[n] < EFFECTIVE_DENSITY_MIN * planned):
+            low.append("%s%.1f texels/m of %g planned" % (n + " " if n else "", eff[n], round(planned, 2)))
+    warn = None
+    if low:
+        warn = ("lightmap charts fill %.0f%% of their box: effective density %s, under half (Bakery sizes the UV2 by "
+                "its area and bounds): pack the charts to fill their bounds, or raise Scale In Lightmap and pack "
+                "again for the larger footprint" % (100 * fill, "; ".join(low)))
+    return {n: round(v, 2) for n, v in eff.items()}, warn
 
 
 def pack_lightmap(link, mesh, spec, charts):
@@ -287,17 +384,21 @@ def pack_lightmap(link, mesh, spec, charts):
         else:
             p, rep, fails = last
         b = rep.get("bbox_share") or 1.0
-        real = {n: lightmap_footprint(a, spec["texels_per_m"], s, b) for n, (a, s) in spec["users"].items()}
+        real = _footprints(spec, b, rep.get("bbox_short_side"))
         rep.update({"footprint_px": round(next(iter(real.values())), 2), "fallback": why,
                     "footprints_px": {n: round(v, 2) for n, v in real.items()}})
         rep["warnings"] = [w for w in (lightmap_warning(v, n) for n, v in real.items()) if w]
+        if p["uvw_ids"] is not None:              # the effective density at the real footprints
+            rep["effective_texels_per_m"], low = _density(spec, real, _areas(mesh, p["uvw_ids"], p["uvw"])[1],
+                                                          rep.get("box_fill", 0.0))
+            rep["warnings"] += [low] if low else []
         return p, rep, fails
     p, rep, _ = last
     b = rep["bbox_share"] or 1.0
-    real = {n: lightmap_footprint(a, spec["texels_per_m"], s, b) for n, (a, s) in spec["users"].items()}
-    feet = {n: lightmap_footprint(a, spec["texels_per_m"], s, 1.0) for n, (a, s) in spec["users"].items()}
+    real = _footprints(spec, b, rep.get("bbox_short_side"))
+    feet = _footprints(spec)
     who = min(feet, key=feet.get)
-    k = target / foot
+    k = _scale_up(spec, target) if spec.get("lightmapper") == "bakery" else target / foot
     if foot < LIGHTMAP_MIN_FOOTPRINT_PX and target <= LIGHTMAP_MIN_FOOTPRINT_PX:
         advice = ("probe-light it (a Free prop, or a LOD via lod_lightmap: false), or raise its Scale In Lightmap "
                   "%.1fx" % k)
@@ -312,7 +413,10 @@ def pack_lightmap(link, mesh, spec, charts):
                 "footprints_px": {n: round(v, 2) for n, v in real.items()}, "fallback": note, "fallback_ok": True,
                 "packed_for_px": fb["packed_for_px"],
                 "pack": {"map_px": fb["map_px"], "pad_px": fb["pad_px"], "margin_px": fb["margin_px"]}})
-    rep["warnings"] = [w for w in (lightmap_warning(v, n) for n, v in real.items()) if w] + [note]
+    rep["effective_texels_per_m"], low = _density(spec, real, _areas(mesh, p["uvw_ids"], p["uvw"])[1],
+                                                  rep.get("box_fill", 0.0))       # at the real footprints
+    rep["warnings"] = [w for w in (lightmap_warning(v, n) for n, v in real.items()) if w] + [note] + (
+        [low] if low else [])
     fails = [] if foot < LIGHTMAP_MIN_FOOTPRINT_PX else [
         "2-texel gaps fit only at %.0f px, not its %.0f px (%s)" % (target, foot, reason)]
     return p, rep, fails

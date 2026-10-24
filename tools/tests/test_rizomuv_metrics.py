@@ -1,6 +1,7 @@
 """Plain-Python tests for the rizomuv-uv-pipeline skill's scripts/uv_metrics.py: distortion, texel density, overlap,
-padding, margin, flips and the one grader (distortion gate merged over the defaults, plus layout), on synthetic
-layouts. No RizomUV, no Blender.
+padding, margin, flips, the one grader (distortion gate merged over the defaults, plus layout) and the visible-seam
+measure (cushion-like prisms with seams across the top, underneath, at the back and on sharp or rounded edges), on
+synthetic layouts. No RizomUV, no Blender.
 
 Host: plain Python 3.9+ with numpy (the tests skip without it). Run from the repo root:
     python -B -m unittest discover -s tools/tests -p "test_rizomuv_*.py"
@@ -312,6 +313,174 @@ class Fragmentation(unittest.TestCase):
     def test_bbox_share(self):
         m = quads([A, B], [sq(0.1, 0.1, 0.3), sq(0.5, 0.5, 0.3)])
         self.assertAlmostEqual(self.um.bbox_share(m["uvw_ids"], m["uvw"]), 0.7 * 0.7)
+
+
+def rect_profile(D, H, n):
+    """A D x H rectangle in (y, z), counter-clockwise (y right, z up), each side in n segments: bottom, back (+y),
+    top, front (-y). Returns the points and each segment's side name."""
+    corners = [(-D / 2, 0.0), (D / 2, 0.0), (D / 2, H), (-D / 2, H)]
+    pts, side = [], []
+    for k, name in enumerate(("bottom", "back", "top", "front")):
+        (y0, z0), (y1, z1) = corners[k], corners[(k + 1) % 4]
+        for t in range(n):
+            pts.append((y0 + (y1 - y0) * t / n, z0 + (z1 - z0) * t / n))
+            side.append(name)
+    return pts, side
+
+
+def rounded_profile(D, H, r, k, n=4):
+    """A D x H rectangle with its four corners rounded at radius r in k segments, counter-clockwise; the flat sides
+    in n segments. Segment names: bottom, back, top, front, and round_<corner> with the arc step."""
+    pts, side = [], []
+    flats = [((-D / 2 + r, 0.0), (D / 2 - r, 0.0), "bottom"), ((D / 2, r), (D / 2, H - r), "back"),
+             ((D / 2 - r, H), (-D / 2 + r, H), "top"), ((-D / 2, H - r), (-D / 2, r), "front")]
+    centres = [(D / 2 - r, r), (D / 2 - r, H - r), (-D / 2 + r, H - r), (-D / 2 + r, r)]
+    for c, ((y0, z0), (y1, z1), name) in enumerate(flats):
+        for t in range(n):
+            pts.append((y0 + (y1 - y0) * t / n, z0 + (z1 - z0) * t / n))
+            side.append(name)
+        cy, cz = centres[c]
+        a0 = -math.pi / 2 + c * math.pi / 2                    # the arc after this flat side
+        for t in range(k):
+            a = a0 + (math.pi / 2) * t / k
+            pts.append((cy + r * math.cos(a), cz + r * math.sin(a)))
+            side.append("round%d_%d" % (c, t))
+    return pts, side
+
+
+def prism(profile, L, nx, label, seed_label=None):
+    """The (y, z) profile extruded along x from 0 to L in nx steps, closed by n-gon caps, outward normals. label(side,
+    j) names each side quad's island (j: its step along x); faces with one name share UV vertices, so the seams fall
+    between names. seed_label the same for the seams marked in the seed topology (None: no seams marked). Returns
+    (mesh with that seed, layout uvw_ids, layout uvw)."""
+    pts, side = profile
+    n = len(pts)
+    xyz = [(L * j / nx, y, z) for j in range(nx + 1) for y, z in pts]
+    vid = lambda i, j: j * n + (i % n)
+    faces, names, seeds = [], [], []
+    for j in range(nx):
+        for i in range(n):
+            faces.append([vid(i, j), vid(i + 1, j), vid(i + 1, j + 1), vid(i, j + 1)])
+            names.append(label(side[i], j))
+            seeds.append(seed_label(side[i], j) if seed_label else 0)
+    faces += [[vid(i, 0) for i in reversed(range(n))], [vid(i, nx) for i in range(n)]]
+    names += ["cap0", "cap1"]
+    seeds += ["cap0", "cap1"] if seed_label else [0, 0]
+
+    def layout(lab):
+        ids, uvw, key, order = [], [], {}, {}
+        for f, l in zip(faces, lab):
+            k = order.setdefault(l, len(order))
+            for v in f:
+                if (v, l) not in key:
+                    key[(v, l)] = len(key)
+                    x, y, z = xyz[v]
+                    uvw.extend((0.05 * x + 0.1 * k, 0.05 * (y + z), 0.0))
+                ids.append(key[(v, l)])
+        return ids, uvw
+    sid, suvw = layout(seeds)
+    mesh = {"sizes": [len(f) for f in faces], "xyz_ids": [v for f in faces for v in f],
+            "xyz": [c for p in xyz for c in p], "uvw_ids": sid, "uvw": suvw}
+    ids, uvw = layout(names)
+    return mesh, ids, uvw
+
+
+@unittest.skipUnless(np is not None, "numpy is not installed")
+class VisibleSeams(unittest.TestCase):
+    """Seams through smooth surface that faces up or to the front (-Y): the grade cannot see them (issue #5)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.um = load("uv_metrics")
+
+    def cushion(self, cut=None, **kw):
+        """A 0.6 x 0.6 x 0.15 m box cushion (x = width), each side its own island; cut=<side> splits that side
+        across at x = 0.3."""
+        return prism(rect_profile(0.6, 0.15, 6), 0.6, 6, lambda s, j: s + ("A" if s == cut and j < 3 else ""), **kw)
+
+    def seams(self, mesh, ids, uvw, **kw):
+        return self.um.visible_seams(mesh, ids, uvw, **kw)
+
+    def test_canonical_thresholds(self):
+        self.assertEqual((self.um.SMOOTH_SEAM_DEG, self.um.VIEW_FACING), (15.0, 0.5))
+        self.assertEqual(self.um.VIEW_DIRS, ((0.0, 0.0, 1.0), (0.0, -1.0, 0.0)))     # up and the kit's front
+        self.assertEqual((self.um.VISIBLE_SEAM_NOTE_M, self.um.VISIBLE_SEAM_NOTE_SHARE), (0.25, 0.25))
+
+    def test_a_cut_across_the_top_is_visible(self):
+        s = self.seams(*self.cushion("top"))
+        self.assertAlmostEqual(s["visible_seam_m"], 0.6)
+        self.assertAlmostEqual(s["visible_seam_unmarked_m"], 0.6)
+        self.assertAlmostEqual(s["smooth_seam_m"], 0.6)
+        self.assertAlmostEqual(s["seam_m"], 4 * 0.6 + 2 * 1.5 + 0.6)          # the box edges and caps are seams too
+        self.assertEqual(s["visible_seam_bounds"], [[0.3, -0.3, 0.15], [0.3, 0.3, 0.15]])
+
+    def test_seams_on_sharp_edges_underneath_or_at_the_back_are_not(self):
+        for cut in (None, "bottom", "back"):
+            s = self.seams(*self.cushion(cut))
+            self.assertEqual(s["visible_seam_m"], 0.0, cut)
+            self.assertAlmostEqual(s["smooth_seam_m"], {None: 0.0, "bottom": 0.6, "back": 0.15}[cut], msg=cut)
+            self.assertIsNone(s["visible_seam_bounds"])
+
+    def test_the_front_counts_and_the_view_directions_can_change(self):
+        mesh, ids, uvw = self.cushion("front")
+        self.assertAlmostEqual(self.seams(mesh, ids, uvw)["visible_seam_m"], 0.15)
+        self.assertEqual(self.seams(mesh, ids, uvw, view_dirs=((0, 0, 1),))["visible_seam_m"], 0.0)
+        self.assertAlmostEqual(self.seams(*self.cushion("back"), view_dirs=None)["visible_seam_m"], 0.15)  # all round
+
+    @staticmethod
+    def welt(k):
+        """Top panel = the top and the upper half of both top rounds; the rest is the band: welts at 45 deg."""
+        def label(side, j):
+            arc, _, t = side.partition("_")
+            upper = (arc == "round2" and int(t) < k // 2) or (arc == "round1" and int(t) >= k // 2)
+            return "panel" if side == "top" or upper else "band"
+        return label
+
+    def test_a_welt_on_a_rounded_edge_is_smooth_only_when_the_round_is(self):
+        for k, want in ((8, 1.2), (2, 0.0)):       # 11.25 deg steps are smooth, 45 deg steps are an edge
+            s = self.seams(*prism(rounded_profile(0.6, 0.15, 0.05, k), 0.6, 6, self.welt(k)))
+            self.assertAlmostEqual(s["visible_seam_m"], want, msg=k)        # front and back welts face up
+
+    def test_marked_seams_are_measured_but_not_noted(self):
+        rounded = rounded_profile(0.6, 0.15, 0.05, 8)
+        auto = self.seams(*prism(rounded, 0.6, 6, self.welt(8)))
+        self.assertTrue(self.um.visible_seam_warning(auto).startswith("visible seams 1.20 m: "))
+        marked = self.seams(*prism(rounded, 0.6, 6, self.welt(8), seed_label=self.welt(8)))
+        self.assertAlmostEqual(marked["visible_seam_m"], 1.2)
+        self.assertEqual(marked["visible_seam_unmarked_m"], 0.0)
+        self.assertIsNone(self.um.visible_seam_warning(marked))
+
+    def test_unwelded_corners_with_equal_uvs_are_not_a_seam(self):
+        m = quads([[(i, j, 0), (i + 1, j, 0), (i + 1, j + 1, 0), (i, j + 1, 0)] for i in range(3) for j in range(3)],
+                  [[(0.1 * i, 0.1 * j), (0.1 * i + 0.1, 0.1 * j), (0.1 * i + 0.1, 0.1 * j + 0.1),
+                    (0.1 * i, 0.1 * j + 0.1)] for i in range(3) for j in range(3)])   # one UV id per corner
+        s = self.seams(dict(m, uvw_ids=list(m["xyz_ids"]), uvw=list(m["xyz"])), m["uvw_ids"], m["uvw"])
+        self.assertEqual((s["seam_m"], s["visible_seam_m"]), (0.0, 0.0))      # and the open border is no seam
+
+    def test_an_inverted_shell_reads_the_same(self):
+        mesh, ids, uvw = self.cushion("top")
+        starts = [sum(mesh["sizes"][:k]) for k in range(len(mesh["sizes"]))]
+
+        def rev(a):                                # every polygon's corners in reverse: normals point inward
+            return [v for s, n in zip(starts, mesh["sizes"]) for v in reversed(a[s:s + n])]
+        s = self.seams(dict(mesh, xyz_ids=rev(mesh["xyz_ids"]), uvw_ids=rev(mesh["uvw_ids"])), rev(ids), uvw)
+        self.assertAlmostEqual(s["visible_seam_m"], 0.6)                      # its top still reads as the top
+
+    def test_report_carries_the_seams_and_the_note_threshold(self):
+        mesh, ids, uvw = self.cushion("top")
+        rep = self.um.report(mesh, ids, uvw, 1024)
+        self.assertAlmostEqual(rep["seams"]["visible_seam_unmarked_m"], 0.6)
+        self.assertAlmostEqual(rep["seams"]["size_m"], math.sqrt(0.6 ** 2 + 0.6 ** 2 + 0.15 ** 2), places=3)
+        self.assertFalse([f for f in self.um.grade(rep) if "seam" in f])      # advisory: never a gate failure
+        note = self.um.visible_seam_warning
+        self.assertIsNone(note({"visible_seam_unmarked_m": 0.24, "size_m": 2.0}))          # under 25 cm
+        self.assertIsNotNone(note({"visible_seam_unmarked_m": 0.25, "size_m": 2.0}))
+        self.assertIsNotNone(note({"visible_seam_unmarked_m": 0.06, "size_m": 0.2}))       # a quarter of a small piece
+        self.assertIsNone(note({"visible_seam_unmarked_m": 0.04, "size_m": 0.2}))
+        self.assertIsNone(note({"visible_seam_unmarked_m": 0.0, "size_m": 0.0}))
+        ru = load("rizom_uv")
+        warns = ru.layer_report(mesh, ids, uvw, ru.pack_spec(1024))["warnings"]
+        self.assertTrue(any(w.startswith("visible seams 0.60 m") for w in warns), warns)
 
 
 if __name__ == "__main__":
