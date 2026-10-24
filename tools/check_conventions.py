@@ -2,11 +2,11 @@
 
 Skills in this repo are independent (see AGENTS.md), so a few facts live in more than one skill: the kit piece,
 assembly and material naming patterns, the VRChat platform budgets and limits, the FBX export settings, the
-Blender -> Unity axis conversion, the VR texel-density classes, the lightmap planning constants, the kit_status
-values, the required Unity version, the PBR base-colour range, and two scripts each shipped identically in two
-skills (kit_library.py, pbr_check.py). This finds every copy and fails if any disagrees with the canonical value
-below. When a fact changes, change CANON here and every copy it lists. FORBIDDEN lists statements a review found
-wrong, so they cannot creep back in.
+Blender -> Unity axis conversion, the VR texel-density classes, the lightmap planning constants (Bakery's too), the
+kit_status values, the required Unity version, the PBR base-colour range, and two scripts each shipped identically
+in two skills (kit_library.py, pbr_check.py). This finds every copy and fails if any disagrees with the canonical
+value below. When a fact changes, change CANON here and every copy it lists. FORBIDDEN lists statements a review
+found wrong, so they cannot creep back in.
 
 Host: plain Python 3.9+, standard library. Run from anywhere:
     python tools/check_conventions.py          # exit 1 on any mismatch
@@ -83,6 +83,12 @@ CANON = {
     "lod_lightmap_scale": 0.5,
     "lod_lightmap_cost": 0.25,
     "uv2_box_fill_note": 0.5,   # UV2 charts filling less of their bounding box get a note (Unity packs the box)
+    # Bakery's sizing (ftBuildGraphics.cs as installed in a Unity 2022.3.22f1 project, read 2026-10-24): the area it
+    # sums is 2 x the surface area, and its Default atlas packer insets each rect 3 texels; the lightmapper names the
+    # scripts take; the Bakery effective-density gate (half the planned texels per metre)
+    "bakery": {"area_factor": 2.0, "inset_texels": 3},
+    "lightmappers": ["unity", "bakery"],
+    "effective_density_min": 0.5,
     # Modifier types that change topology: the hard-surface hand-off to UV work applies the stack from the top down to
     # the last of them (uv-unwrapping's apply_stack and blender-mesh-topology's apply_for_uv_work)
     "topology_types": ["ARRAY", "BEVEL", "BOOLEAN", "BUILD", "DECIMATE", "EDGE_SPLIT", "MASK", "MIRROR", "MULTIRES",
@@ -123,6 +129,17 @@ CONSTANTS = [
     ("uv-unwrapping/scripts/uv_audit.py", "LIGHTMAP_BOX_FILL_NOTE", ("uv2_box_fill_note",)),
     ("rizomuv-uv-pipeline/scripts/rizom_uv.py", "LIGHTMAP_MIN_BOX_FILL", ("uv2_box_fill_note",)),
     ("vrchat-world-qa/scripts/qa_measure.py", "UV2_BOX_FILL_NOTE", ("uv2_box_fill_note",)),
+    ("vrchat-lighting-and-baking/scripts/lightmap_budget.py", "BAKERY_AREA_FACTOR", ("bakery", "area_factor")),
+    ("vrchat-lighting-and-baking/scripts/lightmap_budget.py", "BAKERY_INSET_TEXELS", ("bakery", "inset_texels")),
+    ("vrchat-lighting-and-baking/scripts/lightmap_budget.py", "LIGHTMAPPERS", ("lightmappers",)),
+    ("uv-unwrapping/scripts/uv_audit.py", "BAKERY_AREA_FACTOR", ("bakery", "area_factor")),
+    ("uv-unwrapping/scripts/uv_audit.py", "BAKERY_INSET_TEXELS", ("bakery", "inset_texels")),
+    ("uv-unwrapping/scripts/uv_audit.py", "LIGHTMAPPERS", ("lightmappers",)),
+    ("uv-unwrapping/scripts/uv_audit.py", "EFFECTIVE_DENSITY_MIN", ("effective_density_min",)),
+    ("rizomuv-uv-pipeline/scripts/rizom_uv.py", "BAKERY_AREA_FACTOR", ("bakery", "area_factor")),
+    ("rizomuv-uv-pipeline/scripts/rizom_uv.py", "BAKERY_INSET_TEXELS", ("bakery", "inset_texels")),
+    ("rizomuv-uv-pipeline/scripts/rizom_uv.py", "LIGHTMAPPERS", ("lightmappers",)),
+    ("rizomuv-uv-pipeline/scripts/rizom_uv.py", "EFFECTIVE_DENSITY_MIN", ("effective_density_min",)),
     ("uv-unwrapping/scripts/uv_audit.py", "TOPOLOGY_TYPES", ("topology_types",)),
     ("blender-mesh-topology/scripts/hard_surface.py", "TOPOLOGY_TYPES", ("topology_types",)),
     ("blender-mesh-topology/scripts/detail_scale.py", "TEXEL_CLASSES", ("texel_class_edges",)),
