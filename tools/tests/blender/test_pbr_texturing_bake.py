@@ -1,6 +1,9 @@
 """Blender-hosted tests for the pbr-texturing skill's scripts: bake_maps.py bakes an OpenGL tangent-space normal map,
 AO and curvature from a high poly through a cage that encloses it (a cage that does not starts rays inside protruding
-detail: black AO, rings for domes), restores everything it touched, writes 16-bit PNGs and dithered 8-bit ones, and
+detail: black AO, rings for domes), restores everything it touched, writes 16-bit PNGs and dithered 8-bit ones (grey,
+grey + alpha, RGB, RGBA), bakes non-square maps, sizes a uniform cage by the faces the detail stands on (not the
+sharpest corner), fits a per-vertex cage that clears a narrow channel without losing floating piping, Gaussian
+pre-filters before downsampling (a steadier sloped edge than a box filter), refuses highs in an excluded collection, and
 its CLI bakes a saved .blend; lookdev_render.py shows a metal's roughness map where Workbench shows none of it, and
 renders maps from the command line; pbr_check.py's convention test reads real Cycles bakes as OpenGL (and a green-flipped
 copy as DirectX), and its Blender loader returns the same codes as its own PNG reader for 8- and 16-bit PNGs written by
@@ -24,6 +27,7 @@ from pathlib import Path
 import bmesh
 import bpy
 import numpy as np
+from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "skills" / "pbr-texturing" / "scripts"
@@ -240,14 +244,215 @@ def test_cli_bakes_a_saved_blend():
     bpy.ops.wm.save_as_mainfile(filepath=str(blend), copy=True)
     base = [bpy.app.binary_path, "-b", "--factory-startup", str(blend), "--python-exit-code", "1",
             "--python", str(SCRIPTS / "bake_maps.py"), "--"]
-    run = subprocess.run(base + ["--low", "cube_low", "--high", "cube_high", "--size", "64", "--maps", "normal",
+    run = subprocess.run(base + ["--low", "cube_low", "--high", "cube_high", "--size", "64x32", "--maps", "normal",
                                  "--out", str(TMP / "cli" / "out"), "--name", "T_TST_Cli"],
                          capture_output=True, text=True, timeout=300)
     check(run.returncode == 0, "CLI exit %d: %s" % (run.returncode, run.stdout[-800:] + run.stderr[-800:]))
-    check((TMP / "cli" / "out" / "T_TST_Cli_Normal.png").is_file(), "CLI wrote no normal map")
+    png = TMP / "cli" / "out" / "T_TST_Cli_Normal.png"
+    check(png.is_file() and PC.png_header(str(png))[:2] == (64, 32), "CLI wrote no 64 x 32 normal map")
     bad = subprocess.run(base + ["--low", "nope", "--high", "cube_high"], capture_output=True, text=True,
                          timeout=300)
     check(bad.returncode == 2, "a missing object exits %d, expected 2" % bad.returncode)
+
+
+def test_save_png_writes_grey_alpha_and_rgba():
+    d = TMP / "alpha"
+    d.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(7)
+    for ch, colour in ((2, 4), (4, 6)):
+        a = rng.random((9, 13, ch))
+        for bits in (8, 16):
+            p = BAKE["save_png"](str(d / ("c%d_%d.png" % (ch, bits))), a, bits=bits)
+            hdr = PC.png_header(p)
+            check(hdr[:4] == (13, 9, bits, colour), "%d channels at %d bits: header %s" % (ch, bits, hdr))
+            back, _ = PC.read_png(p)                                       # always RGBA
+            want = np.dstack([a[:, :, 0]] * 3 + [a[:, :, 1]]) if ch == 2 else a
+            err = float(np.abs(back - want).max())
+            check(err < (1.01 / 255.0 if bits == 8 else 1e-4), "%d channels at %d bits read back %g off"
+                  % (ch, bits, err))
+    try:
+        BAKE["save_png"](str(d / "five.png"), np.zeros((2, 2, 5)))
+        raise AssertionError("5 channels were written")
+    except ValueError:
+        pass
+
+
+def test_bake_non_square_map():
+    low, high = build_fixture()
+    check(BAKE["map_size"]("1024x2048") == (1024, 2048) and BAKE["map_size"](512) == (512, 512),
+          "map_size parsing")
+    res = BAKE["bake"](low, [high], maps=("normal",), size=(64, 128), out_dir=str(TMP / "tall"), name="T_TST_Tall")
+    check(res["report"]["size"] == [64, 128], "report size %s" % res["report"]["size"])
+    check(PC.png_header(res["normal"])[:2] == (64, 128), "header %s" % (PC.png_header(res["normal"]),))
+    nrm, _ = PC.load(res["normal"])
+    flat = sample(nrm, *island_uv(POS_FACE[0], 0.5, 0.5))[:3] * 255.0
+    check(np.abs(flat - [127.5, 127.5, 255.0]).max() < 2.5, "flat face texel %s on a 64 x 128 map" % flat)
+
+
+def test_uniform_cage_follows_the_face_not_the_sharpest_corner():
+    """A box with a finely divided top and a 10 mm dome on it: the dome's push is divided by the cosines where it
+    stands (1 on the flat top), not by the box corners' 0.577, which used to inflate the push for the whole mesh."""
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob)
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=0.4)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=9, use_grid_fill=True)
+    low = object_from_bm("dome_low", bm)
+    bm = bmesh.new()
+    bm.from_mesh(low.data)
+    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.05,
+                              matrix=Matrix.Translation((0.0, 0.0, 0.2 - 0.04)))
+    high = object_from_bm("dome_high", bm)
+    stats = {}
+    ext, outside = BAKE["cage_extrusion"](low, [high], stats=stats)
+    check(abs(outside - 0.01) < 0.001, "dome stands %.4f out, expected 0.01" % outside)
+    check(outside <= ext < 1.3 * outside, "push %.4f for a 0.01 dome on a flat top (0.019 with the corners' cosine)"
+          % ext)
+    check(abs(stats["max"] - outside) < 1e-9 and 0.0 < stats["p99"] <= stats["max"], "stats %s" % stats)
+
+
+def object_from_bm(name, bm):
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def add_box(bm, lo, hi, cuts=0):
+    """A box from lo to hi in bm, its faces divided into a (cuts + 1)^2 grid."""
+    verts = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+    for v in verts:
+        v.co = Vector([lo[k] + (v.co[k] + 0.5) * (hi[k] - lo[k]) for k in range(3)])
+    if cuts:
+        edges = list({e for v in verts for e in v.link_edges})
+        bmesh.ops.subdivide_edges(bm, edges=edges, cuts=cuts, use_grid_fill=True)
+
+
+# two slabs 12 mm apart, their highs standing 5 mm proud on the facing sides (2 mm between the highs); a 12 mm piping
+# cord floating 1 mm over slab A's top
+SLAB_A, SLAB_B = ((-0.1, -0.1, 0.0), (0.0, 0.1, 0.1)), ((0.012, -0.1, 0.0), (0.112, 0.1, 0.1))
+SIDES = [(ax, sg) for ax in range(3) for sg in (1, -1)]
+
+
+def slab_cell(part, ax, sg):
+    i = part * 6 + SIDES.index((ax, sg))
+    return (i % 4) * 0.25 + 0.02, (i // 4) / 3.0 + 0.02, 0.21, 1.0 / 3.0 - 0.04       # u0, v0, du, dv
+
+
+def build_channel_fixture():
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob)
+    bm = bmesh.new()
+    add_box(bm, *SLAB_A, cuts=7)
+    add_box(bm, *SLAB_B, cuts=7)
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        n = f.normal
+        ax = max(range(3), key=lambda k: abs(n[k]))
+        sg = 1 if n[ax] > 0 else -1
+        part = 0 if f.calc_center_median().x < 0.006 else 1
+        lo, hi = (SLAB_A, SLAB_B)[part]
+        a, b = [k for k in range(3) if k != ax]
+        u0, v0, du, dv = slab_cell(part, ax, sg)
+        for loop in f.loops:
+            s = (loop.vert.co[a] - lo[a]) / (hi[a] - lo[a])
+            t = (loop.vert.co[b] - lo[b]) / (hi[b] - lo[b])
+            loop[uv].uv = (u0 + s * du, v0 + t * dv)
+    low = object_from_bm("channel_low", bm)
+    bm = bmesh.new()
+    add_box(bm, (-0.1, -0.1, 0.0), (0.005, 0.1, 0.1))
+    bmesh.ops.create_cone(bm, cap_ends=True, segments=24, radius1=0.006, radius2=0.006, depth=0.18,
+                          matrix=Matrix.Translation((-0.05, 0.0, 0.107)) @ Matrix.Rotation(math.pi / 2, 4, "X"))
+    high_a = object_from_bm("channel_high_A", bm)
+    bm = bmesh.new()
+    add_box(bm, (0.007, -0.1, 0.0), (0.112, 0.1, 0.1))
+    high_b = object_from_bm("channel_high_B", bm)
+    for p in high_a.data.polygons:
+        p.use_smooth = p.center.z > 0.1005                  # the cord smooth, the boxes flat
+    return low, [high_a, high_b]
+
+
+def cell_texels(px, part, ax, sg, inset=2):
+    u0, v0, du, dv = slab_cell(part, ax, sg)
+    hgt, wid = px.shape[:2]
+    c0, c1 = int(u0 * wid) + inset, int((u0 + du) * wid) - inset
+    r0, r1 = int((1.0 - v0 - dv) * hgt) + inset, int((1.0 - v0) * hgt) - inset
+    return px[r0:r1, c0:c1]
+
+
+def test_fitted_cage_clears_a_channel_and_keeps_floating_piping():
+    low, highs = build_channel_fixture()
+    inward = {}
+    for label, kw in (("uniform", {"extrusion": 0.010}), ("fitted", {"cage": "fitted"})):
+        res = BAKE["bake"](low, highs, maps=("normal",), size=256, out_dir=str(TMP / ("channel_" + label)),
+                           name="T_TST_Channel", **kw)
+        nrm, _ = PC.load(res["normal"])
+        z = nrm[:, :, 2] * 2.0 - 1.0
+        inward[label] = sum(int((cell_texels(z, part, 0, sg) < 0.0).sum()) for part, sg in ((0, 1), (1, -1)))
+        print("  %s cage: %d inward texels on the facing sides, report %s" % (label, inward[label],
+                                                                           {k: res["report"].get(k) for k in
+                                                                            ("extrusion", "capped", "repaired",
+                                                                             "cage_inside")}))
+        if label == "uniform":
+            check(res["report"]["cage_inside"]["neighbour"] > 0, "a 10 mm cage across a 2 mm gap reported no ray "
+                  "starting inside the neighbour: %s" % res["report"]["cage_inside"])
+        else:
+            rep = res["report"]
+            check(rep["capped"] > 0 and rep["cage_inside"]["neighbour"] == 0 and rep["cage_inside"]["own"] == 0,
+                  "fitted report %s" % rep)
+            check(0.002 - 1e-9 <= rep["extrusion"]["min"] and rep["extrusion"]["max"] < 0.03, "range %s"
+                  % rep["extrusion"])
+            top = cell_texels(nrm[:, :, :3] * 2.0 - 1.0, 0, 2, 1)
+            check(float(np.abs(top[:, :, 0]).max()) > 0.3,
+                  "the floating piping on slab A's top did not bake (max |x| %.2f): the cage stopped under it"
+                  % float(np.abs(top[:, :, 0]).max()))
+    check(inward["uniform"] > 50, "a 10 mm uniform cage baked only %d inward texels" % inward["uniform"])
+    check(inward["fitted"] == 0, "the fitted cage baked %d inward texels" % inward["fitted"])
+
+
+def test_downsample_filter_steadies_a_sloped_edge():
+    """A sharp edge at a slope of 1 in 37, area-sampled 3 x 3 per supersample texel (as Cycles' jittered bake
+    samples are), brought down from 2x: where its 50% crossing lands in each column against the true line."""
+    f, sub, n = 2, 3, 256
+    ys = (np.arange(48 * f * sub) + 0.5) / (f * sub)
+    xs = (np.arange(n * f * sub) + 0.5) / (f * sub)
+    fine = (ys[:, None] > 20.3 + xs[None, :] / 37.0).astype(np.float32)
+    ss = fine.reshape(48 * f, sub, n * f, sub).mean(axis=(1, 3))[:, :, None]
+
+    def error(sigma):
+        a = BAKE["downsample"](ss, f, sigma)[:, :, 0]
+        cross = []
+        for j in range(a.shape[1]):
+            i = int(np.argmax(a[:, j] >= 0.5))
+            cross.append(i - 0.5 + (0.5 - a[i - 1, j]) / (a[i, j] - a[i - 1, j]))
+        e = np.array(cross) - (20.3 + (np.arange(a.shape[1]) + 0.5) / 37.0)
+        return float((e - e.mean()).std())
+
+    box, gauss = error(0.0), error(BAKE["FILTER_SIGMA"])
+    print("  edge position error: box %.3f, gauss %.3f texels rms" % (box, gauss))
+    check(gauss < 0.7 * box, "the Gaussian pre-filter (%.3f) does not steady the edge against a box (%.3f)"
+          % (gauss, box))
+    flat = BAKE["downsample"](np.full((8, 12, 3), 0.25, np.float32), 2, 0.5)
+    check(flat.shape == (4, 6, 3) and np.allclose(flat, 0.25), "a flat image changes under the filter")
+
+
+def test_bake_refuses_an_excluded_high():
+    low, high = build_fixture()
+    coll = bpy.data.collections.new("HIGH_excluded")
+    bpy.context.scene.collection.children.link(coll)
+    for c in high.users_collection:
+        c.objects.unlink(high)
+    coll.objects.link(high)
+    bpy.context.view_layer.layer_collection.children[coll.name].exclude = True
+    try:
+        BAKE["bake"](low, [high], maps=("normal",), size=32, out_dir=str(TMP / "excluded"))
+        raise AssertionError("baked from a high in an excluded collection")
+    except ValueError as ex:
+        check("not evaluated" in str(ex) and "cube_high" in str(ex), "message: %s" % ex)
+    finally:
+        bpy.data.collections.remove(coll)
 
 
 def write_maps(d, smooth):
@@ -331,6 +536,12 @@ for fn in (test_bake_normal_ao_curvature,
            test_cage_that_does_not_enclose_bakes_black_ao,
            test_bpy_loader_matches_png_reader,
            test_dithered_8bit_tracks_a_shallow_gradient,
+           test_save_png_writes_grey_alpha_and_rgba,
+           test_bake_non_square_map,
+           test_uniform_cage_follows_the_face_not_the_sharpest_corner,
+           test_fitted_cage_clears_a_channel_and_keeps_floating_piping,
+           test_downsample_filter_steadies_a_sloped_edge,
+           test_bake_refuses_an_excluded_high,
            test_cli_bakes_a_saved_blend,
            test_lookdev_shows_roughness_and_workbench_does_not,
            test_lookdev_cli_renders_maps):

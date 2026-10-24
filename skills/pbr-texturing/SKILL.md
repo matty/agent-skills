@@ -45,13 +45,14 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
 1. The low poly is final: UVs done (a seam on every hard edge, mip-safe gaps: `uv-unwrapping`), triangulated the way
    it exports, so the baker and the engine see the same triangles.
 2. The high poly overlaps the low poly; protruding detail sits inside the cage (the bake reports how far it stands
-   out).
+   out, and how many rays start inside a high: `cage_inside`). Narrow channels, creases and upholstery take a fitted
+   cage (`--cage fitted`); thin cords and chamfers under about 3 texels wide `--filter-sigma 0.8`.
 3. Bake with one of two measured routes (`references/baking.md`):
 
    | Route | When | Gives |
    |---|---|---|
    | Substance 3D baker CLI (`substance3d_baker`, in Designer's install folder: how to find it is in `references/baking.md`; measured with 16.0.7) | Designer installed | Raytraced normal, AO, curvature, thickness, position, ID, world normal, bent normals; GPU, under a second on the test fixture |
-   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself; 16-bit PNGs |
+   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself, uniform or fitted per vertex; square or tall maps; 16-bit PNGs |
 
    The Substance baker writes **DirectX** normal maps unless told `--output_texture_orientation opengl`, and pads only
    2 px by default (measured 2026-10-18): pass both every time.
@@ -118,7 +119,7 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | Script | Host | Use |
 |---|---|---|
 | `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits, tiling-seam ratios and 3 x 3 composites; exit 1 on a PROBLEM |
-| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name)`: cage sized to enclose the high poly, supersampling, 16-bit or dithered 8-bit PNGs; a CLI |
+| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png)` under a bundled CC0 HDRI; a CLI for maps or objects |
 
 Load a Blender script from the Blender MCP with `exec(open(path, encoding="utf-8").read(), ns)` after setting

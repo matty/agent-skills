@@ -24,7 +24,9 @@ it under the cutoff, and trees go bald with distance. Fix it in the mips:
 - Coverage-preserving mips rescale each mip's alpha so the share of pixels above the cutoff stays the same; the
   importer needs the material's cutoff value to do it.
 - Dilate colour into the transparent pixels (bake margin, or a dilation filter) so filtering at the edges blends with
-  leaf colour, not with black: dark halos round every leaf mean the transparent pixels' RGB is black.
+  leaf colour, not with black: dark halos round every leaf mean the transparent pixels' RGB is black. Ship it as one
+  RGBA base-colour map (RGB the dilated colour, A the coverage): `bake_maps.save_png` writes 1-4 channels (grey,
+  grey + alpha, RGB, RGBA) from rows top to bottom.
 - Alpha-to-coverage, where the shader and MSAA allow it, turns alpha into smooth anti-aliased edges instead of
   stair-stepped cutout edges.
 

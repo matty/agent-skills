@@ -13,9 +13,11 @@ bake itself.
 2. High poly overlapping it; floaters (bolts, panels lying on the surface) are fine for raytraced bakes.
 3. Rays must start outside the high poly: a cage, or a frontal distance larger than the tallest protrusion. A cage
    that does not enclose it starts rays inside the detail: domes bake as rings and AO comes out black there
-   (measured with a 2 cm cage against 6 cm bumps).
-4. Bake at twice the output size and box-filter down (or the baker's 2 x 2 supersampling): edges of baked detail
-   alias otherwise.
+   (measured with a 2 cm cage against 6 cm bumps). One that reaches past a narrow gap starts rays inside the
+   neighbour: normals pointing into the surface along every channel (a fitted cage, below).
+4. Bake at twice the output size and filter down (or the baker's 2 x 2 supersampling): edges of baked detail alias
+   otherwise. A plain box filter still steps thin detail at a slight slope to the texel grid: features narrower than
+   about 3 texels need a Gaussian pre-filter (below) or a higher texel density.
 5. 16-bit output for normal and height maps; padding (dilation) of at least half the island gap.
 
 ## Route A: the Substance 3D baker CLI
@@ -71,16 +73,37 @@ exported from Designer's baking window. Every run prints a harmless USD deprecat
 ```text
 blender -b --factory-startup prop.blend --python-exit-code 1 --python bake_maps.py --
         --low PROP_Crate_Free_A --high Crate_high --size 2048 --out blender/substance/PROP/bake
-        --name T_PROP_Crate --maps normal,ao,curvature
+        --name T_PROP_Crate --maps normal,ao,curvature [--size 1024x2048] [--cage fitted] [--filter-sigma 0.8]
 ```
 
 What it does, and what was measured (Blender 5.2.2, CPU, 256 px with 2x supersampling: normal 0.08 s, AO 0.31 s,
 curvature 0.10 s):
 
-- **Cage.** A copy of the low poly as evaluated, each vertex pushed along its averaged normal. The push is measured,
-  not guessed: how far the high poly stands outside the low surface (0.060 on the fixture), divided by the smallest
-  cosine between a vertex's averaged normal and its faces (0.577 at a cube corner), times 1.1: 0.114. `--extrusion`
-  overrides it; too small reproduces the rings and black AO above.
+- **Low and highs in the view layer.** An object in an excluded or disabled collection (where bake highs often
+  live) is not evaluated: its matrix_world is stale, identity after a load. The script refuses one by name; include
+  its collection for the bake.
+- **Uniform cage** (default). A copy of the low poly as evaluated, each vertex pushed along its averaged normal. The
+  push is measured, not guessed: for each point of the high poly outside the low (its vertices and as many points
+  spread over its faces), its distance divided by the share of an averaged-normal push that moves that point of
+  the face out (its corners' cosines between vertex and face normal, weighted by where it lies), the largest of
+  those, times 1.1. On the fixture: 0.060 out, 0.577 on every cube face, 0.114. Per point, not the mesh's sharpest
+  corner: dividing by one global minimum made it 2-3x too deep on upholstery lows (10-12 mm of protrusion got
+  23.5-32.8 mm, and the creases and welts tore). The report gives `high_outside` and `high_outside_p99` next to
+  the push, so overshoot shows. `--extrusion` overrides it; too small reproduces the rings and black AO above.
+- **Fitted cage** (`--cage fitted`, `cage="fitted"`): a push per vertex, for narrow channels (channel-tufted backs,
+  pads 10-20 mm apart), concave creases (a seat into its back) and pieces whose high stands far off in places and
+  close in others. Per vertex: the protrusion over its faces x 1.15 + 1.5 mm, at least 2 mm, dilated twice; a ray
+  marched along its normal raises it past its own high's last exit and caps it half way to the other side of a
+  channel (an entry whose nearest low surface faces back along the ray), marching through detail on its own side
+  (piping, floaters); then the bake's own rays are traced at seven points of every cage triangle and the culprit
+  vertex of any ray starting inside a high is shrunk or grown. Measured on two slabs 12 mm apart with highs 5 mm
+  proud on the facing sides (2 mm between them) and a cord floating over one top: a 10 mm uniform cage baked 6,711
+  inward-pointing texels (z < 0) on the facing sides, the fitted cage none, with the cord intact. On a 2,400-face
+  cushion low against a 153k-vertex high it took 3 s.
+- **Cage check.** Every uniform or fitted bake reports `cage_inside`: of the rays traced at seven points per cage
+  triangle, how many start inside a high that stands off the low (`neighbour`: the cage reaches across a gap,
+  normals point into the surface) or inside the low's own high (`own`: rings, black AO). Both should be 0; `own`
+  above 0 means a larger push, `neighbour` above 0 a fitted cage.
 - **Normal map.** Selected to Active, tangent space, swizzle +X +Y +Z (OpenGL), the low poly's MikkTSpace tangents
   from its active render UV map (or `--uv-layer`). `pbr_check.py` read the bakes as OpenGL, r +0.53 to +0.59, and a
   green-flipped copy as DirectX.
@@ -91,9 +114,24 @@ curvature 0.10 s):
   vertex and sees only connected topology: it needs a dense high poly, and floaters or unapplied booleans show no
   crease where they meet the body (the Substance baker's raytraced curvature does). Convex reads brighter, as in
   route A.
-- **Output.** Baked into Non-Color float images, box-filtered down (normals renormalised) and written straight to
-  16-bit PNG (`--bits 8`: triangular-dithered 8-bit), no colour management involved. Everything it adds (images,
-  materials, image nodes, the cage) is removed, and the render engine, samples, selection and active object restored.
+- **Filter.** Baked into Non-Color float images, Gaussian pre-filtered at `--filter-sigma` output texels (default
+  0.5; 0 is a plain box) in the supersampled image, then box-filtered down (normals renormalised). A box filter
+  alone steps a thin edge at a slight slope by up to a texel (baked piping read as a dashed cord, and moving the
+  seams did not help), and a higher supersample barely changes that: on a sharp edge at 1 in 37, sampled 3 x 3 per
+  supersample texel as Cycles' jittered samples are, the 50% crossing was off its true line by 0.072 texels rms from
+  2x and 0.065 from 4x with a box, 0.043 with sigma 0.5 (edge 1.5 texels wide) and 0.030 with 0.8 (2.2 texels).
+  Use 0.8 for upholstery piping and other features under about 3 texels wide (a 0.8-texel Gaussian on the final
+  normal and AO maps kept a cord one continuous line without visibly softening the rest of an upholstery map,
+  reported 2026-10-24). Cycles does jitter within a pixel when baking: 16 samples gave 17 levels on a sharp edge, 1
+  sample 2.
+- **Maps.** `--size 1024` or `--size 1024x2048` (`size=(1024, 2048)`): a tall or wide unique piece gets a map of
+  its shape, not a square that wastes two thirds or halves the density (a 0.25 x 0.775 m pierced grille baked
+  continuous chamfer highlights at 1024 x 2048 and dotted ones at 512 x 1024).
+- **Output.** Written straight to 16-bit PNG (`--bits 8`: triangular-dithered 8-bit), no colour management
+  involved. `save_png` writes 1-4 channels (grey, grey + alpha, RGB, RGBA: an alpha-cutout card's colour and
+  coverage in one map) from rows top to bottom, as `_image_array` returns them: Blender's `Image.pixels` run bottom
+  to top, and writing them unflipped turns the map upside down. Everything it adds (images, materials, image nodes,
+  the cage) is removed, and the render engine, samples, selection and active object restored.
 
 Blender facts behind it, measured on 5.2.2: `Image.save()` of a float image writes a 16-bit PNG; a 16-bit PNG loaded
 under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read data maps as Non-Color.
@@ -102,7 +140,9 @@ under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read dat
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Domes bake as rings, AO black on protruding detail | Rays start inside the high poly: cage or frontal distance too small | Enlarge it past the tallest protrusion (`bake_maps.py` measures it) |
+| Domes bake as rings, AO black on protruding detail | Rays start inside the high poly: cage or frontal distance too small | Enlarge it past the tallest protrusion (`bake_maps.py` measures it; `cage_inside.own` counts the rays) |
+| Normals pointing into the surface (black streaks, z < 0) along channels, gaps or creases | The cage reaches past the gap and starts rays inside the neighbouring high (`cage_inside.neighbour` above 0) | `--cage fitted`; in the Substance baker a cage mesh, or a frontal distance under half the gap |
+| A thin cord or chamfer highlight bakes as a dashed or stepped line | A box filter steps detail under about 3 texels wide at a slight slope; more supersampling barely helps | `--filter-sigma 0.8` (or a 0.8-texel Gaussian on the final map, normals renormalised), or a higher texel density |
 | A line along every hard edge | Rays follow split normals (no cage, `smooth_normals` off), or a hard edge without a UV seam | Averaged cage; a seam on every hard edge (`uv-unwrapping`) |
 | Normal map lit from below in the engine | Wrong Y convention | OpenGL for Blender and Unity; `pbr_check.py` reports it |
 | Detail skewed near the silhouette | Ray directions bend with the averaged normals on a coarse low poly | More support geometry on the low poly, a cage that follows the surface, or the Substance baker's skew map |
