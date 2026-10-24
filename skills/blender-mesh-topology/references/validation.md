@@ -43,7 +43,7 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
 | `open_edges` | any, unless `problems(r, allow_open=True)` | Pieces meant to be open (a single wall face) pass with allow_open |
 | `overfull_edges` | any | An edge with 3+ faces: a fold, or two layers fused |
 | `flipped_edges` | any | An edge whose two faces both run along it the same way: a face wound against its neighbours (a reduction band built with its runs the wrong way round, `grid-layout.md`). Engines cull back faces, so it shows as a hole |
-| `inverted_islands` | any | A closed island whose faces all point inwards |
+| `inverted_islands` | any | A closed island whose faces all point inwards: negative signed volume, summed in float64 about the island's own centre; under 1e-6 of its bounding box counts as undetermined, not inverted (summed in float32 about the origin, 2 cm tubes 5 m out read inverted, 2026-10-24) |
 | `short_edges`, `degenerate_faces` | any | Edges under 1 mm, faces under 1e-8 m2 |
 | `bad_quads` | any | A corner under 3 deg, a quad folded over 25 deg (edges of 2 cm or more), or a bow-tie |
 | `slivers` | any | A face with a corner under 2 deg, flat-shaded or not; on a stack-triangulated piece, judged by `audit_stack` on the untriangulated mesh |

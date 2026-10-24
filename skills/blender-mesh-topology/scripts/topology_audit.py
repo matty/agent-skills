@@ -70,6 +70,27 @@ def _one_per_face(mapped, over):
     return out
 
 
+INVERTED_REL_VOLUME = 1e-6    # a closed island whose |volume| is under this share of its bounding box is undetermined
+
+
+def _signed_volume6(faces):
+    """(6 x the signed volume, the bounding-box volume) of a closed island: positive when its faces point outwards.
+    Summed in float64 about the island's own centre: bmesh coordinates are float32, and summed about a far-off origin
+    the terms cancel until the sign is noise (2 cm tubes 5 m from the origin read inverted)."""
+    pts = {v.index: tuple(v.co) for f in faces for v in f.verts}
+    n = float(len(pts))
+    c = [sum(p[k] for p in pts.values()) / n for k in range(3)]
+    lo = [min(p[k] for p in pts.values()) for k in range(3)]
+    hi = [max(p[k] for p in pts.values()) for k in range(3)]
+    vol6 = 0.0
+    for f in faces:
+        ring = [(p[0] - c[0], p[1] - c[1], p[2] - c[2]) for p in (pts[v.index] for v in f.verts)]
+        ax, ay, az = ring[0]
+        for (bx, by, bz), (qx, qy, qz) in zip(ring[1:-1], ring[2:]):
+            vol6 += ax * (by * qz - bz * qy) + ay * (bz * qx - bx * qz) + az * (bx * qy - by * qx)
+    return vol6, (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2])
+
+
 def _join_pairs(bm, max_deg=10.0):
     """Join triangle pairs back into quads where the two lie within max_deg of one plane: undoes an applied
     Triangulate for counting (10 deg also rejoins a bevel's curved corner quads; measured on 1-3 segment bevels, the
@@ -153,9 +174,10 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
                         seen.add(g.index)
                         stack.append(g)
         islands += 1
-        if all(len(e.link_faces) == 2 for g in isl for e in g.edges) and \
-                sum(g.calc_area() * g.normal.dot(g.calc_center_median()) for g in isl) < -1e-9:
-            inverted += 1
+        if all(len(e.link_faces) == 2 for g in isl for e in g.edges):
+            vol6, box = _signed_volume6(isl)
+            if box > 0.0 and vol6 < -6.0 * INVERTED_REL_VOLUME * box:
+                inverted += 1
     bad_quads = 0
     for f in bm.faces:
         if len(f.verts) != 4:

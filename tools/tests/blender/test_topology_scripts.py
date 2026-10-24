@@ -1,7 +1,8 @@
 """Blender-hosted tests for blender-mesh-topology's scripts: topology_audit (modifiers applied, slivers on flat faces,
-poles of a reduction band and of a triangle fan, flipped faces and a coarse-to-fine band built with its runs the wrong
-way round), the hard-surface checks against references/hard-surface.md (the big-faces-flat figure per route and on
-wide chamfers, a column and an architrave, hard_surface.py's Smooth by Angle and hand-off functions with their
+poles of a reduction band and of a triangle fan, flipped faces, inverted islands on small shells far from the origin,
+and a coarse-to-fine band built with its runs the wrong way round), the hard-surface checks against
+references/hard-surface.md (the big-faces-flat figure per route and on wide chamfers, a column and an architrave,
+hard_surface.py's Smooth by Angle and hand-off functions with their
 refusals, audit_stack with the Triangulate live, off, applied or missing, routes from enabled modifiers only, a late
 Smooth by Angle, flat shading, and normals_snapshot across UV work and scale), grid_topology in bmesh
 (PointCache.weld, flat_fill, step_reduce), quad_remesh's patch_input, weld_layout and mirror_half (and a real engine
@@ -139,6 +140,33 @@ def test_flipped_faces_are_a_problem():
           "clean cube: %s" % AUDIT["problems"](r_good))
     check(r_bad["flipped_edges"] == 4, "one flipped quad: %d flipped edges, want 4" % r_bad["flipped_edges"])
     check("flipped_edges" in AUDIT["problems"](r_bad), "flipped face not in problems()")
+
+
+def test_inverted_islands_on_small_shells_far_from_the_origin():
+    """Thin closed tubes (2 cm long, 1 mm across) about 5 m from the mesh origin: summed in float32 about the origin
+    their signed volumes were noise, and 7 of 280 good tubes read inverted (8 flipped ones did not)."""
+    import random
+    from mathutils import Matrix
+    fresh()
+    rng = random.Random(3)
+    bm = bmesh.new()
+    for _ in range(280):
+        axis = Vector((rng.random(), rng.random(), rng.random())).normalized()
+        at = Vector((rng.uniform(-1, 1), rng.uniform(-1, 1), rng.uniform(-1, 1))).normalized() * rng.uniform(4.5, 5.5)
+        m = Matrix.Translation(at) @ Matrix.Rotation(rng.uniform(0.0, 6.28), 4, axis)
+        bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=True, segments=9, radius1=0.0005, radius2=0.0004,
+                              depth=0.02, matrix=m)
+    bmesh.ops.create_cube(bm, size=0.02, matrix=Matrix.Translation((5.0, -4.0, 3.0)))
+    ob = object_from_bmesh("Petioles", bm)
+    r = AUDIT["audit"](ob)
+    check(r["islands"] == 281 and r["inverted_islands"] == 0,
+          "%d of %d outward shells read inverted" % (r["inverted_islands"], r["islands"]))
+    for p in ob.data.polygons:
+        p.flip()
+    ob.data.update()
+    r = AUDIT["audit"](ob)
+    check(r["inverted_islands"] == 281, "%d of 281 flipped shells read inverted" % r["inverted_islands"])
+    check("inverted_islands" in AUDIT["problems"](r), "inverted shells not in problems()")
 
 
 def test_second_band_on_a_ring_needs_its_runs_reversed():
@@ -926,7 +954,8 @@ def test_review_render_headless_wire_follows_modifiers():
 
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
-           test_second_band_on_a_ring_needs_its_runs_reversed, test_poles_count_irregular_vertices_next_to_triangles,
+           test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
+           test_poles_count_irregular_vertices_next_to_triangles,
            test_big_faces_flat_check_and_the_fold_rule_per_route, test_flat_check_passes_wide_single_segment_chamfers,
            test_smooth_by_angle_function_touches_only_its_piece, test_audit_stack_judges_a_stack_triangulated_piece,
            test_audit_stack_without_a_live_triangulate, test_audit_stack_route_follows_the_enabled_modifiers,
