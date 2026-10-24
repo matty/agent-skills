@@ -6,6 +6,7 @@ Run from the repo root:  python -B -m unittest discover -s tools/tests -p "test_
 
 import importlib.util
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -302,16 +303,38 @@ class SpecChecks(unittest.TestCase):
         _, ctx = run(spec)
         self.assertAlmostEqual(ctx["side"]["INT_Wall_2x3_A"], 2 * ctx["side"]["INT_Door_2x3_A"], places=6)
 
-    def test_bakery_gets_a_note_to_replan(self):
-        # the lightmap check plans with Progressive's footprint: under Bakery a NOTE points at the Bakery planner
+    def test_bakery_plans_with_its_own_footprint_and_cost(self):
+        # Bakery (ftBuildGraphics.cs, read 2026-10-24, issue #10): a rect of side texels_per_m x sqrt(2 x A x scale);
+        # the footprint takes the Default packer's 3-texel inset off each side; the rect costs 2 x A x scale x
+        # texels_per_m^2 for square UV2 bounds (twice Progressive's at scale 1, linear in the scale), each LOD at its
+        # own area
+        size = (2, 0.2, 3)                                                  # a 14 m2 box
+        self.assertAlmostEqual(SV.box_cost(size, 60, 1, "bakery"), 2 * SV.box_cost(size, 60), places=6)
+        self.assertAlmostEqual(SV.box_cost(size, 60, 4, "bakery"), 4 * SV.box_cost(size, 60, 1, "bakery"), places=6)
+        self.assertAlmostEqual(SV.footprint_px(size, 60, 1, "bakery"), (60 * math.sqrt(28) - 6) / math.sqrt(0.85),
+                               places=6)
+        self.assertAlmostEqual(SV.lod_factor({"lods": 2}, "bakery"), 3.0)
+        self.assertAlmostEqual(SV.lod_factor({"lods": 2, "lod_lightmap": False}, "bakery"), 1.0)
         spec = study_spec()
-        self.assertFalse([m for m in messages(run(spec)[0], "NOTE") if "lighting.baker is bakery" in m])
+        f, before = run(spec)
+        self.assertEqual(before["baker"], "progressive")
+        self.assertFalse([m for m in messages(f, "NOTE") if "lighting.baker is bakery" in m])
         spec["lighting"]["baker"] = "bakery"
-        f, _ = run(spec)
+        f, ctx = run(spec)
+        self.assertEqual(ctx["baker"], "bakery")
+        self.assertAlmostEqual(ctx["need"], 2 * before["need"], places=3)   # scale 1, no LODs, nothing probe-lit
+        self.assertAlmostEqual(ctx["side"]["INT_Wall_2x3_A"], SV.footprint_px(size, 50, 1, "bakery"), places=6)
         notes = [m for m in messages(f, "NOTE") if "lighting.baker is bakery" in m]
         self.assertEqual(len(notes), 1, notes)
+        self.assertIn("not yet measured in a bake", notes[0])
         self.assertIn("--lightmapper bakery", notes[0])
-        self.assertEqual(f.warnings, 0, f.items)                         # a note: the clean spec stays clean
+        self.assertEqual(f.warnings, 0, f.items)                         # the clean spec stays clean
+        lines = SV.footprint_report(ctx)
+        self.assertTrue(lines[0].startswith("Lightmap fill at 50 texels/m (Bakery's Texels Per Unit)"), lines[0])
+        self.assertTrue(any(ln.startswith("cost = 2 x A x lightmap_scale x texels_per_m^2") for ln in lines), lines)
+        spec["pieces"][0]["lods"] = 2                                     # the seven walls, LOD1 and LOD2 lightmapped
+        _, lods = run(spec)
+        self.assertAlmostEqual(lods["need"] - ctx["need"], 7 * 2 * SV.box_cost(size, 50, 1, "bakery"), places=3)
 
     def test_lightmap_fill_thresholds(self):
         # Canon: on box cost, warn above 0.65 of the maps' area (below every spill measured at Lightmap Padding 2)

@@ -141,6 +141,14 @@ their own atlas space at texel scale 0.5^n (LOD1 0.5, LOD2 0.25), so each costs 
 them from the piece's `lods` (LOD1 and LOD2 add about 31%), unless `lod_lightmap: false` makes LOD1+ probe-lit
 (Receive Global Illumination: Light Probes), which takes them out of the atlas.
 
+With `lighting.baker: bakery` it plans with Bakery's sizing instead, read from Bakery's scripts (`ftBuildGraphics.cs`
+as installed in a Unity 2022.3.22f1 project, 2026-10-24; not yet measured in a bake). A renderer's rect has side
+`L = texels_per_m x sqrt(2 x A x Scale In Lightmap)`: Scale In Lightmap acts on the area, so a linear factor s needs
+s^2. Its footprint is `(L - 6) / sqrt(b)`, because the Default atlas packer insets each rect 3 texels. It costs
+`L^2 = 2 x A x Scale In Lightmap x texels_per_m^2` px^2 for square UV2 bounds, twice Unity's at scale 1. Each
+lightmapped LOD costs its own area, with no 0.5^n. Oblong UV2 bounds cost `L^2 x` their aspect, which nothing shows
+before UV2 exists. The thresholds below were measured with Unity's packer and are assumed for Bakery's.
+
 It sums cost x copies x lighting states, the copies being the placements in zones and inside placed assemblies
 (`uses` counts) and the lighting states the zone's `lighting_states`, and compares it with `max_px^2 x count`: a
 warning above 0.65 of that area (plan to stay under it), an error above 0.80, where a spill to another map is likely.

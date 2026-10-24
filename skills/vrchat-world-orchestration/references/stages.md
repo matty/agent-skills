@@ -260,7 +260,8 @@ from the command line) to self-check before reporting.
   unless its zone has lighting states; every other piece, `ZONE` shells included, stays lightmapped whatever its size
   (the validator only notes it).
 - Brief: load `uv-unwrapping`; also `rizomuv-uv-pipeline` when RizomUV is installed.
-- QA: U1-U6 (U4 checks the gaps at the UV2's measured bounding-box share).
+- QA: U1-U6 (U4 checks the gaps at the UV2's measured bounding-box share, with `lighting.baker` passed to
+  `qa_measure` as `--lightmapper`; under Bakery it also gates each mesh's effective lightmap density).
 
 ## 7 - Texturing (texture artist)
 

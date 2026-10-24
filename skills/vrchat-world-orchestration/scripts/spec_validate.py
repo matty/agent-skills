@@ -38,8 +38,11 @@ What it checks:
     texels_per_m x sqrt(area / b) x lightmap_scale px per UV unit with b = 0.85 (the UV2 chart box share, planning
     estimate), sets its UV2 gaps and the 64 px rule: under 64 px a Free PROP or FOL piece (PROBE_LIT_FAMILIES) counts
     as probe-lit (left out, and warned) unless its zone has lighting states; any other piece still counts and gets a
-    NOTE. --footprints prints each piece's cost, footprint, copies and the fill, for the lighting brief; it plans the
-    fill only (stage 6 sizes UV2 gaps from each modelled mesh's real area);
+    NOTE. With lighting.baker: bakery the footprint and cost are Bakery's (read from its scripts, not yet measured
+    in a bake): a rect of side texels_per_m x sqrt(2 x area x lightmap_scale), costing its square for square UV2
+    bounds (twice Progressive's at scale 1, linear in the scale), each lightmapped LOD at its own area, and a footprint
+    of (that side - 6) / sqrt(b). --footprints prints each piece's cost, footprint, copies and the fill, for the
+    lighting brief; it plans the fill only (stage 6 sizes UV2 gaps from each modelled mesh's real area);
   - lighting states: zones naming one `switch` need the same lighting_states; NOTEs for a probe-lit piece in a zone
     with them (it keeps one state), and for a wall, facade or openings such a zone shares with a zone on another
     switch (or none) on the same storey (a switch changes the light in its zones only);
@@ -115,6 +118,13 @@ LIGHTMAP_MAX = 0.80          # error above: a spill to another map is likely. At
                              # and equal full-tile squares only at 0.97; a larger padding lowers every spill
 LOD_COST = 0.25              # LODn gets its own atlas space at texel scale 0.5^n, so it costs 0.25^n of its area
                              # (Unity 2022.3.22f1, measured 2026-10-17: scale 0.995 / 0.492 / 0.250 for LOD0-2)
+BAKERY_AREA_FACTOR = 2.0     # lighting.baker bakery (Bakery's ftBuildGraphics.cs as installed in a Unity 2022.3.22f1
+BAKERY_INSET_TEXELS = 3      # project, read 2026-10-24; not measured in a bake): a renderer's rect has side
+                             # texels_per_m x sqrt(2 x A x Scale In Lightmap) on its UV2 bounds' short side and costs
+                             # side^2 x the bounds' aspect (1 to plan), each LOD at its own area with no LOD factor;
+                             # the Default atlas packer insets the rect 3 texels on every side
+COST_FORMULA = {"progressive": "(texels_per_m x lightmap_scale)^2 x area",
+                "bakery": "2 x area x lightmap_scale x texels_per_m^2 (Bakery, square UV2 bounds)"}
 MIN_FOOTPRINT_PX = 64        # a Free PROP or FOL piece under it is probe-lit (Receive Global Illumination: Light
                              # Probes) unless its zone has lighting states; any other piece under it only gets a NOTE
                              # (it stays lightmapped)
@@ -198,17 +208,30 @@ def box_area(size):
     return 2 * (x * y + y * z + x * z)
 
 
-def footprint_px(size, texels_per_m, scale=1.0):
-    """Side of the square Unity gives a renderer in its lightmap, for planning: texels_per_m x sqrt(area / b) x Scale
-    In Lightmap with b = 0.85, the bounding box's surface standing in for the mesh's surface area."""
+def footprint_px(size, texels_per_m, scale=1.0, baker="progressive"):
+    """Side of the square a renderer gets in its lightmap per UV unit, for planning, the bounding box's surface standing
+    in for the mesh's surface area A. Progressive: texels_per_m x sqrt(A / b) x Scale In Lightmap with b = 0.85.
+    Bakery: (texels_per_m x sqrt(2 x A x Scale In Lightmap) - 6) / sqrt(b), its rect less the Default packer's inset
+    over square UV2 bounds of that share."""
+    if baker == "bakery":
+        side = texels_per_m * math.sqrt(BAKERY_AREA_FACTOR * box_area(size) * scale)
+        return max(side - 2.0 * BAKERY_INSET_TEXELS, 0.0) / math.sqrt(LIGHTMAP_COVERAGE)
     return texels_per_m * math.sqrt(box_area(size) / LIGHTMAP_COVERAGE) * scale
 
 
-def box_cost(size, texels_per_m, scale=1.0):
-    """Atlas cost of one renderer in px^2: Unity packs each renderer's UV2 chart box, whose area is (texels_per_m x
-    Scale In Lightmap)^2 x A whatever the UV2 layout (Unity 2022.3.22f1, measured 2026-10-17: 24,002 against 24,000
-    px^2). The bounding box's surface stands in for A when planning."""
+def box_cost(size, texels_per_m, scale=1.0, baker="progressive"):
+    """Atlas cost of one renderer in px^2, the bounding box's surface standing in for A when planning. Progressive:
+    Unity packs each renderer's UV2 chart box, whose area is (texels_per_m x Scale In Lightmap)^2 x A whatever the UV2
+    layout (Unity 2022.3.22f1, measured 2026-10-17: 24,002 against 24,000 px^2). Bakery: its rect, 2 x A x Scale In
+    Lightmap x texels_per_m^2 for square UV2 bounds (oblong bounds cost x their aspect)."""
+    if baker == "bakery":
+        return BAKERY_AREA_FACTOR * box_area(size) * scale * texels_per_m ** 2
     return (texels_per_m * scale) ** 2 * box_area(size)
+
+
+def lod_side(level, baker="progressive"):
+    """LODn's lightmap texel scale over LOD0's: 0.5^n under Progressive; Bakery sizes each LOD by its own area."""
+    return 1.0 if baker == "bakery" else 0.5 ** level
 
 
 def lod_levels(pc):
@@ -221,10 +244,10 @@ def lod_levels(pc):
     return list(range(lods + 1))
 
 
-def lod_factor(pc):
+def lod_factor(pc, baker="progressive"):
     """A piece's atlas cost over its LOD0's: each lightmapped LODn adds LOD_COST^n of an LOD0 of similar area (LOD1
-    and LOD2: 1.3125)."""
-    return sum(LOD_COST ** n for n in lod_levels(pc))
+    and LOD2: 1.3125); under Bakery each adds a whole LOD0 (3)."""
+    return sum(1.0 if baker == "bakery" else LOD_COST ** n for n in lod_levels(pc))
 
 
 def uses_counts(asm):
@@ -1282,9 +1305,9 @@ def check_spec(spec, f, root=None):
     return ctx
 
 
-def lightmap_footprints(pieces, module, families, tpm):
+def lightmap_footprints(pieces, module, families, tpm, baker="progressive"):
     """{piece: footprint side in lightmap pixels} for each lightmapped piece with a known size, at tpm texels per metre
-    (grid pieces from their Size token, Free pieces and one-number Sizes from `size`)."""
+    (grid pieces from their Size token, Free pieces and one-number Sizes from `size`), the baker's footprint."""
     out = {}
     for name, pc in pieces.items():
         if pc.get("lightmap") is False:
@@ -1293,7 +1316,7 @@ def lightmap_footprints(pieces, module, families, tpm):
         if not size:
             continue
         scale = pc.get("lightmap_scale", 1)
-        out[name] = footprint_px(size, tpm, scale if number(scale) and scale > 0 else 1)
+        out[name] = footprint_px(size, tpm, scale if number(scale) and scale > 0 else 1, baker)
     return out
 
 
@@ -1346,22 +1369,25 @@ def check_lightmap(spec, pieces, asms, module, families, f):
                 "metre), got %r: the lightmap check waits for it" % (tpm,))
         return {}
     lighting = spec.get("lighting") if isinstance(spec.get("lighting"), dict) else {}
-    if lighting.get("baker") == "bakery":
-        f.note("lighting.baker is bakery: this lightmap check plans with Unity Progressive's footprint and cost; Bakery "
-               "sizes a renderer by its area, about 2 x A x lightmap_scale x texels_per_m^2 px^2 (twice Progressive's "
-               "at scale 1, each LOD at its own area), so re-plan with vrchat-lighting-and-baking's lightmap_budget.py "
-               "--lightmapper bakery and pack UV2s with lightmapper='bakery' at stage 6")
+    baker = "bakery" if lighting.get("baker") == "bakery" else "progressive"
+    if baker == "bakery":
+        f.note("lighting.baker is bakery: this lightmap check plans with Bakery's footprint and cost as read from its "
+               "scripts, not yet measured in a bake: 2 x A x lightmap_scale x texels_per_m^2 px^2 per renderer for "
+               "square UV2 bounds, each lightmapped LOD at its own area; the fill thresholds were measured with "
+               "Unity's packer and are assumed for Bakery's. Oblong UV2 bounds cost x their aspect: re-plan those "
+               "with vrchat-lighting-and-baking's lightmap_budget.py --lightmapper bakery, and pack UV2s with "
+               "lightmapper='bakery' at stage 6")
     small = lm.get("min_footprint_px", MIN_FOOTPRINT_PX)
     if not number(small) or small <= 0:
         f.error("budgets.lightmap.min_footprint_px must be a positive number of pixels (default %d), got %r"
                 % (MIN_FOOTPRINT_PX, small))
         small = MIN_FOOTPRINT_PX
-    side = lightmap_footprints(pieces, module, families, tpm)
+    side = lightmap_footprints(pieces, module, families, tpm, baker)
     cost = {}                                          # px^2 per placed instance, its lightmapped LODs included
     for n in side:
         scale = pieces[n].get("lightmap_scale", 1)
         cost[n] = (box_cost(piece_size(n, pieces[n], module, families), tpm, scale if number(scale) and scale > 0
-                            else 1) * lod_factor(pieces[n]))
+                            else 1, baker) * lod_factor(pieces[n], baker))
     counts, counted, switched = {}, {}, set()
     need = 0.0
     for _, n, k, states in placement_rows(spec, pieces, asms):
@@ -1416,29 +1442,30 @@ def check_lightmap(spec, pieces, asms, module, families, f):
     for n in sorted(counted):
         scale = pieces[n].get("lightmap_scale", 1)
         side0 = math.sqrt(box_cost(piece_size(n, pieces[n], module, families), tpm,
-                                   scale if number(scale) and scale > 0 else 1))
+                                   scale if number(scale) and scale > 0 else 1, baker))
         for level in lod_levels(pieces[n]):
-            if max_px and side0 * 0.5 ** level > max_px / 2.0:
+            if max_px and side0 * lod_side(level, baker) > max_px / 2.0:
                 big += counted[n]
-                big_names.append("%s%s %.0f px x %d" % (n, " LOD%d" % level if level else "", side0 * 0.5 ** level,
-                                                        counted[n]))
+                big_names.append("%s%s %.0f px x %d" % (n, " LOD%d" % level if level else "",
+                                                        side0 * lod_side(level, baker), counted[n]))
     if big > maps:
         f.warn("lightmap chart boxes: %d are over half the %s px map side (%s): two near-square boxes that size cannot "
                "share a map, so they need %d maps, not %s; lower texels_per_m or lightmap_scale, split the piece, or "
                "add maps (budgets.lightmap.count)" % (big, max_px, ", ".join(big_names), big, maps))
     if area and fill > LIGHTMAP_MAX:
-        f.error("lightmaps: the placed lightmapped pieces need about %d px^2 at %g texels/m ((texels_per_m x "
-                "lightmap_scale)^2 x area per renderer, lightmapped LODs included, x copies x lighting states), %.0f%% "
+        f.error("lightmaps: the placed lightmapped pieces need about %d px^2 at %g texels/m (%s per renderer, "
+                "lightmapped LODs included, x copies x lighting states), %.0f%% "
                 "of %s x %s px (above %d%% a spill to another map is likely). Before stage 6: lower texels_per_m or "
                 "add a map "
                 "(budgets.lightmap.count). Once UV2 is packed: add a map, or make small Free props or LOD1+ "
                 "(lod_lightmap: false) probe-lit; never lower texels_per_m (the packed UV2 gaps were sized for it)"
-                % (need, tpm, 100 * fill, maps, max_px, 100 * LIGHTMAP_MAX))
+                % (need, tpm, COST_FORMULA[baker], 100 * fill, maps, max_px, 100 * LIGHTMAP_MAX))
     elif area and fill > LIGHTMAP_PLAN:
         f.warn("lightmaps: the placed lightmapped pieces fill about %.0f%% of %s x %s px at %g texels/m (plan for "
                "%d%% or less; kit-like sets spilled to another map at 79-90%% with Lightmap Padding 2)"
                % (100 * fill, maps, max_px, tpm, 100 * LIGHTMAP_PLAN))
-    return {"texels_per_m": tpm, "side": side, "cost": cost, "counts": counts, "counted": counted, "need": need,
+    return {"texels_per_m": tpm, "baker": baker, "side": side, "cost": cost, "counts": counts, "counted": counted,
+            "need": need,
             "area": area, "fill": fill, "maps": maps, "max_px": max_px, "small": small, "big_boxes": big}
 
 
@@ -1453,13 +1480,22 @@ def footprint_report(ctx):
     lm, side, counts, counted = ctx["lightmap"], ctx["side"], ctx["counts"], ctx["counted"]
     cost = ctx.get("cost", {})
     small = ctx.get("small", MIN_FOOTPRINT_PX)
-    lines = ["Lightmap fill at %g texels/m (Unity's Lightmap Resolution), budget %s x %s px. This table plans the "
-             "lightmap fill only." % (ctx["texels_per_m"], ctx["maps"], lm.get("max_px")),
+    bakery = ctx.get("baker") == "bakery"
+    lines = ["Lightmap fill at %g texels/m (%s), budget %s x %s px. This table plans the lightmap fill only."
+             % (ctx["texels_per_m"], "Bakery's Texels Per Unit" if bakery else "Unity's Lightmap Resolution",
+                ctx["maps"], lm.get("max_px")),
+             "cost = 2 x A x lightmap_scale x texels_per_m^2 px^2 per renderer, A = the bounding box's surface: "
+             "Bakery's rect for square UV2 bounds (oblong bounds cost x their aspect), whatever the charts fill; "
+             "lightmapped LODs add 1 each, each at its own area (lods)" if bakery else
              "cost = (texels_per_m x lightmap_scale)^2 x A px^2 per renderer, A = the bounding box's surface: Unity "
              "packs each renderer's UV2 chart box, whatever its UV2 layout; lightmapped LODs add 0.25^n each (lods)",
-             "footprint = texels_per_m x sqrt(A / b) x lightmap_scale px per UV unit, b = %.2f (UV2 chart box share, "
-             "planning estimate): it sets the UV2 gaps, which stage 6 sizes from each modelled mesh's real area: "
-             "--map = floor(texels_per_m x sqrt(A_mesh) x lightmap_scale x 0.5^n for LODn), gap = 2 / --map"
+             ("footprint = (texels_per_m x sqrt(2 x A x lightmap_scale) - 6) / sqrt(b) px per UV unit, b = %.2f (UV2 "
+              "bounds share, square, planning estimate): it sets the UV2 gaps, which stage 6 sizes from each "
+              "modelled mesh's real area: --map = floor(texels_per_m x sqrt(2 x A_mesh x lightmap_scale) - 6), no LOD "
+              "factor, gap = 2 / --map" if bakery else
+              "footprint = texels_per_m x sqrt(A / b) x lightmap_scale px per UV unit, b = %.2f (UV2 chart box share, "
+              "planning estimate): it sets the UV2 gaps, which stage 6 sizes from each modelled mesh's real area: "
+              "--map = floor(texels_per_m x sqrt(A_mesh) x lightmap_scale x 0.5^n for LODn), gap = 2 / --map")
              % LIGHTMAP_COVERAGE,
              "copies = placements x the zone's lighting_states; px^2 = cost x lods x copies",
              "%-28s %-16s %8s %6s %5s %10s %7s %7s %11s" % ("piece", "size m", "box m2", "scale", "lods", "footprint",
@@ -1488,7 +1524,8 @@ def footprint_report(ctx):
         if pc.get("lod_lightmap") is False and lod_factor(dict(pc, lod_lightmap=True)) > 1:
             note += "  LOD1+ probe-lit (lod_lightmap: false): T-LIGHT sets their Receive GI to Light Probes"
         lines.append("%-28s %-16s %8.2f %6.2f %5.2f %10.1f %7d %7d %11s%s"
-                     % (name, " x ".join("%g" % v for v in size), box_area(size), scale, lod_factor(pc), px, n, copies,
+                     % (name, " x ".join("%g" % v for v in size), box_area(size), scale,
+                        lod_factor(pc, ctx.get("baker", "progressive")), px, n, copies,
                         "{:,}".format(int(round(cost.get(name, 0) * copies))) if copies else "-", note))
     if ctx["area"]:
         lines.append("total %s px^2 of %s (%s x %s^2): %.1f%% fill; plan <= %d%%, error above %d%%"
