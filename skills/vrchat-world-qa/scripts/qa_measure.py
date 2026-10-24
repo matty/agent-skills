@@ -17,6 +17,7 @@ it, or without its JSON, did not finish.
     blender -b --factory-startup KIT_Arch_Exterior.blend --python-exit-code 1 --python qa_measure.py -- --module 1.0
             --lightmap-texels 20 --lightmap-scale '{"EXT_Trim_2_A": 0.5}' --probe-lit "PROP_*_Free_*"
             --texel-map 1024 --json uv.json         # UV2 charts, overlaps and gaps in texels; UV0 density
+            [--lightmapper bakery]                  # the spec's lighting.baker: Bakery's footprint and density gate
     blender -b --factory-startup MASTER.blend --python-exit-code 1 --python qa_measure.py -- --module 1.0 --render top
             --center 15 13 --extent 30 27 --clip 2 --png plan.png --overlay world/diagrams/plan_square.svg
     blender -b --factory-startup MASTER.blend --python-exit-code 1 --python qa_measure.py -- --module 1.0 --render back
@@ -55,15 +56,15 @@ From a live Blender (Blender MCP execute_blender_code), without saving:
     ns["problems"](rep, piece_tris={"EXT": 800}, expect_status="modelled")
     ns["pbr"](["T_EXT_Brick_BaseColor.png", "T_EXT_Brick_Normal.png"], map_px=1024)
 
-Report fields. File: file, role, layout (single or null), layout_problems, module, sub_module, libraries [{path,
-relative, found}], unnamed_collections,
+Report fields. File: file, role, layout (single or null), layout_problems, module, sub_module, lightmapper,
+libraries [{path, relative, found}], unnamed_collections,
 local_assemblies, local_assembly_offsets {name: [x, y, z]}, images [{image, filepath, relative, packed, missing,
 size, channels, colorspace, alpha_mode, materials}], linked_pieces [{piece, library, kit_status, tris,
 instance_offset}], placements [{object, asset, kind (grid, free, asm, other), linked, id, pos, rot_z, rot_xy_ok,
 scale_ok, on_grid, right_angle, assembly (the ASM_ collection holding it in a single MASTER, else null: compare only
 those with null against the zones' placements)}], appended, shadowing_linked, ref_meshes, stray_meshes, problems, notes (advisory:
 LOD0 footprints under 64 px, where only a Free PROP or FOL piece is told to become probe-lit; UV2 box fill under 0.5
-at a footprint of 64 px or more),
+at a footprint of 64 px or more, unless Bakery's density gate already makes it a PROBLEM),
 linked_assembly_offsets {name: [x, y, z]}; optional fbx_folded_materials, placement_changes (matched by placement id
 first; an id that vanished or changed is listed), tile_seam, image_stats and renders [{image, size, mean, min, max,
 luma_p1, luma_p50, luma_p99, clipped_share, crushed_share, coverage}], pbr (one entry per material from pbr_check.py:
@@ -73,10 +74,14 @@ Per piece (pieces[]): piece, kit_status, instance_offset, transform_issues, lod0
 coplanar_overlaps, coplanar_overlap_examples, bad_materials, bounds_m, extent_modules, size_ok and pivot_ok (grid
 pieces), free_pivot (Free pieces), objects, a dict keyed by object name: {tris, ngons, edges_over_2_faces,
 boundary_edges, loose_verts, loose_edges, islands (connected parts), area_m2, uv_layers, uv {layer: {bounds, area}},
-uv2_bbox_share (the UV2 charts' bounding-box share of the 0-1 tile), uv2_box_fill (the charts' area over that box's),
-uv2_charts, uv2_overlaps (chart pairs), uv2_min_gap_uv, uv2_edge_margin_uv, lightmap_px (with --lightmap-texels:
-TPM x sqrt(area_m2 / uv2_bbox_share, or 0.85 before UV2 exists) x Scale In Lightmap x 0.5^n for a *_LOD<n> mesh) and
-uv2_min_gap_texels, uv2_edge_margin_texels at it, uv0_px_per_m, uv0_px_per_m_range and uv0_texel_cv (with
+uv2_bbox_share (the UV2 charts' bounding-box share of the 0-1 tile), uv2_short_side (that box's short side in UV),
+uv2_box_fill (the charts' area over that box's), uv2_charts, uv2_overlaps (chart pairs), uv2_min_gap_uv,
+uv2_edge_margin_uv, lightmap_px (with --lightmap-texels: TPM x sqrt(area_m2 / uv2_bbox_share, or 0.85 before UV2
+exists) x Scale In Lightmap x 0.5^n for a *_LOD<n> mesh; with --lightmapper bakery, (TPM x sqrt(2 x area_m2 x Scale
+In Lightmap) - 6) / uv2_short_side, sqrt(0.85) before UV2 exists, no LOD factor) and uv2_min_gap_texels,
+uv2_edge_margin_texels at it, effective_texels_per_m (lightmap_px x sqrt(UV2 area / area_m2), the texels per metre
+the surface gets) and, under Bakery, effective_texels_min (0.5 x TPM x min(1, sqrt(Scale In Lightmap)): under it at
+64 px or more is a PROBLEM), uv0_px_per_m, uv0_px_per_m_range and uv0_texel_cv (with
 --texel-map), materials}. Pieces are measured as they export: one in an excluded or viewport-disabled collection, or
 disabled itself, is enabled while it is measured and restored afterwards.
 Deeper checks belong to the specialist skills: UV distortion, padding and texel density (uv-unwrapping), topology
@@ -116,6 +121,12 @@ UV2_LAYOUT_ALL_LODS = True    # the UV2 layout checks (0-1, overlaps, gaps) cove
 LOD_LIGHTMAP_SCALE = 0.5      # the Progressive Lightmapper gives LODn its own atlas space at 0.5^n of LOD0's texel
                               # scale (Unity's GetLightmapLODLevelScale; measured 0.995, 0.492, 0.250 for LOD0-2,
                               # independent of the LOD transition heights, Unity 2022.3.22f1, 2026-10-17)
+LIGHTMAPPERS = ("unity", "bakery")   # whose footprint --lightmap-texels uses; "progressive" is accepted for unity
+BAKERY_AREA_FACTOR = 2.0      # Bakery sizes a renderer by the sum of |cross| over its triangles, 2 x its area, and
+BAKERY_INSET_TEXELS = 3       # its Default atlas packer insets each rect 3 texels (ftBuildGraphics.cs as installed
+                              # in a Unity 2022.3.22f1 project, read 2026-10-24; not measured in a bake)
+EFFECTIVE_DENSITY_MIN = 0.5   # Bakery: a PROBLEM when a mesh of MIN_FOOTPRINT_PX or more gets under this share of the
+                              # texels per metre planned for it (U4; uv-unwrapping's audit applies the same gate)
 TRIM_FAMILY = "TRIM"       # placed on grid.sub_module (--sub-module), as the pipeline's spec validator checks it
 ROLES = ("kit", "asm", "master", "fbx")
 
@@ -138,6 +149,36 @@ def _is_ref(coll):
 
 def _in_ref(ob):
     return any(_is_ref(c) for c in ob.users_collection)
+
+
+def lightmapper_name(name):
+    """unity (also "progressive", the world spec's lighting.baker for it) or bakery; raises ValueError otherwise."""
+    n = str(name or "unity").strip().lower()
+    n = "unity" if n == "progressive" else n
+    if n not in LIGHTMAPPERS:
+        raise ValueError("lightmapper must be unity (or progressive) or bakery, not %r" % (name,))
+    return n
+
+
+def lightmap_footprint(area_m2, texels_per_m, scale=1.0, lod=0, share=None, short_side=None, lightmapper="unity"):
+    """A mesh's lightmap footprint in texels per UV unit (the side its whole 0-1 tile would have). share: its UV2
+    charts' bounding-box share b of the tile, short_side: that box's short side in UV (None before UV2 exists: b =
+    LIGHTMAP_COVERAGE, a square box). Unity: texels_per_m x sqrt(A / b) x Scale In Lightmap x 0.5^lod. Bakery: a rect
+    of side L = texels_per_m x sqrt(2 x A x Scale In Lightmap) on the box's short side, its Default packer's 3-texel
+    inset taken off, (L - 6) / short_side, and no LOD factor (each LOD is sized by its own area)."""
+    if lightmapper_name(lightmapper) == "bakery":
+        side = texels_per_m * math.sqrt(BAKERY_AREA_FACTOR * max(area_m2, 0.0) * max(scale, 0.0))
+        short = short_side or math.sqrt(LIGHTMAP_COVERAGE)
+        return max(side - 2.0 * BAKERY_INSET_TEXELS, 0.0) / short
+    return (texels_per_m * math.sqrt(max(area_m2, 0.0) / (share or LIGHTMAP_COVERAGE)) * scale
+            * LOD_LIGHTMAP_SCALE ** lod)
+
+
+def _density_low(st):
+    """Bakery's effective-density gate (U4): a mesh with a footprint of MIN_FOOTPRINT_PX or more whose UV2 charts get
+    under effective_texels_min texels per metre."""
+    eff, low = st.get("effective_texels_per_m"), st.get("effective_texels_min")
+    return eff is not None and low is not None and (st.get("lightmap_px") or 0) >= MIN_FOOTPRINT_PX and eff < low
 
 
 def _is_lod0_name(name):
@@ -547,8 +588,11 @@ def free_pivot(lo, hi, tol=0.01):
     return None
 
 
-def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=1.0, texel_map=None):
-    """lightmap_scale: Scale In Lightmap, one number or {piece: scale} (the spec's pieces[].lightmap_scale; others 1)."""
+def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=1.0, texel_map=None,
+                  lightmapper="unity"):
+    """lightmap_scale: Scale In Lightmap, one number or {piece: scale} (the spec's pieces[].lightmap_scale; others 1).
+    lightmapper: whose footprint lightmap_px is, unity or bakery (lightmap_footprint)."""
+    lightmapper = lightmapper_name(lightmapper)
     m = NAME_RE.match(coll.name)
     if isinstance(lightmap_scale, dict):
         lightmap_scale = float(lightmap_scale.get(coll.name, 1.0))
@@ -566,19 +610,24 @@ def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=
             layers = list(st["uv"].values())
             if len(layers) >= 2:                       # UV2: its charts' bounding-box share of the 0-1 tile
                 u0, v0, u1, v1 = layers[1]["bounds"]
-                st["uv2_bbox_share"] = round(max(0.0, min(1.0, u1) - max(0.0, u0))
-                                             * max(0.0, min(1.0, v1) - max(0.0, v0)), 4)
+                wu, wv = max(0.0, min(1.0, u1) - max(0.0, u0)), max(0.0, min(1.0, v1) - max(0.0, v0))
+                st["uv2_bbox_share"] = round(wu * wv, 4)
+                st["uv2_short_side"] = round(min(wu, wv), 4)     # Bakery maps it onto its rect's side
                 if st["uv2_bbox_share"] > 0:                 # the charts' area over their box's (uv-unwrapping's)
                     st["uv2_box_fill"] = round(min(1.0, layers[1]["area"] / st["uv2_bbox_share"]), 4)
             if lightmap_texels and not COL_RE.search(ob.name) and st["area_m2"] > 0:   # faces only: no wire helpers
-                share = st.get("uv2_bbox_share") or LIGHTMAP_COVERAGE    # planning estimate before UV2 exists
                 lod = LOD_RE.search(ob.name)
-                lod_scale = LOD_LIGHTMAP_SCALE ** (int(lod.group(1)) if lod else 0)   # LODn: its own space at 0.5^n
-                st["lightmap_px"] = round(lightmap_texels * math.sqrt(st["area_m2"] / share) * lightmap_scale
-                                          * lod_scale, 1)
+                px = lightmap_footprint(st["area_m2"], lightmap_texels, lightmap_scale, int(lod.group(1)) if lod else 0,
+                                        st.get("uv2_bbox_share"), st.get("uv2_short_side"), lightmapper)
+                st["lightmap_px"] = round(px, 1)
                 for k in ("min_gap", "edge_margin"):                     # UV2 distances in texels at the footprint
                     if st.get("uv2_%s_uv" % k) is not None:
                         st["uv2_%s_texels" % k] = round(st["uv2_%s_uv" % k] * st["lightmap_px"], 2)
+                if len(layers) >= 2:      # the texels per metre the surface gets: footprint x sqrt(UV2 area / area)
+                    st["effective_texels_per_m"] = round(px * math.sqrt(layers[1]["area"] / st["area_m2"]), 2)
+                    if lightmapper == "bakery":       # half the density planned: its linear scale sqrt(S), at most 1
+                        st["effective_texels_min"] = round(EFFECTIVE_DENSITY_MIN * lightmap_texels
+                                                           * min(1.0, math.sqrt(lightmap_scale)), 2)
             rep["objects"][ob.name] = st
             faces += f
     rep["lod0_tris"] = sum(rep["objects"][o.name]["tris"] for o in lod0)
@@ -720,15 +769,17 @@ def _evaluated(colls):
 
 
 def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_scale=1.0, sub_module=None,
-            texel_map=None):
-    """Everything qa_measure reports about the open file. sub_module: the grid step for TRIM placements."""
+            texel_map=None, lightmapper="unity"):
+    """Everything qa_measure reports about the open file. sub_module: the grid step for TRIM placements. lightmapper:
+    the spec's lighting.baker, unity ("progressive") or bakery, whose footprint lightmap_px is."""
+    lightmapper = lightmapper_name(lightmapper)
     scene = scene or bpy.context.scene
     role = role or file_role(bpy.data.filepath)
     local = [c for c in bpy.data.collections if c.library is None]
     local_pieces = [c for c in local if NAME_RE.match(c.name)]
     with _evaluated(local_pieces):            # pieces excluded or disabled in the outliner, measured as they export
         dg = bpy.context.evaluated_depsgraph_get()
-        pieces = [measure_piece(c, module, dg, lightmap_texels, lightmap_scale, texel_map)
+        pieces = [measure_piece(c, module, dg, lightmap_texels, lightmap_scale, texel_map, lightmapper)
                   for c in sorted(local_pieces, key=lambda c: c.name)]
     dg = bpy.context.evaluated_depsgraph_get()
     linked_names = {c.name for c in bpy.data.collections if c.library is not None}
@@ -769,6 +820,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
         "layout_problems": layout_problems,
         "module": module,
         "sub_module": sub_module,
+        "lightmapper": lightmapper,
         "libraries": [_library_entry(lib) for lib in bpy.data.libraries],
         "pieces": pieces,
         # local collections holding meshes under a name that is neither a piece nor an assembly (REF aside)
@@ -965,13 +1017,14 @@ def notes(rep, pieces=None, probe_lit=None):
     """Advisory lines, not failures. pieces and probe_lit as in problems(): pieces outside the task, and pieces or LOD
     objects already marked probe-lit, get none.
     - A lightmap footprint under MIN_FOOTPRINT_PX (with --lightmap-texels), judged on LOD0 only: LOD0 decides for the
-      whole piece, and LOD1+ follow it (lightmapped at 0.5^n) unless the spec sets lod_lightmap: false. Only a Free
-      prop (a Free-sized piece of a PROBE_LIT_FAMILIES family) is told to become probe-lit; every other piece, ZONE
-      shells included, stays lightmapped.
+      whole piece, and LOD1+ follow it (lightmapped, at 0.5^n under Unity) unless the spec sets lod_lightmap: false.
+      Only a Free prop (a Free-sized piece of a PROBE_LIT_FAMILIES family) is told to become probe-lit; every other
+      piece, ZONE shells included, stays lightmapped.
     - UV2 charts filling under half their bounding box (uv2_box_fill < 0.5) on a lightmapped mesh whose own footprint
-      (with --lightmap-texels, LODs at 0.5^n) is MIN_FOOTPRINT_PX or more: Unity packs the box, so its empty space
-      costs lightmap texels (U6). Below that the footprint note and the probe-lit advice govern, and small LODs would
-      only make noise."""
+      (with --lightmap-texels) is MIN_FOOTPRINT_PX or more: Unity packs the box and Bakery maps it onto its rect, so
+      its empty space costs lightmap texels (U6). Below that the footprint note and the probe-lit advice govern, and
+      small LODs would only make noise; a mesh under Bakery's effective-density gate gets a PROBLEM line instead."""
+    bakery = rep.get("lightmapper") == "bakery"
     out = []
     for p in rep.get("pieces", []):
         n = p["piece"]
@@ -986,7 +1039,7 @@ def notes(rep, pieces=None, probe_lit=None):
                 continue                                         # one LOD marked probe-lit
             fill, px = st.get("uv2_box_fill"), st.get("lightmap_px")
             if (fill is not None and fill < UV2_BOX_FILL_NOTE and px is not None and px >= MIN_FOOTPRINT_PX
-                    and not COL_RE.search(on)):
+                    and not COL_RE.search(on) and not _density_low(st)):
                 out.append("%s/%s: UV2 charts fill %d%% of their bounding box (< %d%%) at its %s px footprint: the "
                            "empty space costs lightmap texels; pack the charts to fill their box (any aspect ratio)"
                            % (n, on, round(100 * fill), round(100 * UV2_BOX_FILL_NOTE), px))
@@ -998,7 +1051,9 @@ def notes(rep, pieces=None, probe_lit=None):
                     "lighting_states above 1, where it changes with the switch and stays lightmapped in every "
                     "state copy") if prop else (
                     "not a Free prop (PROP or FOL), so it stays lightmapped; raise its lightmap_scale or the world's "
-                    "texels_per_m if it needs more texels")))
+                    "texels_per_m if it needs more texels%s" % (
+                        " (Bakery: Scale In Lightmap acts on the area, so s^2 for a linear factor s)" if bakery
+                        else ""))))
     return out
 
 
@@ -1011,7 +1066,8 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
     piece with lod_lightmap: false); they still need a UV2, but its layout is not checked, and a glob that matches
     nothing is a problem in itself. all_lods: check LOD1+
     layouts too, each at its own footprint (UV2_LAYOUT_ALL_LODS: each LOD has its own atlas space); False checks
-    LOD0 only."""
+    LOD0 only. Measured with lightmapper bakery, a lightmapped mesh at MIN_FOOTPRINT_PX or more whose
+    effective_texels_per_m is under its effective_texels_min is a problem too (U4)."""
     out = []
     role = rep.get("role")
     want = STATUS_ORDER.index(expect_status) if expect_status in STATUS_ORDER else None
@@ -1121,6 +1177,13 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
                 if st.get("uv2_edge_margin_texels") is not None and st["uv2_edge_margin_texels"] < 1.0:
                     out.append("%s/%s: UV2 %s texels from the tile edge at its %s px footprint (< 1)"
                                % (n, on, st["uv2_edge_margin_texels"], st["lightmap_px"]))
+                if _density_low(st):
+                    out.append("%s/%s: effective lightmap density %s texels/m at its %s px footprint, under %s (half "
+                               "the density planned for it): Bakery sizes a renderer by its area and UV2 bounds, not "
+                               "by its charts' area, and these fill %d%% of their box; pack the charts to fill it, or "
+                               "raise Scale In Lightmap and pack again for the larger footprint"
+                               % (n, on, st["effective_texels_per_m"], st["lightmap_px"], st["effective_texels_min"],
+                                  round(100 * (st.get("uv2_box_fill") or 0))))
     for lp in rep.get("linked_pieces", []):
         if not ours(lp["piece"]):
             continue
@@ -1473,9 +1536,13 @@ def _args(argv):
                     "every placement moved, rotated, swapped, added or removed since")
     ap.add_argument("--lightmap-texels", type=float, metavar="TPM", help="report each mesh's lightmap footprint in px: "
                     "TPM x sqrt(area / b) x --lightmap-scale x 0.5^n for a *_LOD<n> mesh, b = its UV2 bounding-box "
-                    "share (%g before UV2 exists)" % LIGHTMAP_COVERAGE)
+                    "share (%g before UV2 exists); with --lightmapper bakery, (TPM x sqrt(2 x area x --lightmap-scale) "
+                    "- %d) / the UV2 box's short side, no LOD factor" % (LIGHTMAP_COVERAGE, 2 * BAKERY_INSET_TEXELS))
     ap.add_argument("--lightmap-scale", default="1", help="Scale In Lightmap for --lightmap-texels: one number, or "
                     'JSON {piece: scale} from the spec\'s pieces[].lightmap_scale (others 1), e.g. {"EXT_Trim_2_A": 0.5}')
+    ap.add_argument("--lightmapper", default="unity", choices=("unity", "progressive", "bakery"), help="the spec's "
+                    "lighting.baker: whose footprint --lightmap-texels uses (progressive is unity); bakery also gates "
+                    "each mesh's effective texels per metre (default unity)")
     ap.add_argument("--texel-map", type=int, metavar="PX", help="the family's map_px: report each mesh's UV0 texel "
                     "density in px/m")
     ap.add_argument("--import-fbx", nargs="+", metavar="FBX", help="import these FBX files first (E2-E4), each "
@@ -1599,7 +1666,8 @@ def _main():
     probs = []
     if bpy.data.filepath or a.import_fbx:
         rep = measure(a.module, role=a.role or ("fbx" if a.import_fbx else None), lightmap_texels=a.lightmap_texels,
-                      lightmap_scale=a.lightmap_scale, sub_module=a.sub_module, texel_map=a.texel_map)
+                      lightmap_scale=a.lightmap_scale, sub_module=a.sub_module, texel_map=a.texel_map,
+                      lightmapper=a.lightmapper)
         if folded:
             rep["fbx_folded_materials"] = [{"copy": c, "base": b} for c, b in folded]
         if a.compare_placements:

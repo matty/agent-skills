@@ -172,7 +172,7 @@ def build(d):
          "dark": d / "dark.png", "seamless": d / "seamless.png", "seamed": d / "seamed.png", "svg": d / "plan.svg",
          "kit_tex": d / "KIT_Tex.blend", "fbx_tex": d / "fbx_tex", "kit_half": d / "KIT_Half.blend",
          "asm_shift": d / "ASM_Shift_A.blend", "kit_lit": d / "KIT_Lit.blend", "kit_dense": d / "KIT_Dense.blend",
-         "kit_hidden": d / "KIT_Hidden.blend", "rename": d / "rename"}
+         "kit_hidden": d / "KIT_Hidden.blend", "rename": d / "rename", "kit_bakery": d / "KIT_Bakery.blend"}
     f["fbx_dir"].mkdir()
 
     reset()
@@ -353,6 +353,29 @@ def build(d):
     piece("TST_Fill_2x2_A", [("TST_Fill_2x2_A_LOD%d" % n, two_charts("fill%d" % n, (0.05, 0.185), (0.815, 0.95)))
                              for n in (0, 2)], "uv")
     save(f["kit_lit"])                                         # TST_Sparse: two thin charts fill 22% of their box
+
+    # KIT_Bakery.blend, measured at 20 texels/m: Bakery's footprint against Unity's (issue #10)
+    reset()
+    # a 0.015 UV gap at Scale In Lightmap 4: 2.7 texels at Unity's 177.8 px, 1.8 at Bakery's 119.0
+    piece("TST_Bgap_2x2_A", [("TST_Bgap_2x2_A", two_charts("bgap", (0.05, 0.49), (0.505, 0.95)))], "uv")
+    # LOD0 and LOD1 of the same area: Bakery sizes each by its own area, Unity halves LOD1
+    piece("TST_Blod_2x2_A", [("TST_Blod_2x2_A_LOD%d" % n, two_charts("blod%d" % n, (0.05, 0.4), (0.6, 0.95)))
+                             for n in (0, 1)], "uv")
+    strip = mesh("bstrip", [(0, 0, 0), (4, 0, 0), (4, 1, 0), (0, 1, 0)], (), [(0, 1, 2, 3)])
+    strip.uv_layers.new(name="UVMap")
+    uv2 = strip.uv_layers.new(name="UV2")
+    for li, uv in zip(strip.polygons[0].loop_indices, [(0.4, 0.05), (0.6, 0.05), (0.6, 0.95), (0.4, 0.95)]):
+        uv2.uv[li].vector = uv
+    piece("TST_Bstrip_4x1_A", [("TST_Bstrip_4x1_A", strip)], "uv")         # UV2 bounds 0.2 x 0.9: short side 0.2
+    # a 4 x 4 m panel of 64 charts packed small (fill 0.08): 7.5 effective texels/m under Bakery, under its 10
+    panel = mesh("bmany", [(0.5 * i, 0.5 * j, 0) for j in range(9) for i in range(9)], (),
+                 [(i + 9 * j, i + 1 + 9 * j, i + 10 + 9 * j, i + 9 + 9 * j) for j in range(8) for i in range(8)])
+    grid_uvs(panel, m=0.042, lo=0.05, hi=0.95)
+    piece("TST_Bmany_4x4_A", [("TST_Bmany_4x4_A", panel)], "uv")
+    flat = mesh("bnone", [(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0)], (), [(0, 1, 2, 3)])
+    flat.uv_layers.new(name="UVMap")
+    piece("TST_Bnone_2x2_A", [("TST_Bnone_2x2_A", flat)], "modelled")    # no UV2 yet: the planning estimate
+    save(f["kit_bakery"])
 
     # KIT_Hidden.blend: the half arch with a default Mirror (its UV2 halves stack) in the five states a kit author
     # isolates pieces with; as saved, the view layer evaluates only the first two
@@ -548,6 +571,20 @@ class Runs:
     def _lit_split(self):
         return self._ok(self.f["kit_lit"], ["--lightmap-texels", "20", "--pieces", "PROP_*,FOL_*",
                                             "--probe-lit", "PROP_Cup_Free_A,NOPE_*"], "lit_split")
+
+    def bakery_run(self, name, lightmapper, *extra):
+        return self._ok(self.f["kit_bakery"], ["--expect-status", "uv", "--lightmap-texels", "20", "--lightmap-scale",
+                                               '{"TST_Bgap_2x2_A": 4}', "--lightmapper", lightmapper] + list(extra),
+                        name)
+
+    def _bakery(self):
+        return self.bakery_run("bakery", "bakery")
+
+    def _bakery_unity(self):
+        return self.bakery_run("bakery_unity", "progressive")
+
+    def _bakery_probe(self):
+        return self.bakery_run("bakery_probe", "bakery", "--probe-lit", "TST_Bmany_4x4_A")
 
     def _hidden(self):
         return self._ok(self.f["kit_hidden"], ["--expect-status", "uv"], "hidden")
@@ -831,6 +868,63 @@ def uv2_box_fill_noted(r):
     check(any(n.startswith("TST_Fill_2x2_A/TST_Fill_2x2_A_LOD0: UV2 charts fill 30%") for n in fill),
           "a 120 px UV2 at fill 0.3 should be noted: %s" % fill)
     check(not any("_LOD2" in n for n in fill), "a 30 px LOD2 is the 64 px rule's, not box fill's: %s" % fill)
+
+
+def bakery_side(area, scale=1.0):
+    """Bakery's rect side at 20 texels/m: texels_per_m x sqrt(2 x area x Scale In Lightmap)."""
+    return 20 * math.sqrt(2 * area * scale)
+
+
+@case
+def bakery_footprints(r):
+    bk, un = r.get("bakery"), r.get("bakery_unity")
+    check(bk["lightmapper"] == "bakery" and un["lightmapper"] == "unity", "progressive should read as unity: %s, %s"
+          % (bk["lightmapper"], un["lightmapper"]))
+    gap_b = piece_of(bk, "TST_Bgap_2x2_A")["objects"]["TST_Bgap_2x2_A"]
+    gap_u = piece_of(un, "TST_Bgap_2x2_A")["objects"]["TST_Bgap_2x2_A"]
+    check(abs(gap_b["lightmap_px"] - (bakery_side(4, 4) - 6) / 0.9) < 0.2
+          and abs(gap_u["lightmap_px"] - 20 * math.sqrt(4 / 0.81) * 4) < 0.2, (gap_b, gap_u))
+    check(gap_u["uv2_min_gap_texels"] >= 2 and gap_b["uv2_min_gap_texels"] < 2, (gap_u, gap_b))
+    check(has(bk["problems"], "TST_Bgap_2x2_A/TST_Bgap_2x2_A: UV2 charts", "apart")
+          and not has(un["problems"], "TST_Bgap_2x2_A"),
+          "a gap Unity's footprint passes at Scale In Lightmap 4 must fail at Bakery's: %s" % bk["problems"])
+    strip = piece_of(bk, "TST_Bstrip_4x1_A")["objects"]["TST_Bstrip_4x1_A"]
+    ustrip = piece_of(un, "TST_Bstrip_4x1_A")["objects"]["TST_Bstrip_4x1_A"]
+    check(strip["uv2_short_side"] == 0.2 and abs(strip["lightmap_px"] - (bakery_side(4) - 6) / 0.2) < 0.3
+          and abs(ustrip["lightmap_px"] - 20 * math.sqrt(4 / 0.18)) < 0.2,
+          "Bakery maps its rect onto the UV2 bounds' short side: %s vs %s" % (strip, ustrip))
+    objs, uobjs = piece_of(bk, "TST_Blod_2x2_A")["objects"], piece_of(un, "TST_Blod_2x2_A")["objects"]
+    l0, l1 = objs["TST_Blod_2x2_A_LOD0"], objs["TST_Blod_2x2_A_LOD1"]
+    check(abs(l0["lightmap_px"] - (bakery_side(4) - 6) / 0.9) < 0.2 and l1["lightmap_px"] == l0["lightmap_px"]
+          and abs(uobjs["TST_Blod_2x2_A_LOD1"]["lightmap_px"] - 10 * math.sqrt(4 / 0.81)) < 0.2,
+          "Bakery has no LOD factor, Unity 0.5^n: %s, %s, %s" % (l0, l1, uobjs["TST_Blod_2x2_A_LOD1"]))
+    none = piece_of(bk, "TST_Bnone_2x2_A")["objects"]["TST_Bnone_2x2_A"]
+    check(abs(none["lightmap_px"] - (bakery_side(4) - 6) / math.sqrt(0.85)) < 0.2
+          and "effective_texels_per_m" not in none, "before UV2 exists: square bounds of share 0.85: %s" % none)
+    p, _ = run_qa(r.f["kit_bakery"], ["--lightmap-texels", "20", "--lightmapper", "beast"])
+    check(p.returncode != 0 and "invalid choice" in p.stdout + p.stderr, (p.stdout + p.stderr)[-500:])
+
+
+@case
+def bakery_effective_density_gate(r):
+    bk, un, probe = r.get("bakery"), r.get("bakery_unity"), r.get("bakery_probe")
+    a = 64 * (0.9 / 8 - 2 * 0.042) ** 2                       # the 64 charts' UV area; their box is 0.816 square
+    many = piece_of(bk, "TST_Bmany_4x4_A")["objects"]["TST_Bmany_4x4_A"]
+    umany = piece_of(un, "TST_Bmany_4x4_A")["objects"]["TST_Bmany_4x4_A"]
+    eff = (bakery_side(16) - 6) / 0.816 * math.sqrt(a / 16)
+    check(abs(many["effective_texels_per_m"] - eff) < 0.05 and many["effective_texels_min"] == 10.0, (eff, many))
+    check(abs(umany["effective_texels_per_m"] - 20 * math.sqrt(a / 0.816 ** 2)) < 0.05
+          and "effective_texels_min" not in umany, "Unity: texels_per_m x sqrt(box fill), no gate: %s" % umany)
+    check(has(bk["problems"], "TST_Bmany_4x4_A/TST_Bmany_4x4_A: effective lightmap density", "under 10.0"),
+          "a many-chart UV2 under Bakery's gate passed: %s" % bk["problems"])
+    check(not notes_of(bk, "TST_Bmany_4x4_A"), "the gate's PROBLEM replaces the box-fill note: %s" % bk["notes"])
+    check(not has(un["problems"], "TST_Bmany_4x4_A") and any(
+        n.startswith("TST_Bmany_4x4_A/TST_Bmany_4x4_A: UV2 charts fill 8%") for n in un["notes"]),
+          "under Unity the same UV2 is a box-fill note only: %s" % notes_of(un, "TST_Bmany_4x4_A"))
+    check(all("TST_Bmany_4x4_A" in line for line in bk["problems"] if "effective lightmap density" in line),
+          "only the many-chart panel is under the gate: %s" % bk["problems"])
+    check(not has(probe["problems"], "TST_Bmany_4x4_A/TST_Bmany_4x4_A: effective"),
+          "a --probe-lit piece is not lightmapped: no density gate")
 
 
 @case

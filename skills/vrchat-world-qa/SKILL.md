@@ -31,7 +31,8 @@ the files it checks: fixes go back to the builder.
 Typical runs (absolute paths; `<ev>` is the evidence folder, `<skill>` this skill's folder). Keep
 `--python-exit-code 1`: without it a crashed run exits 0. A measuring run prints a `[qa] role ...` line and writes its
 JSON; one that did not is unfinished, never clean: fix the command and run it again. `--module` (the spec's
-`grid.module`) is required on every run that opens a .blend or imports FBX.
+`grid.module`) is required on every run that opens a .blend or imports FBX. A `--lightmap-texels` run (U4) takes
+`--lightmapper bakery` when the spec's `lighting.baker` is `bakery`: Bakery sizes lightmaps differently.
 
     blender -b --factory-startup blender/kits/KIT_<Family>.blend --python-exit-code 1
             --python <skill>/scripts/qa_measure.py -- --module <grid.module> --expect-status modelled
@@ -146,7 +147,8 @@ the user for what the checks would read from it:
 
 - The grid module, for `--module` (required on every `qa_measure` run that opens a .blend). If nobody knows it,
   derive it from a grid piece's bounds and Size token (a 2 m wide `..._2x3_A` wall means a 1 m module), and say so.
-- `texels_per_m`, for U4's footprints. Without it, U4's texel gaps are `not-run`, owner user.
+- `texels_per_m`, for U4's footprints, and the lightmapper (Unity's Progressive or Bakery, for `--lightmapper`).
+  Without `texels_per_m`, U4's texel gaps are `not-run`, owner user.
 - The budgets: triangles per piece or family for M2, and the world budgets. Failing those, use the platform targets
   at the end of `references/checklists.md`, and say which in `expected`.
 
