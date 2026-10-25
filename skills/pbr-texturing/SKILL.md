@@ -67,7 +67,7 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
 | Substance Designer (its MCP answers `sd_ping`) | Tiling materials, trim sheets, procedural masks | `references/substance-designer.md`; bitmaps through `sbsrender` |
 | Substance Painter | Unique hero props: layered wear on baked mesh maps | `references/substance-painter.md`: scriptable through its Python API, but only through a bridge the user installs; otherwise user-assisted |
 | Blender | Everything when Substance is missing | Procedural node materials baked to images: `references/blender-materials.md` |
-| Scanned CC0 materials (Poly Haven, ambientCG) | A real-world base to build from | Only when the user allows library assets; record the source and licence beside the maps; recalibrate to section 2 |
+| Scanned CC0 materials (Poly Haven, ambientCG) | A real-world base to build from | Only when the user allows library assets; search and download with `pbr-texture-sources` (it records the source and licence beside the maps); recalibrate to section 2 |
 
 ## 5. Wear, variation and repetition
 
