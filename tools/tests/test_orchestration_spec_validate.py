@@ -233,6 +233,14 @@ class SpecChecks(unittest.TestCase):
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("INT_Bay_1x3_P1 at [5, 3, 0]", errors[0])
 
+    def test_scale_range_lets_a_family_vary_its_free_pieces(self):
+        spec = study_spec()
+        spec["families"]["PROP"]["scale_range"] = [0.7, 1.3]                       # foliage-style variation
+        self.assertEqual(run(spec)[0].errors, 0)
+        for bad in ([1.1, 1.3], [0.7], "wide", [0, 1.2]):
+            spec["families"]["PROP"]["scale_range"] = bad
+            self.assertTrue(any("scale_range must be" in m for m in messages(run(spec)[0], "ERROR")), bad)
+
     def test_bake_is_a_flag(self):
         spec = study_spec()
         spec["pieces"][0]["bake"] = True

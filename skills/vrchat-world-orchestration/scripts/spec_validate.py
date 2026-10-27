@@ -295,7 +295,7 @@ KNOWN_KEYS = {
               "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
     "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase",
-               "turn_symmetry"),
+               "turn_symmetry", "scale_range"),
     "budgets": BUDGET_KEYS + ("download_mb", "piece_tris", "lightmap"),
     "lightmap": ("max_px", "count", "texels_per_m", "min_footprint_px"),
     "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size", "ref",
@@ -779,6 +779,10 @@ def check_families(families, module, sub_module, f, storey=None):
             if fam.get("detail_map", False) not in (True, False):
                 f.error("family %s detail_map must be true or false (a close-range detail map on its materials)"
                         % code)
+            sr = fam.get("scale_range")
+            if sr is not None and not (numbers(sr, 2) and 0 < sr[0] <= 1.0 <= sr[1]):
+                f.error("family %s scale_range must be [low, high] around 1 (the even scales its Free pieces may be "
+                        "placed at, e.g. [0.7, 1.3] for foliage; default 0.8-1.25)" % code)
             mp = fam.get("map_px")
             check_tile_phase(code, fam, module, storey, f)
             if not number(mp) or mp <= 0:
