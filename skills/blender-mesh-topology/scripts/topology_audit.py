@@ -114,7 +114,20 @@ def flat_floor(ob, evaluated=True):
     return max(2.1 * max(amounts), 0.005) if amounts else 0.05
 
 
-def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.001, evaluated=True,
+def _planar(mesh, p, tol_deg=0.5):
+    """True when face p's corners lie in one plane: every fan triangle's normal within tol_deg of the face's."""
+    vs = [mesh.vertices[i].co for i in p.vertices]
+    n = p.normal
+    if n.length < 0.5:
+        return True
+    for i in range(1, len(vs) - 1):
+        tn = (vs[i] - vs[0]).cross(vs[i + 1] - vs[0])
+        if tn.length > 1e-12 and tn.normalized().dot(n) < math.cos(math.radians(tol_deg)):
+            return False
+    return True
+
+
+def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=None, evaluated=True,
           min_flat_width=None, flat_list_deg=0.5, join_tris=False):
     """Counts for one mesh object, in object space, with its modifiers applied (evaluated=True: the modifier stack's
     result; an exporter that triangulates again is not seen; False audits the mesh data alone).
@@ -130,8 +143,12 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
     index of the nearest face of the object's own mesh data (the evaluated mesh's faces are renumbered by the
     modifiers), listed once with its worst evaluated face (the two triangles of a quad, the two halves of a Mirror);
     "centre" is that evaluated face's centre in object space. flat_worst_face is the worst one's "face", or -1.
-    custom_normals and cn_quads: whether the evaluated mesh carries custom normals, and on how many faces of 4+
-    corners (an exporter that triangulates changes those). flat_shaded_faces counts faces not shaded smooth.
+    custom_normals, cn_quads and cn_quads_bent: whether the evaluated mesh carries custom normals, on how many faces
+    of 4+ corners, and how many of those are not planar (an exporter that triangulates one may split it the other
+    way; a planar quad keeps its corner normals, measured 0.0 deg on cards with transferred normals). flat_shaded_faces
+    counts faces not shaded smooth. short_edge (metres): edges shorter count as short_edges; by default (reported as
+    short_edge_m) 1 mm, or 2% of the piece's smallest side over 1 mm when that is less (a 5 mm screw's 0.5 mm head
+    rim, a gear's 1.5 mm chamfers).
     join_tris=True joins triangle pairs back into quads before counting (an applied Triangulate, _join_pairs)."""
     import bmesh
     import bpy
@@ -148,6 +165,12 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
         worst, at, over = _flatness(mesh, min_flat_width, flat_list_deg)
         custom = bool(mesh.has_custom_normals)
         cn_quads = sum(1 for p in mesh.polygons if p.loop_total >= 4) if custom else 0
+        cn_bent = sum(1 for p in mesh.polygons if p.loop_total >= 4 and not _planar(mesh, p)) if custom else 0
+        if short_edge is None:
+            dims = sorted(max(v.co[k] for v in mesh.vertices) - min(v.co[k] for v in mesh.vertices)
+                          for k in range(3)) if len(mesh.vertices) else [0.0]
+            sides = [x for x in dims if x > 0.001]
+            short_edge = min(0.001, 0.02 * sides[0]) if sides else 0.001
         flat_shaded = sum(1 for p in mesh.polygons if not p.use_smooth)
         worst_centre = mesh.polygons[at].center.copy() if at >= 0 else None
     finally:
@@ -213,7 +236,8 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
         loose_verts=sum(1 for v in bm.verts if not v.link_faces),
         flat_faces_off_deg=round(worst, 2), flat_worst_face=mapped[-1] if at >= 0 else -1,
         flat_faces=_one_per_face(mapped, over), flat_min_width=round(min_flat_width, 4),
-        custom_normals=custom, cn_quads=cn_quads, flat_shaded_faces=flat_shaded,
+        custom_normals=custom, cn_quads=cn_quads, cn_quads_bent=cn_bent, flat_shaded_faces=flat_shaded,
+        short_edge_m=round(short_edge, 6),
     )
     bm.free()
     return r
@@ -415,8 +439,8 @@ def audit_stack(ob, allow_open=False, flat_tol=None, normals_tol=0.5, before=Non
         off = on
     merged = dict(on, **{k: off[k] for k in STACK_OFF_KEYS})
     found = problems(merged, allow_open, flat_tol)
-    if on["cn_quads"]:
-        found.append("custom_normals_on_quads")
+    if on["cn_quads"] if route else on["cn_quads_bent"]:     # a hard-surface stack keeps its Triangulate live; other
+        found.append("custom_normals_on_quads")             # custom normals (cards) only matter on bent quads
     if change is not None and change > normals_tol:
         found.append("triangulate_moves_normals")
     if late:
@@ -673,7 +697,7 @@ def _split_recesses(points, outside, low_tree, high_tree, cap=4000, floor=1e-4):
     return 0.0, recess
 
 
-def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None):
+def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None, relief_m=None):
     """Where a bake's rays leave a low poly at a slant. A cage built from averaged normals (Blender's Selected to
     Active with a cage, and bake_maps.py) casts each ray along the vertex normals interpolated across the triangle, so
     at each of 15 barycentric points per triangle this takes the angle between that interpolated normal and the
@@ -681,7 +705,9 @@ def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None):
     cylinder low built to the chord rule sends radial rays onto a round high and reads 0), else the low face's own
     normal. Detail projected along a slanted ray lands shifted ("skewed") by about relief x tan(angle): 15 deg moves
     10 mm of relief 2.7 mm. faces: the low's polygon indices to judge (the faces a player sees; default all).
-    Returns the share of the judged area over limit_deg, the area-weighted p95 angle and the worst faces' centres.
+    Returns the share of the judged area over limit_deg, the area-weighted p95 angle and the worst faces' centres;
+    with relief_m (the baked relief, high_low_gap's high_outside_p99) also shift_m, relief x tan(p95): how far the
+    detail lands off, to hold against detail_scale's min_width_m(d) (a 0.7 mm bottle relief at 26 deg moves 0.34 mm).
     Read-only."""
     import bpy
     import numpy as np
@@ -693,7 +719,8 @@ def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None):
         keep = np.isin(tpoly, np.asarray(list(faces), np.int64))
         tri, area = tri[keep], area[keep]
     if not len(tri):
-        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": [], "against": "none"}
+        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": [], "against": "none",
+                "shift_m": 0.0 if relief_m is not None else None}
     fn = np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]])
     fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
     bary = np.array([(i / 4.0, j / 4.0, 1.0 - (i + j) / 4.0) for i in range(5) for j in range(5 - i)])
@@ -723,5 +750,6 @@ def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None):
     centre = co[tri].mean(axis=1)
     return {"over_share": round(float(wf[flat > limit_deg].sum() / max(wf.sum(), 1e-12)), 4), "p95_deg": round(p95, 2),
             "limit_deg": limit_deg, "against": "high" if highs else "low faces",
+            "shift_m": round(float(relief_m) * math.tan(math.radians(p95)), 6) if relief_m is not None else None,
             "worst": [(round(float(mean_t[i]), 1), [round(float(x), 3) for x in centre[i]])
                       for i in worst if mean_t[i] > limit_deg]}

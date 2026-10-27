@@ -982,6 +982,45 @@ def test_review_compare_frames_each_object_alone():
     check(len(bpy.data.objects) == 4, "temporary objects left behind")
 
 
+def test_small_pieces_and_cards():
+    """Props sweep: a 5 mm screw's 0.5 mm edges are not short for its size (2% of its smallest side over 1 mm), a
+    50 cm piece's are; leaf cards with custom normals on planar quads and no hard-surface stack are not flagged,
+    a bent quad is."""
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(0.005, 0.005, 0.0005), verts=bm.verts)              # a 5 x 5 x 0.5 mm head
+    small = object_from_bmesh("Screw", bm)
+    r = AUDIT["audit"](small)
+    check(r["short_edges"] == 0 and r["short_edge_m"] == 0.0001, "small piece: %s %s" % (r["short_edges"],
+                                                                                    r["short_edge_m"]))
+    check(AUDIT["audit"](small, short_edge=0.001)["short_edges"] > 0, "an explicit 1 mm still counts them")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(0.5, 0.5, 0.0005), verts=bm.verts)                 # 0.5 mm thick, 50 cm wide
+    check(AUDIT["audit"](object_from_bmesh("Board", bm))["short_edges"] > 0, "a 0.5 mm edge on a 50 cm piece")
+    bm = bmesh.new()
+    for x in (0.0, 1.5):                                                         # two cards, the second bent
+        vs = [bm.verts.new(co) for co in ((x, 0, 0), (x + 1, 0, 0), (x + 1, 0, 1), (x, 0.3 if x else 0.0, 1))]
+        bm.faces.new(vs)
+    cards = object_from_bmesh("Cards", bm)
+    cards.data.shade_smooth()
+    bpy.ops.mesh.primitive_ico_sphere_add(radius=2.0, location=(1.25, 0.0, 0.5))     # the hull the normals come from
+    hull = bpy.context.active_object
+    dt = cards.modifiers.new("Normals", "DATA_TRANSFER")
+    dt.object, dt.use_loop_data, dt.data_types_loops = hull, True, {"CUSTOM_NORMAL"}
+    bpy.context.view_layer.update()
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check(s["on"]["cn_quads"] == 2 and s["on"]["cn_quads_bent"] == 1 and "custom_normals_on_quads" in s["problems"],
+          "cards: %s" % {k: s["on"][k] for k in ("cn_quads", "cn_quads_bent")})
+    for v in cards.data.vertices:
+        v.co.y = 0.0                                                             # flatten the bent card
+    cards.data.update()
+    bpy.context.view_layer.update()
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check("custom_normals_on_quads" not in s["problems"], "planar cards flagged: %s" % s["problems"])
+
+
 def test_review_render_culls_back_faces_like_the_engine():
     """A single-sided plate wound inside out (its normal away from the eye) passes every audit; the engine's stock
     shaders cull it. review_render culls by default, so it vanishes there too; cull=False draws it."""
@@ -1100,7 +1139,9 @@ def test_bake_skew_falls_with_a_bevel():
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     box = bpy.context.active_object
     r = ns["bake_skew"](box)
-    check(r["over_share"] > 0.9 and abs(r["p95_deg"] - 54.74) < 0.1 and r["worst"], r)
+    check(r["over_share"] > 0.9 and abs(r["p95_deg"] - 54.74) < 0.1 and r["worst"] and r["shift_m"] is None, r)
+    r = ns["bake_skew"](box, relief_m=0.0007)                  # props sweep: 0.7 mm of relief moves ~1 mm here
+    check(abs(r["shift_m"] - 0.0007 * math.tan(math.radians(r["p95_deg"]))) < 1e-6, r)
     bev = box.modifiers.new("Bevel", "BEVEL")
     bev.width, bev.segments = 0.05, 3
     r = ns["bake_skew"](box)
@@ -1320,7 +1361,8 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
            test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front,
            test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split,
-           test_joint_normals_counts_creases_of_any_angle, test_review_render_culls_back_faces_like_the_engine):
+           test_joint_normals_counts_creases_of_any_angle, test_review_render_culls_back_faces_like_the_engine,
+           test_small_pieces_and_cards):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

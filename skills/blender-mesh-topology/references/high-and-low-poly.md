@@ -95,7 +95,10 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
    cylinder: an 8-sided handle read 40% against its faces, 0 against its round high). *Measured* against the low's
    faces: a hard 1 m box 93% (up to 54.7 deg at its corners); the same box with a 5 cm, three-segment bevel 3.7%.
    Where baked detail sits on a leaning face, add the chamfer or support loop to the low; keep the share small where
-   it carries detail (*practice*: under 10%). No shells passing into each other inside one low (a hinge leaf through
+   it carries detail (*practice*: under 10%), or show the shift is too small to see: `bake_skew(..., relief_m=
+   gap["high_outside_p99"])` gives `shift_m`, relief x tan(p95), which passes under `min_width_m(d)` (a bottle at 12%
+   over 15 deg with 0.7 mm of relief moves its detail 0.34 mm, under 0.87 mm at 0.5 m; a flat plaque at 58% with
+   0.02 mm moves nothing). No shells passing into each other inside one low (a hinge leaf through
    its knuckle): their cage rays start inside each other's high.
 3. **Hard edges and seams.** A hard edge only where the low folds (about 90 deg or more on hard surface), every one of
    them a UV seam (`uv-unwrapping`); an organic low is shaded smooth whole.
@@ -141,7 +144,7 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 | A reflective matcap close-up of the high | no ripples, pinches, streaks or facets |
 | `review_render.compare("Body_high", "Chest_low", views, out)` (object names, one high at a time: the part's main high) | silhouettes match from every view the player has (`mismatch` per view) |
 | `high_low_gap(low, highs)` at the nearest distance d (raise `samples` until fine panel lines are hit: 60,000 found a 3 mm groove on a 2 m box that 8,000 missed) | `low_outside_max` (bulges of the low) at most `min_width_m(d)`; `high_outside_p99` and `recess_max` (grooves and dents of the high the low spans) at most `stereo_relief_m(d)` |
-| `bake_skew(low, highs=highs, faces=seen)` | under 10% of the seen area over 15 deg where detail is baked (*practice*) |
+| `bake_skew(low, highs=highs, faces=seen, relief_m=...)` | under 10% of the seen area over 15 deg where detail is baked (*practice*), or `shift_m` under `min_width_m(d)` |
 | After the bake | the bake report (`<name>_bake.json`) has `cage_inside` own and neighbour 0 in every pass; `pbr-texturing`'s seam check on the normal map shows no seam |
 
 **Where the normal map does not draw.** VRChat's Standard Lite (Quest, iOS) does not sample the normal map on a
