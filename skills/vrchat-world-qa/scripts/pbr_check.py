@@ -307,11 +307,15 @@ def _pct(np, v, q):
 
 
 def base_color_stats(px, info, metallic=None, limits=PBR_LIMITS):
-    """Luma percentiles of the dielectric and the metal pixels. metallic: a (height, width) array or None."""
+    """Luma percentiles of the dielectric and the metal pixels. metallic: a (height, width) array or None. Texels
+    exactly black in every colour channel are left out as unused (`background_share`): a bake of a unique layout
+    leaves everything outside its islands and their margin at 0, and no real surface is pure black."""
     np = _np()
     keep = np.ones(px.shape[:2], bool)
     if info.get("channels") in (2, 4):
         keep &= px[:, :, 3] >= limits["alpha_cutoff"]
+    background = keep & (px[:, :, :3].max(axis=2) <= 0.0)
+    keep &= ~background
     metal = np.zeros(px.shape[:2], bool)
     solid = np.zeros(px.shape[:2], bool)
     if metallic is not None and metallic.shape == metal.shape:
@@ -325,7 +329,8 @@ def base_color_stats(px, info, metallic=None, limits=PBR_LIMITS):
             "dielectric_luma_p%g" % hi: _pct(np, die, hi),
             "metal_luma_p%g" % limits["metal_percentile"]: _pct(np, met, limits["metal_percentile"]),
             "metal_partial_share": round(float((keep & metal & ~solid).sum()) / max(int((keep & metal).sum()), 1), 4),
-            "opacity_used": bool(info.get("channels") in (2, 4) and float(px[:, :, 3].min()) < 1.0)}
+            "opacity_used": bool(info.get("channels") in (2, 4) and float(px[:, :, 3].min()) < 1.0),
+            "background_share": round(float(background.mean()), 4)}
 
 
 def metallic_smoothness_stats(px, info, limits=PBR_LIMITS):
@@ -637,6 +642,9 @@ def judge(result, targets=None, limits=PBR_LIMITS):
     lo_q, hi_q = limits["albedo_percentiles"]
     bc = result.get("base_color")
     if bc:
+        if bc.get("background_share"):
+            n.append("%.0f%% of the base colour is exactly black, judged as unused (a bake's background outside its "
+                     "islands); paint inside an island is never pure black" % (100 * bc["background_share"]))
         lo, hi = limits["albedo_srgb"]
         d_lo, d_hi = bc.get("dielectric_luma_p%g" % lo_q), bc.get("dielectric_luma_p%g" % hi_q)
         if d_lo is not None and d_lo < lo:
