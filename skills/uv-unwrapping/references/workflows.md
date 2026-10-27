@@ -99,7 +99,11 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 2. Unwrap `method="MINIMUM_STRETCH", iterations=150, margin=0.001` for even density, or `ANGLE_BASED` when shape
    matters more. Pin border vertices and use Live Unwrap (`SpaceUVEditor.use_live_unwrap`) for hand corrections.
 3. Audit; where a band stays stretched, add a seam there. With RizomUV installed, `rizomuv-uv-pipeline`'s `organic`
-   preset does this better on revolved bodies.
+   preset does this better on revolved bodies. A rock seamed only on its buried and concave sides may stay at
+   angular p95 1.16-1.25 at any seam count; when every map it takes is baked from 3D (no painted or tiling texture
+   on it), that stretch only lowers its resolution along one direction inside the 0.8-1.25x texel band (a rock at
+   1.24 rendered the same as one at 1.04, measured): audit it with `limits={"angular_p95": 1.25}`, which the report
+   records, rather than cutting a seam across a face the player sees.
 4. Lay out: `ua.layout([ob], map_px, px_per_m, directional=False, rotate_method="ANY")` only when the texture has no
    direction; otherwise keep `directional=True`.
 5. Bake on the whole mesh with mirrored copies offset (`bake=True` in step 4).

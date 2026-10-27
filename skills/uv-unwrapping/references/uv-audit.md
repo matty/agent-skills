@@ -56,7 +56,8 @@ index 1. Every function leaves the active UV map, the selection and the mode as 
 | Exact stacks | allowed (one island for the gap check); with `baking=True`, an issue inside 0-1 | not checked | not checked | issue |
 | Gap between islands when `pad_px` is not given | `map_px / 64` | none | none | 2 texels |
 | Gap to the tile edge | half the gap | none | none | half the gap |
-| Long islands along V (islands holding `uv_text` faces are left out) | with `directional=True` | with `directional=True` | always | no |
+| Long islands along V (islands holding `uv_text` faces, and islands whose faces are all marked `uv_cross_grain`, are left out) | with `directional=True` | with `directional=True` | always | no |
+| Density spread inside islands (area p95, area max, per-island area p95) | yes | yes | yes | no: a chart's density may vary, nobody sees 20% of a lightmap texel |
 | Text faces (`uv_text`) mirrored, or their up off +V | with `text=True` | with `text=True` | with `text=True` | no |
 | Rows (`rows=`) | if given | if given | if given | if given |
 | Scale and phase against `tile_project`, steps as whole tiles (`tile_m=`, `steps=`) | no | if given | no | no |
@@ -80,7 +81,9 @@ vector attribute `uv_text_up` (object space, one per face) says otherwise: set i
 (the pillar's horizontal reading direction turned 90 deg, i.e. the direction the letters' tops point), a label
 wrapped round a pipe, or text on a horizontal face (a floor marking, a desk plaque), where +Z has no direction in the
 face and the island is reported as flat until given one. Text islands skip the grain check: a portrait poster may
-run along V.
+run along V. Faces cut across the grain (a beam's end and its end chamfers, a board's end) are marked with the boolean
+face attribute `uv_cross_grain`: their grain rightly runs across the island, so islands of only those faces skip the
+grain check and `turn_islands`.
 
 ## Report fields
 
@@ -92,11 +95,11 @@ run along V.
 | `notes` | worth a look but not a failure: a lightmap footprint under 64 px (checked as packed for 64 px: probe-light a Free prop, a Free-sized PROP or FOL piece; a LOD follows its piece; else raise its Scale In Lightmap), or at 64 px or more, charts filling under half their box (the empty space costs atlas texels: pack them to fill it, at any aspect ratio) |
 | `faces`, `islands` | counts; an island is faces joined across edges whose UVs match |
 | `angular_p95`, `angular_p99`, `angular_max`, `area_p95` | the distortion gate (SKILL.md section 4) |
-| `islands_distorted`, `worst_islands` | islands holding at least 0.5% of the area (`ISLAND_MIN_SHARE`) whose own angular p95 or area p95 is over the limit, worst first (`island`, `area_share`, `angular_p95`, `area_p95`): a small label stretched 1.45x passes the object's numbers |
+| `islands_distorted`, `worst_islands` | islands holding at least 0.5% of the area (`ISLAND_MIN_SHARE`) whose own angular p95 is over 1.25 or area p95 over 0.50 (`island_angular_p95`, `island_area_p95`: the 0.8-1.25x texel band held inside one island; a dome cap at 1.16 or a bottle shoulder at area 0.22 passes; faces marked `uv_low_density` left out of the area), worst first (`island`, `area_share`, `angular_p95`, `area_p95`): a small label stretched 1.45x passes the object's numbers |
 | `text_angular_p95` | angular p95 over the faces marked `uv_text` together (None without them): over 1.15 the letters read squashed, whatever `text=` says |
-| `area_max` | log2 of the worst non-sliver face's density against its island's (`uv_low_density` faces left out): over 2.0 a patch reads blurred or oversharp (a label shrunk to 1/8 inside its panel measured 6.0 while slivers round it took the stretch) |
+| `area_max` | log2 of the worst non-sliver face's density against its island's (faces under one texel and `uv_low_density` faces left out; `angular_max` skips the sub-texel faces too): over 2.0 a patch reads blurred or oversharp (a label shrunk to 1/8 inside its panel measured 6.0 while slivers round it took the stretch) |
 | `seam_phase_px_max`, `seams_off_phase` | tiling only: over the UV seams inside a continuing surface (faces within 30 deg, `SEAM_CONTINUES_DEG`, or two `uv_strip` faces within 60 deg, `STRIP_FOLD_DEG`), how far each opens from a whole number of tiles, in texels, and how many open by more than half a texel: a ring that does not close or a strip off its neighbour's phase (a 0.1-tile closure is 102 px at 1024) |
-| `limits_overridden` | the overrides an audit ran with (`limits=`, CLI `--limits`): `gate(limits)` merges a dict of any of `angular_p95`, `angular_p99`, `angular_max`, `area_p95`, `area_max`, `texel_cv`, `island_min_share`, `tile_phase_px`, `seam_continues_deg` over the defaults; `float("inf")` switches one off; a misspelt key raises. For a piece whose look needs it (a stylised prop drawn stretched, a density graded on purpose); the report carries the overrides so a reviewer sees them |
+| `limits_overridden` | the overrides an audit ran with (`limits=`, CLI `--limits`): `gate(limits)` merges a dict of any of `angular_p95`, `angular_p99`, `angular_max`, `area_p95`, `area_max`, `texel_cv`, `island_angular_p95`, `island_area_p95`, `island_min_share`, `tile_phase_px`, `seam_continues_deg` over the defaults (a whole-object limit loosened past its island twin loosens the twin too); `float("inf")` switches one off; a misspelt key raises. For a piece whose look needs it (a stylised prop drawn stretched, a density graded on purpose); the report carries the overrides so a reviewer sees them |
 | `tile_phase` | with `tile_m`: `tile_m`, `faces`, `phase_px_max` (the worst face's distance from tile_project's UVs after whole tiles, in texels, counting a corner whose offset differs from the face's first corner), `off_faces`, `mirrored_faces` |
 | `folded_faces` | faces flipped inside an otherwise unflipped island: always a fault |
 | `mirrored_islands` | whole islands flipped: mirrored geometry, fine for painting; text on them reads backwards |

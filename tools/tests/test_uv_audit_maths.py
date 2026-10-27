@@ -118,7 +118,8 @@ class UvAuditMaths(unittest.TestCase):
     def test_canonical_numbers(self):
         ua = self.ua
         self.assertEqual(ua.LIMITS, {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20,
-                                     "area_max": 2.0, "texel_cv": 0.15})
+                                     "area_max": 2.0, "texel_cv": 0.15, "island_angular_p95": 1.25,
+                                     "island_area_p95": 0.50})
         self.assertEqual(ua.ISLAND_MIN_SHARE, 0.005)
         self.assertEqual(ua.TEXEL_BAND["unique"], (0.8, 1.25))
         self.assertEqual(ua.TEXEL_BAND["tiling"], (0.9, 1.1))
@@ -206,6 +207,42 @@ class UvAuditMaths(unittest.TestCase):
         d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], [uvs[0], square_uv(0.6, 0.6, 0.15 * k)])
         r = self.m(d, map_px=1024)
         self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
+        # props sweep: a curved island at 1.2x (a dome cap, a bottle neck) is inside the 0.8-1.25x texel band
+        s = math.sqrt(1.2)
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], [uvs[0], square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)])
+        r = self.m(d, map_px=1024)
+        self.assertEqual(r["islands_distorted"], 0, r["worst_islands"])
+        self.assertTrue(any("text faces stretched" in i for i in self.m(dict(d, text=np.array([False, True])),
+                                                                         map_px=1024)["issues"]))
+
+    def test_props_sweep_spread_rules(self):
+        """A quad and a trapezoid sharing an edge: one island whose density falls 2.7x across it. Unique: uneven inside
+        the island; as a lightmap chart the spread is left alone (nobody sees it at 20 texels/m); the trapezoid marked
+        uv_low_density (a grade toward a hidden side) is left out of the evenness. A stretched face under a texel is
+        left out of angular_max and area_max."""
+        verts = quad(0, 0, 1, 1) + [(2, 0, 0), (2, 1, 0)]
+        faces = [[0, 1, 2, 3], [1, 4, 5, 2]]
+        uvs = [square_uv(0.1, 0.1, 0.2), [(0.3, 0.1), (0.4, 0.15), (0.4, 0.25), (0.3, 0.3)]]
+        r = self.m(mesh(verts, faces, uvs), map_px=1024)
+        self.assertTrue(any("uneven density inside islands" in i for i in r["issues"]), r["issues"])
+        r = self.m(mesh(verts, faces, uvs), purpose="lightmap", texels_per_m=1000, pad_px=0)
+        self.assertFalse(any("uneven density" in i or "patch at" in i for i in r["issues"]), r["issues"])
+        r = self.m(mesh(verts, faces, uvs, low=[False, True]), map_px=1024)
+        self.assertLess(r["area_p95"], 0.01)
+        self.assertFalse(any("uneven density" in i for i in r["issues"]), r["issues"])
+        # a 1 mm face squashed 2.5x at 512 px/m covers a quarter of a texel: no visible stretch
+        k = 0.5
+        verts = quad(0, 0, 1, 1) + quad(3, 0, 3.001, 0.001)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.7, 0.7, 0.001 * k * 1.58, 0.001 * k / 1.58)]
+        r = self.m(mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs), map_px=1024, pad_px=0)
+        self.assertLess(r["angular_max"], 1.01, r)
+        self.assertFalse(any("stretched" in i for i in r["issues"]), r["issues"])
+
+    def test_limits_loosening_carries_to_the_island_twin(self):
+        g = self.ua.gate({"angular_p95": 1.4})
+        self.assertEqual((g["angular_p95"], g["island_angular_p95"], g["island_area_p95"]), (1.4, 1.4, 0.5))
+        self.assertEqual(self.ua.gate({"angular_p95": 1.1})["island_angular_p95"], 1.25)
+        self.assertEqual(self.ua.gate({"angular_p95": 1.4, "island_angular_p95": 1.3})["island_angular_p95"], 1.3)
 
     def test_limits_override_lets_a_deliberate_case_through_and_is_recorded(self):
         """A stylised piece may carry a stretch on purpose: limits= loosens one number for that audit and the report
@@ -322,6 +359,10 @@ class UvAuditMaths(unittest.TestCase):
         d["uv"][1] = np.nan
         r = self.m(d, map_px=1024)
         self.assertTrue(r["issues"][0].startswith("1 UV corners are not numbers"), r["issues"])
+        d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
+        d["co"][5] = np.nan                                  # a broken import: no longer passes silently
+        r = self.m(d, map_px=1024)
+        self.assertTrue(r["issues"][0].startswith("1 vertex positions are not numbers"), r["issues"])
         empty = {"co": np.zeros((3, 3)), "lv": np.zeros(0, int), "ls": np.zeros(0, int), "lt": np.zeros(0, int),
                  "uv": np.zeros((0, 2)), "cn": np.zeros((0, 3)), "tri": np.zeros((0, 3), int),
                  "tpoly": np.zeros(0, int), "layer": "UVMap", "layers": ["UVMap"], "low": None}
@@ -499,6 +540,9 @@ class UvAuditMaths(unittest.TestCase):
         self.assertTrue(any("run along V" in i for i in r["issues"]))
         self.assertFalse(any("run along V" in i for i in self.m(along_v, map_px=1024)["issues"]))   # not asked
         self.assertTrue(any("run along V" in i for i in self.m(along_v, map_px=1024, purpose="trim")["issues"]))
+        along_v["cross"] = np.array([True])            # a beam's end chamfer: its grain rightly runs across it
+        r = self.m(along_v, map_px=1024, directional=True)
+        self.assertEqual((r["elongated_along_v"], r["issues"]), (0, []))
 
     def test_trim_band_is_per_island(self):
         # two 1 x 0.25 m strips on a 2048 x 1024 sheet: one at 512 px/m, one at 1.15x (the mean, 1.08x, passes)
