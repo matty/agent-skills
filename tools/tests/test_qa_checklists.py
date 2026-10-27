@@ -31,7 +31,7 @@ ID = r"[GCSPBMUXAENLIO][1-9]\d?"
 OTHER_FLAGS = {"--objects", "--layer", "--lightmap", "--map", "--pad", "--td", "--baking", "--python",
                "--factory-startup", "--python-exit-code", "--porcelain", "--name-only", "--headless", "--screenshot",
                "--force-device-scale-factor", "--window-size", "--purpose", "--material", "--tile-m", "--steps",
-               "--tile-offset", "--image", "--kind", "--joints", "--tiling", "--out"}
+               "--tile-offset", "--image", "--kind", "--joints", "--tiling", "--out", "--hard-deg", "--fold-deg"}
 
 
 def table_ids(text):
