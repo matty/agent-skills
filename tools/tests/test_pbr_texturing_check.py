@@ -210,6 +210,22 @@ class BaseColour(unittest.TestCase):
         px[:, 5:] = (0.8, 0.78, 0.75, 1.0)                                                     # ~199 sRGB metal
         self.assertEqual(self.judged(px, metallic)["problems"], [])
 
+    def test_metal_luma_judged_on_solid_metal_only(self):
+        """Worn chips: solid steel (metallic 1, luma 180) with an anti-aliased border (metallic 0.6) blending into dark
+        paint. Judging the border as metal read "metal too dark"; the solid metal alone passes, and the border's
+        share is reported."""
+        px = rgba(0.7, 0.7, 0.7, size=(64, 64))
+        metallic = np.zeros((64, 64))
+        metallic[16:48, 16:48] = 1.0
+        border = np.zeros((64, 64), bool)
+        border[12:52, 12:52] = True
+        border[16:48, 16:48] = False
+        metallic[border] = 0.6
+        px[border, :3] = 0.15
+        s = pc.base_color_stats(px, {"channels": 4}, metallic)
+        self.assertGreater(s["metal_luma_p5"], pc.PBR_LIMITS["metal_srgb_min"], s)
+        self.assertGreater(s["metal_partial_share"], 0.3, s)
+
     def test_cutout_pixels_left_out(self):
         px = rgba(0.5, 0.5, 0.5, size=(10, 10))
         px[:, :6] = (0.0, 0.0, 0.0, 0.0)                                                       # transparent, black
@@ -401,6 +417,92 @@ class TilingAndSizes(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(pc.main([p, "--tiling"]), 1)
                 self.assertEqual(pc.main([p]), 0)                                        # only judged with --tiling
+
+    def streaks(self, n=256, seed=5):
+        """A seamless even tile scattered with short bright streaks (plank ends, scratches): strong local edges that
+        set the windowed test's bar, none running a whole line."""
+        rng = np.random.default_rng(seed)
+        px = self.noise_tile(n, seed, amp=0.04)
+        for _ in range(120):
+            x, y = rng.integers(0, n, 2)
+            px[np.arange(y, y + 12) % n, x, :3] = 0.9
+        return px
+
+    def test_full_length_seam_beats_the_textures_own_edges(self):
+        """A crop that leaves a streaked tile non-seamless passes the windowed test (the streaks set its bar) and
+        fails the full-length one; the seamless tile, rolled anywhere, passes both."""
+        px = self.streaks()
+        for dy, dx in ((0, 0), (37, 91), (128, 64)):
+            ok = np.roll(px, (dy, dx), (0, 1))
+            self.assertLessEqual(max(pc._full_seam(ok[:, :, :3], 1), pc._full_seam(ok[:, :, :3], 0)),
+                                 pc.PBR_LIMITS["tile_seam_full_problem"])
+        crop = px[5:5 + 200, 11:11 + 200]
+        win = max(pc._window_seam(crop[:, :, :3], 1), pc._window_seam(crop[:, :, :3], 0))
+        full = max(pc._full_seam(crop[:, :, :3], 1), pc._full_seam(crop[:, :, :3], 0))
+        self.assertTrue(win <= pc.PBR_LIMITS["tile_seam_problem"] < full
+                        or full > pc.PBR_LIMITS["tile_seam_full_problem"], (win, full))
+        self.assertGreater(full, pc.PBR_LIMITS["tile_seam_full_problem"])
+
+    def test_period_band_standout_and_smoothness_seam(self):
+        n = 256
+        yy, xx = np.mgrid[0:n, 0:n]
+        blob = np.exp(-((xx - 64.0) ** 2 + (yy - 64.0) ** 2) / (2 * 40.0 ** 2))
+        bad = self.noise_tile()
+        bad[:, :, :3] *= (1.0 - 0.3 * blob)[:, :, None]
+        small = bad[::2, ::2]
+        copies = np.tile(small, (2, 2, 1))                       # 2 x 2 copies hide the grid from lf at 256
+        self.assertEqual(pc.tile_period(copies), 2)
+        self.assertEqual(pc.tile_period(self.noise_tile()), 1)
+        self.assertLess(pc.tile_uniformity(copies, "BaseColor")["lf"], pc.PBR_LIMITS["tile_lf_problem"])
+        band = self.noise_tile(amp=0.03)                         # a calm tile: a +-10% band lines up into stripes
+        band[:, :, :3] *= (1.0 + 0.1 * np.sin(2 * np.pi * (xx + yy) / n))[:, :, None].astype(np.float32)
+        b = pc.tile_band(band)
+        self.assertTrue(b["band"] > pc.PBR_LIMITS["tile_band_problem"] and b["band_amp"] > 0.004, b)
+        self.assertLess(pc.tile_band(self.noise_tile())["band"], pc.PBR_LIMITS["tile_band_problem"])
+        spot = self.noise_tile(amp=0.04)                         # one pale stone on an even ground
+        spot[:, :, :3] += 0.3 * np.exp(-((xx - 150.0) ** 2 + (yy - 90.0) ** 2) / (2 * 6.0 ** 2))[:, :, None]
+        self.assertGreaterEqual(pc.tile_standout(spot), pc.PBR_LIMITS["tile_standout_note"])
+        self.assertLess(pc.tile_standout(self.noise_tile(amp=0.04)), pc.PBR_LIMITS["tile_standout_note"])
+        ms = np.zeros((n, n, 4), np.float32)                     # smoothness ramping 0.4 to 0.6 across the tile:
+        ms[:, :, 3] = 0.4 + 0.2 * xx / n + np.random.default_rng(2).normal(0, 0.005, (n, n))   # it jumps only at the
+        #                                                          wrap, a sheen line on a glossy surface
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for name, px in (("T_EXT_Copies_BaseColor.png", copies), ("T_EXT_Band_BaseColor.png", band),
+                             ("T_EXT_Spot_BaseColor.png", spot)):
+                paths.append(os.path.join(d, name))
+                with open(paths[-1], "wb") as f:
+                    f.write(encode_png(np.round(np.clip(px[:, :, :3], 0, 1) * 255).astype(int), 8))
+            paths.append(os.path.join(d, "T_EXT_Gloss_MetallicSmoothness.png"))
+            with open(paths[-1], "wb") as f:
+                f.write(encode_png(np.round(np.clip(ms, 0, 1) * 255).astype(int), 8))
+            by = {r["key"]: r for r in pc.check_files(paths, tiling=True)}
+            self.assertTrue(any("tile-scale variation" in m for m in by["T_EXT_Copies"]["problems"]), by)
+            self.assertTrue(any("aligned band" in m for m in by["T_EXT_Band"]["problems"]), by)
+            self.assertTrue(any("stand-out" in m for m in by["T_EXT_Spot"]["notes"]), by)
+            self.assertFalse(by["T_EXT_Spot"]["problems"], by["T_EXT_Spot"])           # a look, not a failure
+            self.assertTrue(any("smoothness seam" in m for m in by["T_EXT_Gloss"]["problems"]), by)
+
+    def test_flipped_channel_named_from_the_height_map(self):
+        h = height_bumps(128)
+        hp = np.ones((128, 128, 4), np.float32)
+        hp[:, :, :3] = ((h - h.min()) / (h.max() - h.min()))[:, :, None]
+        right = pc.normal_channel_signs(normal_map_from_height(h), hp)
+        red = pc.normal_channel_signs(normal_map_from_height(h, red=-1.0), hp)
+        green = pc.normal_channel_signs(normal_map_from_height(h, green=-1.0), hp)
+        self.assertTrue(min(right) > 0.5 and red[0] < -0.5 < red[1] and green[1] < -0.5 < green[0],
+                        (right, red, green))
+        with tempfile.TemporaryDirectory() as d:
+            n = os.path.join(d, "T_EXT_Conc_NormalGL.png")
+            with open(n, "wb") as f:
+                f.write(encode_png(np.round(normal_map_from_height(h, red=-1.0)[:, :, :3] * 255).astype(int), 8))
+            hh = os.path.join(d, "T_EXT_Conc_Height.png")
+            with open(hh, "wb") as f:
+                f.write(encode_png(np.round(hp[:, :, :3] * 255).astype(int), 8))
+            r = pc.check_files([n, hh])[0]
+            self.assertTrue(any("red channel is flipped" in m and "flip red" in m for m in r["problems"]), r)
+            r = pc.check_files([n])[0]                            # no height map: the message names both causes
+            self.assertTrue(any("flip red instead" in m for m in r["problems"]), r)
 
     def test_trim_sheet_judged_along_u_only(self):
         n = 256

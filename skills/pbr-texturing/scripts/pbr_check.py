@@ -51,6 +51,9 @@ PBR_LIMITS = dict(
     metal_strict_min=180,        # the guide's raw-metal floor: a NOTE between it and metal_srgb_min
     metal_percentile=5,
     metal_threshold=0.5,         # a pixel with metallic at least this is judged as metal
+    metal_luma_threshold=0.9,    # ... and its luma judged only from this: the anti-aliased border of a chip (0.5-0.9)
+                                 # blends paint into metal and read "metal too dark" on a correct crate (p5 130 against
+                                 # 171 on its solid metal)
     metallic_mid=(0.1, 0.9),     # metallic strictly between these is a blend (grey metal)
     metallic_mid_share=0.10,     # a PROBLEM when more of the map than this is grey metal
     metallic_mid_note=0.02,      # a NOTE above this share
@@ -59,8 +62,10 @@ PBR_LIMITS = dict(
     smoothness_mirror=0.98,      # a NOTE when more than smoothness_mirror_share of the map is at least this smooth
     smoothness_mirror_share=0.05,
     alpha_cutoff=0.5,            # base-colour pixels less opaque than this (cutout) are left out
-    normal_length=(0.9, 1.1),    # mean length of the decoded vectors: a PROBLEM outside (not a unit normal map, or
-                                 # colour-converted on export)
+    normal_length=(0.8, 1.1),    # mean length of the decoded vectors: a PROBLEM outside (not a normal map, e.g. a
+                                 # grey height map near 0, or colour-converted on export, 1.2-1.3)
+    normal_length_note=0.9,      # a NOTE between this and the low limit: a rough map downsampled (unit vectors
+                                 # averaged; the shader renormalises them): 0.885-0.95 on the 20 library grounds
     normal_neg_z_share=0.01,     # a PROBLEM when more pixels than this point into the surface (blue under 128)
     normal_bias=0.1,             # a NOTE when the mean X or Y is further from 0: the whole surface leans one way
     convention_r=0.3,            # Y-convention verdict when the mixed-derivative correlation is at least this far from 0
@@ -80,10 +85,25 @@ PBR_LIMITS = dict(
     tile_seam_windows=16,        # windowed seam: each wrap edge in this many windows
     tile_seam_note=1.0,          # its worst window against the texture's own p99.9 step: a NOTE above
     tile_seam_problem=1.5,       # a PROBLEM above
+    # Calibrated 2026-10-27 on 200 seamless versions of the 20 tiles (as shipped, 8 random rolls, the strongest
+    # interior line rolled onto the wrap) against 120 non-seamless crops: the windowed seam passed 42 crops (a brick
+    # or plank texture's own joints set its bar); the full-length seam read at most 1.165 seamless and missed 12.
+    tile_seam_full_problem=1.3,  # median wrap step over 16 windows / the most any interior line steps: a PROBLEM above
+    tile_band_problem=0.4,       # strongest 1-2 cycle harmonic / the detail above 4 cycles: aligned bands (stripes
+    tile_band_amp=0.004,         # across tiles) a PROBLEM above, when its OKLab amplitude is also over this (the 20
+                                 # tiles: 0.309 at most where lf passes; a +-10% band on concrete read 0.6)
+    tile_standout_note=10.0,     # stand-out score (robust z of the most distinctive blob or scar at 2-8 px of a 256 px
+                                 # tile, x sqrt(size/2)): a NOTE at or above (25 of 26 single features; even library
+                                 # tiles reach 9.8, so it asks for a look at the composite rather than failing)
+    tile_period_tol=0.25,        # a map equal to itself shifted by 1/k (mean step under this share of its 1 px step)
+                                 # is k x k copies of a smaller tile: lf and the rest are judged on one copy
+    trim_strip_seam_note=2.0,    # trim sheet: a 16-row strip's U wrap step against the p99 of that strip's own
+                                 # interior steps, a NOTE above (clean sheets 0.94-1.67, seamed strips 2.12-5.56)
 )
 
 ROLES = {"basecolor": "BaseColor", "albedo": "BaseColor", "albedotransparency": "BaseColor",
-         "metallicsmoothness": "MetallicSmoothness", "normal": "Normal"}
+         "metallicsmoothness": "MetallicSmoothness", "normal": "Normal", "normalgl": "Normal",
+         "normaldx": "Normal"}       # library sets name the convention (_NormalGL); a _NormalDX is judged and fails
 OTHER_ROLES = {"occlusion", "ao", "emission", "height", "detailmask", "mask"}   # recognised, not judged here
 MAP_RE = re.compile(r"^(.*)_([A-Za-z]+)$")
 LUMA = (0.2126, 0.7152, 0.0722)
@@ -293,15 +313,18 @@ def base_color_stats(px, info, metallic=None, limits=PBR_LIMITS):
     if info.get("channels") in (2, 4):
         keep &= px[:, :, 3] >= limits["alpha_cutoff"]
     metal = np.zeros(px.shape[:2], bool)
+    solid = np.zeros(px.shape[:2], bool)
     if metallic is not None and metallic.shape == metal.shape:
         metal = metallic >= limits["metal_threshold"]
+        solid = metallic >= limits["metal_luma_threshold"]
     lum = luma(px[:, :, :3])
-    die, met = lum[keep & ~metal], lum[keep & metal]
+    die, met = lum[keep & ~metal], lum[keep & solid]
     lo, hi = limits["albedo_percentiles"]
     return {"pixels": int(keep.sum()), "metal_share": round(float((keep & metal).sum()) / max(int(keep.sum()), 1), 4),
             "dielectric_luma_p%g" % lo: _pct(np, die, lo), "dielectric_luma_p50": _pct(np, die, 50),
             "dielectric_luma_p%g" % hi: _pct(np, die, hi),
             "metal_luma_p%g" % limits["metal_percentile"]: _pct(np, met, limits["metal_percentile"]),
+            "metal_partial_share": round(float((keep & metal & ~solid).sum()) / max(int((keep & metal).sum()), 1), 4),
             "opacity_used": bool(info.get("channels") in (2, 4) and float(px[:, :, 3].min()) < 1.0)}
 
 
@@ -398,6 +421,128 @@ def _window_seam(a, axis, windows=PBR_LIMITS["tile_seam_windows"]):
     inner = np.abs(np.diff(a, axis=1)).mean(axis=2)[:k * size].reshape(k, size, -1).mean(axis=1)
     edge = np.abs(a[:, 0] - a[:, -1]).mean(axis=1)[:k * size].reshape(k, size).mean(axis=1)
     return round(float(edge.max()) / max(float(np.percentile(inner, 99.9)), 1e-9), 2)
+
+
+def _full_seam(a, axis, windows=PBR_LIMITS["tile_seam_windows"]):
+    """A seam the length of a wrap edge, which a texture's own strong edges (brick head joints, plank ends) hide from
+    the windowed test: the median over the edge's windows of the wrap step, against the most any interior line
+    steps by the same statistic. a: (height, width, channels); axis 1 the x wrap, 0 the y wrap."""
+    np = _np()
+    if axis == 0:
+        a = a.transpose(1, 0, 2)
+    n = a.shape[0]
+    size = max(2, n // windows)
+    k = n // size
+    if k < 1 or a.shape[1] < 3:
+        return None
+    inner = np.abs(np.diff(a, axis=1)).mean(axis=2)[:k * size].reshape(k, size, -1).mean(axis=1)
+    edge = np.abs(a[:, 0] - a[:, -1]).mean(axis=1)[:k * size].reshape(k, size).mean(axis=1)
+    return round(float(np.median(edge)) / max(float(np.median(inner, axis=0).max()), 1e-9), 2)
+
+
+def _strip_seams(a, rows=16):
+    """Trim sheet: per band of `rows` pixel rows, the U wrap step against the p99 of that band's own interior steps
+    (one strip's strong edges must not set the bar for another's). Returns the worst band's ratio."""
+    np = _np()
+    worst = 0.0
+    for r0 in range(0, a.shape[0] - rows + 1, rows):
+        b = a[r0:r0 + rows]
+        inner = np.abs(np.diff(b, axis=1)).mean(axis=(0, 2))
+        edge = float(np.abs(b[:, 0] - b[:, -1]).mean())
+        worst = max(worst, edge / max(float(np.percentile(inner, 99)), 1e-9))
+    return round(worst, 2)
+
+
+def low_harmonics(a, cycles=2.0):
+    """The part of a periodic (height, width) array made of harmonics up to `cycles` cycles per tile, tapering
+    (raised cosine) to none at 2 x cycles; the mean included (tile_flatten.py removes exactly this)."""
+    np = _np()
+    h, w = a.shape
+    k = np.hypot(np.fft.fftfreq(h)[:, None] * h, np.fft.fftfreq(w)[None, :] * w)
+    t = np.clip((2.0 * cycles - k) / max(cycles, 1e-9), 0.0, 1.0)
+    return np.real(np.fft.ifft2(np.fft.fft2(a) * (0.5 - 0.5 * np.cos(np.pi * t))))
+
+
+def tile_period(px, limits=PBR_LIMITS, ks=(4, 3, 2)):
+    """k when the map is k x k copies of a smaller tile (equal to itself shifted by 1/k both ways), else 1: its
+    tile-scale variation then sits at k cycles per map, where lf's blur passes little of it."""
+    np = _np()
+    a = px[:, :, :3].astype(np.float64)
+    h, w = a.shape[:2]
+    step = float(np.abs(np.diff(a, axis=1)).mean())
+    for k in ks:
+        if (h % k == 0 and w % k == 0
+                and float(np.abs(a - np.roll(a, h // k, 0)).mean()) < limits["tile_period_tol"] * step
+                and float(np.abs(a - np.roll(a, w // k, 1)).mean()) < limits["tile_period_tol"] * step):
+            return k
+    return 1
+
+
+def _lab2(px):
+    np = _np()
+    return oklab(px[:, :, :3]) * np.array([1.0, 2.0, 2.0])
+
+
+def tile_band(px):
+    """Aligned bands: the strongest single harmonic at 1-2 cycles per tile (a sine of amplitude `band_amp` in
+    OKLab, a and b weighted 2) against the RMS of the detail above 4 cycles that masks it (`band`). A band lines up
+    across tiles into continuous stripes that lf, an absolute RMS, lets through on a low-detail surface."""
+    np = _np()
+    lab = _lab2(px)
+    h, w = lab.shape[:2]
+    k = np.hypot(np.fft.fftfreq(h)[:, None] * h, np.fft.fftfreq(w)[None, :] * w)
+    amp = np.sqrt(sum(np.abs(np.fft.fft2(lab[:, :, c])) ** 2 for c in range(3))) * 2 / (h * w)
+    a = float(amp[(k >= 1) & (k <= 2.0001)].max())
+    d = np.dstack([lab[:, :, c] - low_harmonics(lab[:, :, c], 4.0) for c in range(3)])
+    detail = float(np.sqrt((d * d).sum(axis=2).mean()))
+    return {"band": round(a / max(detail, 1e-9), 3), "band_amp": round(a, 4)}
+
+
+def tile_standout(px, res=256, floor=0.004):
+    """How much the most distinctive spot stands out once the tile repeats (one pale stone, a knot, a flower, a
+    crack): the base colour in OKLab less its harmonics up to 2 cycles (lf's part), pooled to `res` px; for blobs of
+    2, 4 and 8 px, the local mean colour and the local contrast as robust z-scores against the tile's own spread
+    (floor: about a 1% luminance step, so a near-flat tile is not inflated), times sqrt(size / 2), the largest."""
+    np = _np()
+    lab = _lab2(px)
+    d = np.dstack([lab[:, :, c] - low_harmonics(lab[:, :, c], 2.0) for c in range(3)])
+    f = max(1, d.shape[0] // res)
+    d = np.dstack([_pool(d[:, :, c], f) for c in range(3)])
+    n = float(d.shape[0])
+
+    def blur(a, s):
+        return _blur_wrap(a, s / n)
+
+    def rz(v):
+        med = float(np.median(v))
+        return (v - med) / max(1.4826 * float(np.median(np.abs(v - med))), floor)
+    best = 0.0
+    for s in (2, 4, 8):
+        zm = np.sqrt(sum(rz(blur(d[:, :, c], s)) ** 2 for c in range(3)))
+        hp = d[:, :, 0] - blur(d[:, :, 0], s)
+        ze = rz(np.sqrt(np.maximum(blur(hp * hp, 2 * s), 0.0)))
+        best = max(best, float(max(zm.max(), ze.max())) * math.sqrt(s / 2.0))
+    return round(best, 1)
+
+
+def normal_channel_signs(normal_px, height_px, max_px=1024):
+    """With the set's height map: the correlation of each normal channel with the height's slope, read as OpenGL
+    (n_x with -dh/du, n_y with -dh/dv). Both clearly positive: right; a negative one names the flipped channel
+    (a red flip reads as DirectX to normal_convention, and flipping green then inverts the relief)."""
+    np = _np()
+    n = normal_px[:, :, :3].astype(np.float64) * 2.0 - 1.0
+    h = height_px[:, :, 0].astype(np.float64)
+    if h.shape != n.shape[:2]:
+        return None
+    f = max(1, int(math.ceil(max(h.shape) / float(max_px))))
+    nx, ny, h = _pool(n[:, :, 0], f), _pool(n[:, :, 1], f), _pool(h, f)
+
+    def corr(a, b):
+        a, b = _blur_wrap(a, 1.5 / a.shape[0]), _blur_wrap(b, 1.5 / b.shape[0])
+        a, b = a - a.mean(), b - b.mean()
+        return float((a * b).sum() / math.sqrt(float((a * a).sum()) * float((b * b).sum()) + 1e-30))
+    return (round(corr(nx, -(np.roll(h, -1, 1) - np.roll(h, 1, 1))), 3),
+            round(corr(ny, np.roll(h, -1, 0) - np.roll(h, 1, 0)), 3))
 
 
 def _blur_wrap(a, sigma_share, axes="xy"):
@@ -545,13 +690,24 @@ def judge(result, targets=None, limits=PBR_LIMITS):
         if not lo <= nm["length_mean"] <= hi:
             p.append("normal map vectors have mean length %.3f (expected %g-%g): not a unit normal map, or "
                      "colour-converted on export" % (nm["length_mean"], lo, hi))
+        elif nm["length_mean"] < limits["normal_length_note"]:
+            n.append("normal map vectors have mean length %.3f: short, as a rough map downsampled reads (the shader "
+                     "renormalises them); a map that is not rough is colour-converted: check" % nm["length_mean"])
         if nm["neg_z_share"] > limits["normal_neg_z_share"]:
             p.append("normal map points into the surface on %.1f%% of pixels" % (100 * nm["neg_z_share"]))
         if max(abs(nm["mean_x"]), abs(nm["mean_y"])) > limits["normal_bias"]:
             n.append("normal map leans: mean X %.3f, Y %.3f" % (nm["mean_x"], nm["mean_y"]))
-        if nm["convention"] == "directx":
-            p.append("normal map reads as DirectX (Y-) or with a flipped red channel (Y correlation %s): flip "
-                     "green for OpenGL (Y+)" % nm["convention_r"])
+        cs = nm.get("channel_signs")
+        if cs and min(cs) < -limits["convention_r"]:
+            flipped = [c for c, v in zip(("red", "green"), cs) if v < -limits["convention_r"]]
+            p.append("normal map %s against the set's height map (red %s, green %s): flip %s" % (
+                " and ".join(flipped) + (" channels are" if len(flipped) > 1 else " channel is") + " flipped",
+                cs[0], cs[1], " and ".join(flipped)))
+        elif nm["convention"] == "directx" and not (cs and min(cs) > limits["convention_r"]):
+            p.append("normal map reads as DirectX (Y-) or has its red channel flipped (Y correlation %s), which this "
+                     "test cannot tell apart: flip green if the source is DirectX; if it was exported as OpenGL, "
+                     "flip red instead (a height map beside it, _Height, settles it); confirm in a render lit from "
+                     "the side" % nm["convention_r"])
         elif nm["convention"] == "unclear":
             n.append("normal map Y convention unclear (Y correlation %s): check a look-dev render lit from above"
                      % nm["convention_r"])
@@ -602,10 +758,18 @@ def check_files(paths, map_px=None, targets=None, tiling=False, out_dir=None, li
             r["base_color"] = base_color_stats(px, info, metallic, limits)
         if "Normal" in loaded:
             r["normal"] = normal_stats(loaded["Normal"][0], limits)
+            if "height" in loaded:                     # the set's own height map tells which channel is flipped
+                r["normal"]["channel_signs"] = normal_channel_signs(loaded["Normal"][0], loaded["height"][0])
         if tiling:
             r["tile_seam"] = {}
             for role, (px, _info) in sorted(loaded.items()):
+                if role in OTHER_ROLES:
+                    continue
+                k = tile_period(px, limits) if axes == "xy" else 1
+                if k > 1:                                   # k x k copies of a smaller tile: judge one copy
+                    px = px[:px.shape[0] // k, :px.shape[1] // k]
                 r["tile_seam"][role] = tile_seam(px)
+                r["tile_seam"][role]["period"] = k
                 if out_dir:
                     os.makedirs(out_dir, exist_ok=True)
                     dst = os.path.join(out_dir, "%s_%s_3x3.png" % (key, role))
@@ -618,13 +782,48 @@ def check_files(paths, map_px=None, targets=None, tiling=False, out_dir=None, li
                                       % (role, ts["ratio_x"], ts["ratio_y"]))
                 win = max(w for w in (ts["window_x"], ts["window_y"] if axes == "xy" else None, 0.0)
                           if w is not None)
-                if win > limits["tile_seam_problem"]:
-                    r["problems"].append("%s seam along part of a wrap edge: worst window %.2f x the texture's own "
-                                         "p99.9 step (over %.1f; window x %s, y %s): make it seamless before use"
-                                         % (role, win, limits["tile_seam_problem"], ts["window_x"], ts["window_y"]))
-                elif win > limits["tile_seam_note"]:
-                    r["notes"].append("%s worst wrap-edge window %.2f x the texture's p99.9 step: look at the composite"
-                                      % (role, win))
+                chans = [("", px[:, :, :3])] + ([(" smoothness", px[:, :, 3:4])] if role == "MetallicSmoothness"
+                                                 else [])
+                for what, a in chans:
+                    if what:                                 # the A channel: a sheen line on glossy surfaces
+                        win = max(v for v in (_window_seam(a, 1), _window_seam(a, 0) if axes == "xy" else None, 0.0)
+                                  if v is not None)
+                    full = max(v for v in (_full_seam(a, 1), _full_seam(a, 0) if axes == "xy" else None, 0.0)
+                               if v is not None)
+                    ts["full%s" % what.replace(" ", "_")] = full
+                    if win > limits["tile_seam_problem"]:
+                        r["problems"].append("%s%s seam along part of a wrap edge: worst window %.2f x the texture's "
+                                             "own p99.9 step (over %.1f): make it seamless before use"
+                                             % (role, what, win, limits["tile_seam_problem"]))
+                    elif full > limits["tile_seam_full_problem"]:
+                        r["problems"].append("%s%s seam the length of a wrap edge: %.2f x the most any interior line "
+                                             "steps (over %.1f; the texture's own joints hid it from the windowed "
+                                             "test): make it seamless before use"
+                                             % (role, what, full, limits["tile_seam_full_problem"]))
+                    elif win > limits["tile_seam_note"]:
+                        r["notes"].append("%s%s worst wrap-edge window %.2f x the texture's p99.9 step: look at the "
+                                          "composite" % (role, what, win))
+                if axes == "x":
+                    ts["strip_seam"] = _strip_seams(px[:, :, :3])
+                    if ts["strip_seam"] > limits["trim_strip_seam_note"]:
+                        r["notes"].append("%s: a strip's U wrap steps %.2f x that strip's own p99 (over %.1f): look "
+                                          "at that strip in a long run" % (role, ts["strip_seam"],
+                                                                           limits["trim_strip_seam_note"]))
+                if k > 1:
+                    r["notes"].append("%s is %d x %d copies of a smaller tile: judged on one copy (the wall repeats "
+                                      "it %d times as often as the map)" % (role, k, k, k))
+                if role == "BaseColor" and axes == "xy":
+                    ts.update(tile_band(px))
+                    ts["standout"] = tile_standout(px)
+                    if ts["band"] > limits["tile_band_problem"] and ts["band_amp"] > limits["tile_band_amp"]:
+                        r["problems"].append("%s has an aligned band (a %.4f OKLab wave at 1-2 cycles per tile, %.2f x "
+                                             "its detail): it lines up into stripes across the repeat; flatten it "
+                                             "(tile_flatten.py)" % (role, ts["band_amp"], ts["band"]))
+                    if ts["standout"] >= limits["tile_standout_note"]:
+                        r["notes"].append("%s stand-out score %.1f (from %g): one spot (a pale stone, a knot, a crack) "
+                                          "stands out enough to mark every repeat; look at the 3 x 3 composite and "
+                                          "retouch it or make it a decal" % (role, ts["standout"],
+                                                                            limits["tile_standout_note"]))
                 tu = tile_uniformity(px, role, limits, axes)
                 ts.update(tu)
                 if "lf" in tu and axes == "x" and tu["lf"] > limits["tile_lf_problem"]:
