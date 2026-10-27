@@ -36,7 +36,11 @@ out.file_format = "PNG"
 out.save()                                      # a 16-bit RGBA PNG
 ```
 
-6. Run `pbr_check.py` on the exports before reporting.
+6. Unique textures (props, hero pieces): every procedural on Texture Coordinate > Object (or Generated), images
+   through an Image Texture node with `projection = "BOX"` and `projection_blend` about 0.2-0.3 on Object coordinates,
+   baked into the unique UVs. A texture on UV coordinates breaks at every seam (`references/seamless-textures.md`:
+   measured 1.0 against 8-14 for the same noise); check with `texture_seams.py`.
+7. Run `pbr_check.py` on the exports before reporting.
 
 ## Wiring exported maps into a material (look-dev)
 

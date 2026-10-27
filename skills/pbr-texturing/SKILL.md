@@ -70,6 +70,11 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
 | A single photo, scan or generated image | A full map set derived from it | Load `image-to-pbr` |
 | Scanned CC0 materials (Poly Haven, ambientCG) | A real-world base to build from | Only when the user allows library assets; search and download with `pbr-texture-sources` (it records the source and licence beside the maps); recalibrate to section 2 |
 
+On a unique UV layout every signal comes from 3D space: baked mesh maps, procedurals on Object coordinates, images
+through Box projection or a tri-planar fill, painting on the mesh. Anything laid out in UV space breaks at every seam
+(measured: noise from UV coordinates showed at every seam, the same noise from Object coordinates at none). Wood grain
+runs along each board in 3D. Routes and the check: `references/seamless-textures.md`.
+
 ## 5. Wear, variation and repetition
 
 - Wear goes where the object's life put it: edges (curvature), crevices (AO), tops (world-space normal up: dust),
@@ -116,10 +121,12 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 2. Tiling maps: `--tiling --out <scratch>` (`--trim` for a trim sheet) adds the seams (a windowed seam over 1.5
    blocks), the tile-scale variation (base colour `lf` over 0.011 blocks: `tile_flatten.py`) and a 3 x 3 composite
    per map to look at for repeated features. Calibration: `references/pbr-values.md`.
-3. Look-dev: `blender -b --factory-startup --python-exit-code 1 --python lookdev_render.py -- --maps "<textures>/T_<FAMILY>_<Name>_*.png" --png <out>.png`
+3. Seams: `texture_seams.py` on every textured mesh (`seams`, base colour and normal map) and on the placed kit
+   (`joints`, each tiling material): any `visible_m` blocks (`references/seamless-textures.md`).
+4. Look-dev: `blender -b --factory-startup --python-exit-code 1 --python lookdev_render.py -- --maps "<textures>/T_<FAMILY>_<Name>_*.png" --png <out>.png`
    renders the maps under one of Blender's CC0 studio HDRIs. Workbench ignores roughness, metallic and normal maps
    (measured: a smooth and a rough metal rendered identically): never judge materials in it.
-4. In the engine, on the platform hardest to fit: the import settings and the shader's own multipliers
+5. In the engine, on the platform hardest to fit: the import settings and the shader's own multipliers
    (`references/engine-notes.md`).
 
 ## Scripts
@@ -127,6 +134,7 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | Script | Host | Use |
 |---|---|---|
 | `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits; for tiling maps (`--tiling`, `--trim`) seam ratios, a windowed seam, tile-scale variation and 3 x 3 composites; exit 1 on a PROBLEM |
+| `scripts/texture_seams.py` | Blender | `seams(ob, map, kind)`: the step across every UV seam against the texture's own, colour or normal (object space, MikkTSpace); `joints(objects, map)`: the same where placed pieces meet, collection instances expanded; a CLI, exit 1 when a seam shows |
 | `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
 | `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png)` under a bundled CC0 HDRI; a CLI for maps or objects |

@@ -32,8 +32,10 @@ the island gap. `pbr_check.py` accepts Painter's `AlbedoTransparency` name as ba
    and the high poly, both exported to FBX; or bake the mesh maps first (`references/baking.md`) and hand them over.
 2. Tell the user exactly what to make: the material targets (values from `references/pbr-values.md`, art direction,
    wear story from `references/wear-and-variation.md`), the project's normal map format (OpenGL), the export preset
-   and file names above, and where the files go.
+   and file names above, and where the files go. Fills that carry noise or a pattern use tri-planar projection, not
+   UV projection, and hand painting happens on the mesh, so nothing breaks at a seam
+   (`references/seamless-textures.md`).
 3. Do not block other work on it: a planned world records it as a user action with a task the prop's later tasks
    depend on.
-4. When the maps arrive, run `pbr_check.py` and a look-dev render before anything uses them, and keep the `.spp`
-   beside the exports.
+4. When the maps arrive, run `pbr_check.py`, `texture_seams.py` and a look-dev render before anything uses them, and
+   keep the `.spp` beside the exports.
