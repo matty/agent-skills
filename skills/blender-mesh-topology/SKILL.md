@@ -14,6 +14,7 @@ engine does with the result is in `references/engine-notes.md`.
 | The mesh | Path | Read |
 |---|---|---|
 | Generated, swept, revolved or built from sections (stairs, decks, bands, rings, generated walls) | Design the grid by hand (sections 2-3) | `references/grid-layout.md`, `scripts/grid_topology.py` |
+| An existing low that is too dense but already structured (face grids, bands, swept shells, lathe props) | Remove its own edge loops by measured sag, never a remesh (it loses the layout and the UV seams) | `references/loop-reduction.md`, `scripts/loop_decimate.py` |
 | A free-form patch with few or free borders | Quad Remesher from Python (section 4) | `references/quad-remesher.md`, `scripts/quad_remesh.py` |
 | A prop or piece that looks blocky or over-bevelled, or furniture: its form, proportions and bevel sizes | Load the `3d-form-design` skill, then come back for the stack and validation | - |
 | A greybox piece to finish, or one that looks plain, boxy or too clean | Detail at real sizes, geometry or normal map by viewing distance, joints (section 5) | `references/form-and-detail.md`, `references/real-world-sizes.md`, `scripts/detail_scale.py` |
@@ -142,6 +143,7 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | Script | What it gives |
 | --- | --- |
 | `scripts/grid_topology.py` | `zone_stations`, `arc_segments`, `blend_error`, `grid_faces`, `step_reduce` / `step_3to1` with `mid_along` / `mid_between`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights`, `grid_triangles` |
+| `scripts/loop_decimate.py` | `loop_decimate(ob, tol, protect_uv="all", max_loops=None)` removes edge loops by least sag while it stays within `tol`, keeping seams, sharp edges, material boundaries and UV maps; `deviation(dense, low, samples="verts")` measures max, p95 and mean |
 | `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run, `weld_layout()`, `mirror_half()`, `find_engine()` |
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
 | `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)` |
@@ -152,4 +154,5 @@ Load a Blender script into Blender with `exec(open(path, encoding="utf-8").read(
 (`detail_scale.py` runs in any Python). None of them change the scene except where stated: the grid helpers build
 what you pass them, renders add and remove a temporary camera, `audit_stack` and `normals_snapshot` switch
 Triangulate modifiers for a reading and restore them, the `hard_surface` functions change the stack they are given
-(and nothing else), and `quad_remesh` removes everything it creates.
+(and nothing else), `quad_remesh` removes everything it creates, and `loop_decimate` changes only the mesh it is
+given.

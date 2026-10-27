@@ -7,7 +7,7 @@ refusals, audit_stack with the Triangulate live, off, applied or missing, routes
 Smooth by Angle, flat shading, and normals_snapshot across UV work and scale), grid_topology in bmesh
 (PointCache.weld, flat_fill, step_reduce), quad_remesh's patch_input, weld_layout and mirror_half (and a real engine
 run when Quad Remesher is installed), and review_render's headless wire over a mirrored mesh with the scene restored
-afterwards.
+afterwards, and loop_decimate on flat plates (protected loops and UV maps) and a tube (the chord rule).
 
 Host: Blender 4.2+ (bpy, bmesh; tested on 5.2.2), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_topology_scripts.py
@@ -62,8 +62,8 @@ def load(name):
     return ns
 
 
-AUDIT, GRID, QR, RR, HS = (load(n) for n in ("topology_audit.py", "grid_topology.py", "quad_remesh.py",
-                                              "review_render.py", "hard_surface.py"))
+AUDIT, GRID, QR, RR, HS, LD = (load(n) for n in ("topology_audit.py", "grid_topology.py", "quad_remesh.py",
+                                                  "review_render.py", "hard_surface.py", "loop_decimate.py"))
 
 
 def fresh():
@@ -981,6 +981,90 @@ def test_review_compare_frames_each_object_alone():
     check(len(bpy.data.objects) == 4, "temporary objects left behind")
 
 
+def plate(name, n=10, chart_per_face=False):
+    """A flat 1 x 1 m plate of n x n quads with a planar UV0 ("UVMap") and a second map ("UVLight") that is either the
+    same or, with chart_per_face, one chart per face (a probe-lit piece's lightmap UV)."""
+    bm = bmesh.new()
+    vs = [[bm.verts.new((i / n, j / n, 0.0)) for j in range(n + 1)] for i in range(n + 1)]
+    for i in range(n):
+        for j in range(n):
+            bm.faces.new((vs[i][j], vs[i + 1][j], vs[i + 1][j + 1], vs[i][j + 1]))
+    uv0, uv1 = bm.loops.layers.uv.new("UVMap"), bm.loops.layers.uv.new("UVLight")
+    for k, f in enumerate(bm.faces):
+        for l in f.loops:
+            l[uv0].uv = l.vert.co.xy
+            l[uv1].uv = (l.vert.co.xy * n - Vector((k % n, 0)) + Vector((2 * k, 0))) if chart_per_face else l.vert.co.xy
+    return object_from_bmesh(name, bm)
+
+
+def tube(name, segments=64, rings=10, r=0.3, length=1.0):
+    bm = bmesh.new()
+    vs = [[bm.verts.new((r * math.cos(2 * math.pi * k / segments), r * math.sin(2 * math.pi * k / segments),
+                         length * j / rings)) for j in range(rings + 1)] for k in range(segments)]
+    for k in range(segments):
+        for j in range(rings):
+            a, b = vs[k], vs[(k + 1) % segments]
+            bm.faces.new((a[j], b[j], b[j + 1], a[j + 1]))
+    return object_from_bmesh(name, bm)
+
+
+def test_loop_decimate_flat_plates_keep_uvs_and_protected_loops():
+    """#11: a flat plate loses every loop (100 quads to 1) and keeps UV0 on the corners left; a material boundary and
+    a sharp loop stay; a per-face lightmap UV blocks every loop until only UV0 is protected."""
+    fresh()
+    ob = plate("PLATE")
+    r = LD["loop_decimate"](ob, tol=0.001)
+    check(r["faces_before"] == 100 and r["faces_after"] == 1, "flat plate: %s" % r)
+    me = ob.data
+    uv = me.uv_layers["UVMap"].data
+    check(all((Vector(uv[li].uv) - me.vertices[me.loops[li].vertex_index].co.xy).length < 1e-6
+              for li in range(len(me.loops))), "UV0 moved off the corners kept")
+    check(not AUDIT["problems"](AUDIT["audit"](ob), allow_open=True), "audit: %s" % AUDIT["audit"](ob))
+    fresh()
+    ob = plate("SPLIT")
+    me = ob.data
+    me.materials.append(bpy.data.materials.new("A"))
+    me.materials.append(bpy.data.materials.new("B"))
+    for p in me.polygons:
+        p.material_index = int(p.center.x > 0.5)
+    for e in me.edges:
+        a, b = (me.vertices[i].co for i in e.vertices)
+        if abs(a.y - 0.3) < 1e-6 and abs(b.y - 0.3) < 1e-6:
+            e.use_edge_sharp = True
+    r = LD["loop_decimate"](ob, tol=0.001)
+    xs = {round(v.co.x, 4) for v in ob.data.vertices}
+    ys = {round(v.co.y, 4) for v in ob.data.vertices}
+    check(r["faces_after"] == 4 and 0.5 in xs and 0.3 in ys, "protected loops: %s, x %s, y %s" % (r, xs, ys))
+    fresh()
+    ob = plate("PROBE_LIT", chart_per_face=True)
+    r_all = LD["loop_decimate"](ob, tol=0.001)
+    r_uv0 = LD["loop_decimate"](ob, tol=0.001, protect_uv=["UVMap"])
+    check(r_all["loops_removed"] == 0 and r_uv0["faces_after"] == 1, "probe-lit: %s then %s" % (r_all, r_uv0))
+
+
+def test_loop_decimate_tube_follows_the_chord_rule():
+    """#11: an open tube of 64 x 10 quads at r 0.3 m and tol 2.5 mm: the straight ring loops all go, lengthwise loops
+    go but never two neighbours (sag r(1 - cos 5.6 deg) = 1.4 mm; the next would add 2.9 mm on top), measured deviation
+    within tol, audit clean."""
+    fresh()
+    dense = tube("DENSE")
+    ob = tube("LOW")
+    r = LD["loop_decimate"](ob, tol=0.0025)
+    dev = LD["deviation"](dense, ob, samples="faces")
+    print("INFO loop_decimate tube: %d -> %d tris, %d loops, worst %.2f mm, measured max %.2f mm p95 %.2f mm"
+          % (r["tris_before"], r["tris_after"], r["loops_removed"], 1000 * r["worst"], 1000 * dev["max"],
+             1000 * dev["p95"]))
+    zs = {round(v.co.z, 4) for v in ob.data.vertices}
+    ang = sorted(math.atan2(v.co.y, v.co.x) for v in ob.data.vertices if v.co.z < 1e-6)
+    gaps = [b - a for a, b in zip(ang, ang[1:] + [ang[0] + 2 * math.pi])]
+    check(zs == {0.0, 1.0}, "ring loops left: %s" % sorted(zs))
+    check(max(gaps) < math.radians(2 * 360 / 64) + 1e-6, "two neighbouring loops went: gap %.1f deg"
+          % math.degrees(max(gaps)))
+    check(32 <= r["faces_after"] <= 40, "tube: %s" % r)       # greedy ties: some neighbouring pairs both stay
+    check(dev["max"] <= 0.0025 and r["worst"] <= 0.0025, "deviation %s, worst %.4f" % (dev, r["worst"]))
+    check(not AUDIT["problems"](AUDIT["audit"](ob), allow_open=True), "audit: %s" % AUDIT["audit"](ob))
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -997,7 +1081,8 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
-           test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone):
+           test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
+           test_loop_decimate_flat_plates_keep_uvs_and_protected_loops, test_loop_decimate_tube_follows_the_chord_rule):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:
