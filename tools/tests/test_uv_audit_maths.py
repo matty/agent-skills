@@ -292,6 +292,31 @@ class UvAuditMaths(unittest.TestCase):
         tp = self.ua.tile_phase(d, 1.0, 1024)
         self.assertEqual((tp["off_faces"], tp["strip_faces"]), (0, n))
 
+    def test_strip_ring_of_few_facets(self):
+        """An octagon tower's facets meet at 45 deg, over the 30 deg of a continuing surface: marked uv_strip, its
+        closing seam is still judged (unmarked it is not); a square's 90 deg corners never are. material= keeps the
+        marks (a tower with a trim band audited by material)."""
+        def ring(n, total, r=1.0, h=1.0):
+            verts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n), z)
+                     for z in (0.0, h) for i in range(n)]
+            faces, uvs = [], []
+            for i in range(n):
+                j = (i + 1) % n
+                faces.append([i, j, n + j, n + i])
+                u0, u1 = total * i / n, total * (i + 1) / n
+                uvs.append([(u0, 0.0), (u1, 0.0), (u1, h), (u0, h)])
+            return mesh(verts, faces, uvs)
+        for n, judged in ((8, True), (6, True), (4, False)):
+            d = ring(n, 4.25)
+            self.assertEqual(self.m(d, map_px=1024, purpose="tiling")["seams_off_phase"], 0, n)
+            d["strip"] = np.ones(n, bool)
+            self.assertEqual(self.m(d, map_px=1024, purpose="tiling")["seams_off_phase"], int(judged), n)
+        d = ring(8, 4.25)
+        d["strip"] = np.ones(8, bool)
+        d["mat_index"] = np.array([0, 1] * 4)
+        sub = self.ua._subset(d, np.array([True, False] * 4))
+        self.assertEqual(list(sub["strip"]), [True] * 4)
+
     def test_nan_uvs_and_empty_meshes_are_issues_not_crashes(self):
         d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
         d["uv"][1] = np.nan

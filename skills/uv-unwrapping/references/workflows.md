@@ -205,8 +205,11 @@ axis by 1 / cos theta (1.15 at 30 deg, the angular p95 gate; 1.41 at 45 deg) and
 Unwrap them as strips, and mark the strip faces with the boolean face attribute `uv_strip`: the tiling audit then
 judges them by stretch, density and their seams' continuity instead of against tile_project's phase.
 
-1. Seams at the piece's ends and where the curve changes (an arch's springing lines and crown); a closed ring (a
-   tower, a column, a newel) gets one, in an opening or where something stands in front of it.
+1. Seams at the piece's ends; a closed ring (a tower, a column, a newel) gets one, in an opening or where something
+   stands in front of it. An arch's jambs and intrados are one strip from foot to foot (tile_project runs the two
+   jambs' U opposite ways, so a seam at a springing line opens by 205 px whatever you do); mark the jambs `uv_strip`
+   with it. Planar faces off the piece's axes (a bay window's 45 deg sides, a splayed reveal, spiral risers) go the
+   same way: one strip across their folds, marked `uv_strip`, never a box projection (1.41 at 45 deg).
 2. Unwrap, then Follow Active Quads with `mode="LENGTH"` from a square quad, so U runs along the curve and V up the
    wall (on an intrados or a stair soffit, V along the arc and U across). Never `LENGTH_AVERAGE` on a strip cut from
    a larger mesh: it averages each edge loop with the faces the loop runs on into (spandrels, reveals, a plinth) and
@@ -230,7 +233,13 @@ judges them by stretch, density and their seams' continuity instead of against t
 6. Spiral stairs: tread tops and undersides by `tile_project` (they are flat), risers planar, tread rims at arc
    length, the newel as a ring (step 4), the handrail as one helix strip with the grain along it.
 7. Audit `purpose="tiling"` with `tile_m=`: strip faces are judged for stretch and density, and every UV seam inside
-   the surface must open by whole tiles (`seam_phase_px_max`, half a texel: a ring that does not close fails).
+   the surface must open by whole tiles (`seam_phase_px_max`, half a texel: a ring that does not close fails). Seams
+   between two strip faces count up to a 60 deg fold, so an octagon's or a hexagon's ring is judged; a tread's 79 deg
+   corner is not.
+8. What the gate cannot pass, choose before modelling: a column of r 0.18-0.28 m at a 1 m tile cannot close on whole
+   tiles inside the stretch gate (a smaller tile, a plain or trim material, or a radius that closes); a dome's rings
+   cannot tile (a unique bake, or radial trim); a hip or ridge between two tiling planes shows unless a cap piece
+   covers it (texture_seams X9 sees the uncovered join).
 
 **Slopes and terrain.** A top-down projection (U = x, V = y, what tile_project gives faces that face up) stretches a
 slope by 1 / cos(slope) along the fall line: the angular p95 gate (1.15) fails above 29.6 deg, the tiling density
@@ -238,7 +247,9 @@ band (the audit's sqrt(UV area / surface area), sqrt(cos(slope)) here, under 0.9
 the ground from a shared origin (chunks with pivots on the tile grid, so they continue) and only where it is under
 about 25 deg, a margin under the gate; steeper ground is a separate mesh (a bank, a cliff, rocks) with a seam-based unwrap
 at the family's density and its seams in cracks and at its foot, or a world-space triplanar shader (a custom shader;
-measure it on mobile). Compute terrain normals before cutting it into chunks and weld chunk borders, or every chunk
+measure it on mobile). Its seams cannot open by whole tiles: judge them with `texture_seams` on the real texture (busy
+ground hid every one, a rock texture showed 3.7 m), then audit it as tiling with `limits={"seam_continues_deg": 0}`,
+which the report records. Compute terrain normals before cutting it into chunks and weld chunk borders, or every chunk
 edge shows as a lighting line. Never `uv.randomize_uv_transform` on a surface that continues across a joint or a
 seam: each island jumps against its neighbour. Ground materials (a macro map with the tiling detail in the detail
 slot): pbr-texturing.

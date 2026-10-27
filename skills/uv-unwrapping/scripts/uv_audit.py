@@ -95,6 +95,9 @@ STRIP_ATTR = "uv_strip"      # boolean face attribute: tiling faces unwrapped as
 SEAM_CONTINUES_DEG = 30.0    # a UV seam between faces meeting at under this angle lies inside a continuing
                              # surface: on a tiling layout it must open by whole tiles (a ring that closes, a strip
                              # on whole tiles)
+STRIP_FOLD_DEG = 60.0        # a seam between two strip faces lies inside the strip up to this fold: a hexagon's or
+                             # an octagon's facets (60, 45 deg) continue one ring; a stair tread's riser meets its rim
+                             # at 79 deg, a corner
 TEXT_UP_ATTR = "uv_text_up"  # optional face vector: the 3D direction the letters' up points to (default world +Z)
 SEAM_ANGLE = 30.0            # seams_by_angle: an edge whose faces meet at more than this (deg), like Smooth by Angle
 # Modifier types that change topology. Before seams, apply_stack applies the stack from the top down to and including
@@ -309,7 +312,7 @@ def _subset(d, keep):
     out = dict(d)
     out.update(lv=d["lv"][loop_keep], ls=new_ls, lt=new_lt, uv=d["uv"][loop_keep], cn=d["cn"][loop_keep],
                tri=loop_map[d["tri"][tkeep]], tpoly=poly_map[d["tpoly"][tkeep]])
-    for k in ("low", "text", "text_up", "mat_index"):
+    for k in ("low", "text", "text_up", "strip", "mat_index"):
         if out.get(k) is not None and len(out[k]) == len(lt):
             out[k] = np.asarray(out[k])[keep]
     return out
@@ -842,10 +845,14 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     pn = _poly_normals(d)
     bend = np.degrees(np.arccos(np.clip((pn[pa] * pn[pb]).sum(1), -1.0, 1.0))) if len(pa) else np.zeros(0)
     # tiling: a seam inside a continuing surface (faces within SEAM_CONTINUES_DEG) must open by whole tiles, or the
-    # pattern jumps along it (a ring that does not close: a 103 mm jump on a brick tower read as a zipper)
+    # pattern jumps along it (a ring that does not close: a 103 mm jump on a brick tower read as a zipper). A seam
+    # between two strip faces is inside the strip up to STRIP_FOLD_DEG (an octagon's facets meet at 45 deg)
     seam_px = np.zeros(0)
     if purpose == "tiling" and len(pa):
-        cont = uv_split & (bend < lim["seam_continues_deg"])
+        strip = d.get("strip")
+        strip = (np.asarray(strip, bool) if strip is not None and len(strip) == npoly else np.zeros(npoly, bool))
+        in_strip = strip[pa] & strip[pb] & (bend < STRIP_FOLD_DEG) & (lim["seam_continues_deg"] > 0)
+        cont = uv_split & ((bend < lim["seam_continues_deg"]) | in_strip)
         jump = np.concatenate([d["uv"][c_ilo] - d["uv"][c_jlo], d["uv"][c_ihi] - d["uv"][c_jhi]], axis=1)[cont]
         jump = np.abs(jump - np.round(jump)) * np.array([w, h, w, h], float)
         seam_px = jump.max(axis=1) if len(jump) else seam_px
@@ -978,7 +985,9 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False,
         out.append("text faces stretched (angular p95 %.2f): letters read squashed" % r["text_angular_p95"])
     if r.get("seams_off_phase"):
         out.append("%d UV seam edge(s) inside a continuing tiling surface open by up to %.1f px, not whole tiles: the "
-                   "pattern jumps along them (close a ring or strip on whole tiles; workflows, curved walls)"
+                   "pattern jumps along them (close a ring or strip on whole tiles; workflows, curved walls). An "
+                   "organic surface unwrapped with seams (a bank, a rock face) cannot: judge its seams with "
+                   "texture_seams on the real texture, then audit with limits={'seam_continues_deg': 0}"
                    % (r["seams_off_phase"], r["seam_phase_px_max"]))
     if r["folded_faces"]:
         out.append("%d folded faces" % r["folded_faces"])
