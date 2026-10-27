@@ -159,13 +159,13 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
    changed; if they edited an EXT piece, stop and return blocked with the diff lines.
 2. checkout(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). Model on that work file headless: for each piece,
    the final mesh at the collection origin, replacing the greybox mesh data; keep the object name.
-2. Keep the footprint exactly 2 x 0.3 x 3 m; window and door openings where the greybox has them.
-3. Model every item of each piece's detail list at its size, to its references: relief that shows in stereo at
+3. Keep the footprint exactly 2 x 0.3 x 3 m; window and door openings where the greybox has them.
+4. Model every item of each piece's detail list at its size, to its references: relief that shows in stereo at
    1.5 m (blender-mesh-topology's detail_scale.py) is geometry, shallower relief is left to the textures; chamfer
    every edge players see, never a face that meets the next bay.
-4. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save the work
+5. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save the work
    file. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
-5. Through the MCP: integrate(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). If it refuses, the user edited
+6. Through the MCP: integrate(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). If it refuses, the user edited
    a piece meanwhile: return blocked with its message. Then changes_since once more (list anything you did not do in
    your report), bpy.ops.wm.save_mainfile(), save_snapshot(r"//MASTER.snapshot.json").
 
@@ -225,32 +225,25 @@ P1-P4, plus C1-C4 with mockups; QA writes `world/reports/qa/stage-2/`.
 pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-kit-library`. Checks: B1. Fallback: the kit rules
 in `world-spec.md` and this skill's `scripts/kit_library.py`.
 
-**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A`, built from instances
-of the pieces with the spec's `uses` counts, plus socket empties: `single`, under `ASM` in MASTER; `split`, in
-`blender/asm/ASM_ShopFront_A.blend` from pieces linked by relative paths. Load: `blender-kit-library`. Checks: B2-B3 on
-the assembly.
+**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A` under `ASM` in MASTER,
+built from instances of the pieces with the spec's `uses` counts, plus socket empties. Load: `blender-kit-library`.
+Checks: B2-B3 on the assembly.
 
 **Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: the `MASTER`
-collection laid out from `zones[].placements` with instances of pieces and assemblies (`split`: linked, relative
-paths), scale figures per zone in `REF`. Checks: B2-B7, with overlays against `plan_<zone>.svg` and
+collection laid out from `zones[].placements` with instances of pieces and assemblies, scale figures per zone in
+`REF`. Checks: B2-B7, with overlays against `plan_<zone>.svg` and
 `elevation_<id>.svg`.
 
-**Stage 5, T-MOD-MASTER (integrator).** Goal: the greybox views spot-checked with the modelled pieces (`split`: MASTER
-reloaded first, every link resolving). Checks: M9.
+**Stage 5, T-MOD-MASTER (integrator).** Goal: the greybox views spot-checked with the modelled pieces. Checks: M9.
 
 **Stage 6, T-UV-EXT (UV artist).** Goal: UV0 tiling at 512 px/m; a UV2 on every kit render mesh (LODs and probe-lit
 props too, not `_COL`), inside 0-1, no overlaps; on the lightmapped ones, gaps of at least 2 texels packed for the
 worst case (UV2 bounding box filling the tile) and at least 1 texel to the tile edge; `kit_status = uv`. Give the
-world's `texels_per_m`, its `lighting.baker` and each piece's `lightmap_scale`, and have the builder size each modelled
-mesh from its real surface area, not the spec table (which plans the fill only): `--map` =
-`uv_audit.lightmap_footprint(ob, texels_per_m, scale, coverage=1, lightmapper=<lighting.baker>)` (a whole number,
-rounded down; it applies an LOD mesh's 0.5^n itself, from its `_LOD<n>` name; Bakery's footprint has none), gap =
-`2 / --map` in UV units,
-Smart UV margin = half the gap, charts packed to fill their bounding box (`stages.md`, stage 6). Load: `uv-unwrapping`
-(+ `rizomuv-uv-pipeline` if RizomUV is installed). Checks: U1-U6, the UV2 audit run per mesh as `uv_audit ... --layer
-1 --lightmap --map <--map> --pad 2`. Fallback: Smart UV Project with `margin_method='FRACTION'` and `island_margin` =
-half the mesh's gap; UV0 of an atlas or unique map packed with Margin Method Fraction and a margin of 1/128 (islands
-`map_px / 64` apart, `map_px / 128` from the edge); texel scaling; all noted in the QA brief.
+world's `texels_per_m`, its `lighting.baker` and each piece's `lightmap_scale`, and paste stage 6's per-mesh sizing
+from `stages.md` into the steps: the builder sizes each modelled mesh's `--map` and gap from its real surface area,
+never from the spec's footprint table, which plans the fill only. Load: `uv-unwrapping` (+ `rizomuv-uv-pipeline` if
+RizomUV is installed). Checks: U1-U6, the UV2 audit run per mesh as `uv_audit ... --layer 1 --lightmap --map <--map>
+--pad 2`. Fallback: stage 6's Smart UV Project route in `stages.md`, noted in the QA brief.
 
 **Stage 7, T-TEX-TRIM-LAYOUT (texture artist).** Goal: the trim sheet's strip layout (strip heights in pixels, which
 strip is which trim) in `blender/substance/<FAMILY>/layout.md`, before the trim family's UVs. Load: none (paste
@@ -270,7 +263,7 @@ A1-A4, M9.
 Checks: A1-A4, M9.
 
 **Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`
-(`single`: exported from a work file checked out just before, the status then set in MASTER). Load:
+(exported from a work file checked out just before, the status then set in MASTER). Load:
 `blender-to-unity`. Checks: E1-E4. Fallback: the export settings listed in `stages.md`.
 
 **Stage 10, T-UNITY-IMPORT (Unity integrator).** Goal: one folder, FBX and prefab variant per piece, family materials
@@ -296,16 +289,14 @@ shader per material, per-platform objects; a missing build module reported as a 
 
 **Stage 11, T-LIGHT (lighting artist).** Goal: baked lighting within `budgets.lightmap`, avatars lit everywhere, every
 lightmapped renderer keeping its UV2 gaps at 2 texels (paste the `--footprints` table); occlusion culling baked,
-and Turn Off Mirror Occlusion unticked on each mirror unless objects flicker. A zone with `lighting_states`: one
-render-only copy of its static geometry per state, built in Unity under a `LIGHT_STATES` root outside MASTER's scope
-root so placement sync never sees them, by `vrchat-lighting-and-baking`'s method; the originals under MASTER keep
-their place, colliders and placement-sync role with their Mesh Renderers off, and are never moved, deleted or
-deactivated. A piece with `lod_lightmap: false`: Receive Global Illumination = Light Probes on its LOD1+ renderers.
-A `T-LIGHT-<n>` after stage 12 keeps the state parents the `T-UDON` scripts reference and adds I1 to its checks.
-Report, for the user: layout edits in a switched zone go to the originals under MASTER (selected in the Hierarchy)
-or to Blender, never to the copies. Lights, colours and contrast follow `look.lighting_mood` (paste it); bake with the
-lighting skill's final-quality settings. Writes: the stage-table row. Load: `vrchat-lighting-and-baking`. Checks:
-L1-L7.
+and Turn Off Mirror Occlusion unticked on each mirror unless objects flicker. Lights, colours and contrast follow
+`look.lighting_mood` (paste it); bake with the lighting skill's final-quality settings. A piece with `lod_lightmap:
+false`: Receive Global Illumination = Light Probes on its LOD1+ renderers. A zone with `lighting_states`: paste the
+lighting-states list from `stages.md`, stage 11 (copies under `LIGHT_STATES` outside MASTER's scope root, originals
+kept with their renderers off), and have the report tell the user that layout edits in a switched zone go to the
+originals under MASTER (selected in the Hierarchy) or to Blender, never to the copies. A `T-LIGHT-<n>` after stage 12
+keeps the state parents the `T-UDON` scripts reference and adds I1 to its checks. Writes: the stage-table row. Load:
+`vrchat-lighting-and-baking`. Checks: L1-L7.
 
 **Stage 12, T-UDON-SHOP-DOORS (Udon developer).** Goal: the interaction as described in the spec, synced as
 specified, no `Update()`. Load: `vrchat-udon`; for a light switch also `vrchat-lighting-and-baking` (every state
@@ -323,9 +314,8 @@ Manager keeps the world's blueprint ID across target switches in this one projec
 build task ends by switching the build target back to Windows. Load: `vrchat-world-sdk-setup`. Checks: O5.
 
 **Any stage after 4, T-RENAME-EXT-DOOR-2X3-A (integrator).** Goal: the piece renamed, and its FBX and Unity asset
-once they exist: `single`, its collection renamed in MASTER (every instance follows); `split`, renamed in its KIT
-file, the renamed collection linked in each ASM and MASTER file and the existing instances re-pointed
-(`ob.instance_collection = <renamed collection>`). Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
+once they exist: its collection renamed in MASTER, which every instance follows (`split`: `stages.md`, "Split
+layout"). Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
 dependencies"; its `stage` is the ledger's stage when it is added. Load: `blender-kit-library`,
 `blender-unity-placement-sync`. Writes: the stage-table row, with `world/placements/`. Checks: B2-B3, M9 (every
 earlier placement keeps its id, position and rotation), and N4-N5 after stage 10.

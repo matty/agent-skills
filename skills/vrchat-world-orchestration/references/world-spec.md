@@ -180,13 +180,9 @@ Under 64 px (house guidance, no published source), the two kinds of piece differ
 
 Any piece can still be made probe-lit on purpose with `lightmap: false`.
 
-UV2 gaps are packed at stage 6, per modelled mesh, for the worst case b = 1 (a fill pack's bounding box approaches the
-whole tile): at least 2 texels at `texels_per_m x sqrt(A) x lightmap_scale` px (x 0.5^n for LODn), with A the mesh's
-real surface area, so the gap in UV units is `2 / (texels_per_m x sqrt(A) x lightmap_scale x 0.5^n)`, with at least 1
-texel to the tile edge. That keeps 2 texels whatever the packer does; checks after packing (QA U4, and L6 after the
-bake) use the measured b. Never size the gaps from the bounding box: an opening or an open shell has much less area
-than its box (the example door bay: 11.04 m2 against 15.00 m2), and gaps sized from the box came out at 1.73 texels on
-the real mesh. Never shrink `lightmap_scale` below what a piece's UV2 gaps were packed for.
+UV2 gaps are packed at stage 6, per modelled mesh, for the worst case b = 1, from the mesh's real surface area, never
+from the bounding box this check plans with (`stages.md`, stage 6); checks after packing (QA U4, and L6 after the
+bake) use the measured b. Never shrink `lightmap_scale` below what a piece's UV2 gaps were packed for.
 
 `spec_validate.py world/spec.yaml --footprints` prints each piece's planning cost and footprint (the box's surface as
 A, b = 0.85), its placements and the fill, for the lighting brief. It plans the lightmap fill only; stage 6 sizes the
@@ -233,12 +229,10 @@ M_<FAMILY>_<Name>                   M_EXT_Brick
 - Regex: `^[A-Z]{2,5}_[A-Za-z0-9]+_(\d+(x\d+){0,2}|Free)_[A-Z]\d?$` and `^ASM_[A-Za-z0-9]+_[A-Z]\d?$`.
 
 Names are load-bearing: linking, FBX file names, Unity prefab names and placement sync all key on them. Renaming a
-piece after stage 4 is a spec change (it re-opens the spec gate) and a task that renames it, its FBX and its Unity
-asset: `single`, renaming its collection in MASTER, which every instance follows; `split`, renaming it in the KIT
-file, then in each ASM and MASTER file linking the renamed collection and re-pointing the existing instances
-(`ob.instance_collection = <renamed collection>`), so their placement ids survive. Never delete and
-re-place them: placement sync then sees new pieces and conflicts (the `blender-kit-library` procedure). That task is
-`T-RENAME-<PIECE>`, with its own write row in `stages.md`.
+piece after stage 4 is a spec change (it re-opens the spec gate) and a `T-RENAME-<PIECE>` task (`stages.md`) that
+renames the piece's collection, which every instance follows, its FBX and its Unity asset, so placement ids survive.
+Never delete and re-place pieces: placement sync then sees new pieces and conflicts (the `blender-kit-library`
+procedure).
 
 ### Geometry conventions
 
@@ -283,7 +277,4 @@ These do not re-open it:
 - A change the user has already approved in their own words, logged with the quote.
 - Recording a value already in effect, such as the resolution a bake used.
 
-Re-opening is a ledger step (`ledger.md`): keep the old decision in the gate's `history`, set it `pending`, record
-the task that re-opened it in `reopened_by`, and ask with the change (`world/spec.approved.yaml`, kept at each
-approval, shows the delta). Every task downstream of the gate that has not started is held until the user approves;
-one already running finishes, and one whose session died goes back to `todo` (same attempt).
+Re-opening is a ledger step: `ledger.md`, "Gate re-opened".
