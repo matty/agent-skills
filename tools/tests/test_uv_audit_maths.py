@@ -376,6 +376,11 @@ class UvAuditMaths(unittest.TestCase):
         d["low"] = np.array([False, True])            # marked but not lowered
         r = self.m(d, map_px=1024)
         self.assertTrue(any("not lowered" in i for i in r["issues"]))
+        # hero prop F20: low_factor lowers the marked island to that share of the class, the rest at the class
+        uv, _f = self.ua._scale_density(d, 0.5, (1.0, 1.0), True, low_factor=0.5)
+        r = self.m(dict(d, uv=uv), map_px=1024)
+        self.assertEqual((r["texel_px_per_m"], r["low_density_px_per_m"]), (512.0, 256.0))
+        self.assertFalse(any("not lowered" in i for i in r["issues"]), r["issues"])
 
     # ---- stacks, mirrors, folds
     def test_stacked_copies(self):

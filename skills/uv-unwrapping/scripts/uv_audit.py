@@ -1738,6 +1738,99 @@ def turn_islands(objects, map_px=1024, layer=0, material=None):
     return out
 
 
+def _square_quad(co, uv):
+    """A quad's four UVs replaced by a rectangle of its 3D side lengths: the same centre, area per square metre and
+    winding, its first side turned to the nearest of U or V."""
+    a = float(np.linalg.norm(co[1] - co[0]))
+    b = float(np.linalg.norm(co[3] - co[0]))
+    area3 = float(np.linalg.norm(np.cross(co[1] - co[0], co[3] - co[0]))) or 1e-12
+    e = uv[1] - uv[0]
+    signed = 0.5 * float(np.sum(uv[:, 0] * np.roll(uv[:, 1], -1) - np.roll(uv[:, 0], -1) * uv[:, 1]))
+    k = math.sqrt(abs(signed) / area3) or 1.0
+    ang = round(math.atan2(e[1], e[0]) / (math.pi / 2)) * (math.pi / 2)
+    du = np.array([math.cos(ang), math.sin(ang)]) * a * k
+    dv = np.array([-math.sin(ang), math.cos(ang)]) * b * k * (1.0 if signed >= 0 else -1.0)
+    c = uv.mean(axis=0)
+    return np.array([c - du / 2 - dv / 2, c + du / 2 - dv / 2, c + du / 2 + dv / 2, c - du / 2 + dv / 2])
+
+
+def straighten(objects, layer=0, material=None):
+    """Step 6 for strips: every all-quad UV island (UV0 unless layer says otherwise) straightened with Follow Active
+    Quads, mode LENGTH: its most rectangular quad squared to its 3D side lengths at the island's own density and turned
+    to the nearest of U or V, then the island follows it. Islands holding a triangle or an n-gon cannot follow and are
+    left as they are (counted under "skipped"). material: only islands whose faces all match it. Run it after the
+    unwrap and before the layout; audit after. Restores the mode, selection and active UV map. Returns {object name:
+    {"straightened", "skipped"}}."""
+    import bmesh
+    objects = [o for o in objects if o.type == "MESH"]
+    out = {}
+    if not objects:
+        return out
+    prev = (bpy.context.view_layer.objects.active, list(bpy.context.selected_objects), bpy.context.mode)
+    sync = bpy.context.scene.tool_settings.use_uv_select_sync
+    try:
+        bpy.context.scene.tool_settings.use_uv_select_sync = True
+        for ob in objects:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            old_active = ob.data.uv_layers.active_index
+            lay = _set_active_layer(ob, layer)
+            d = _arrays(ob, lay.name, evaluated=False)
+            npoly = len(d["ls"])
+            pa, pb, uv_split, _hard, _key = _edges(d)
+            isl = _islands(npoly, pa, pb, ~uv_split)
+            keep = _material_faces(d, material) if material else np.ones(npoly, bool)
+            co = d["co"]                                              # world space, as the audit measures
+            todo, skipped = [], 0
+            for i in range(int(isl.max()) + 1 if npoly else 0):
+                faces = np.flatnonzero(isl == i)
+                if not keep[faces].all():
+                    continue
+                if (d["lt"][faces] != 4).any() or len(faces) < 2:
+                    skipped += int((d["lt"][faces] != 4).any())
+                    continue
+                best, score = None, -1.0
+                for f in faces:
+                    q = co[d["lv"][d["ls"][f]:d["ls"][f] + 4]]
+                    sides = [q[(k + 1) % 4] - q[k] for k in range(4)]
+                    cosmax = max(abs(float(np.dot(sides[k], sides[(k + 1) % 4])))
+                                 / max(float(np.linalg.norm(sides[k]) * np.linalg.norm(sides[(k + 1) % 4])), 1e-12)
+                                 for k in range(4))
+                    s = (1.0 - cosmax) + 1e-6 * float(np.linalg.norm(np.cross(sides[0], sides[3])))
+                    if s > score:
+                        best, score = int(f), s
+                sl = slice(int(d["ls"][best]), int(d["ls"][best]) + 4)
+                quad = _square_quad(co[d["lv"][sl]], d["uv"][sl])
+                for li, uv in zip(range(sl.start, sl.stop), quad):
+                    lay.data[li].uv = (float(uv[0]), float(uv[1]))
+                todo.append((best, faces))
+            ob.data.update()
+            if todo:
+                for o in bpy.context.selected_objects:
+                    o.select_set(False)
+                ob.select_set(True)
+                bpy.context.view_layer.objects.active = ob
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_mode(type="FACE")
+                for best, faces in todo:
+                    bm = bmesh.from_edit_mesh(ob.data)
+                    bm.faces.ensure_lookup_table()
+                    for f in bm.faces:
+                        f.select_set(False)
+                    for f in faces:
+                        bm.faces[int(f)].select_set(True)
+                    bm.faces.active = bm.faces[best]
+                    bmesh.update_edit_mesh(ob.data)
+                    bpy.ops.uv.follow_active_quads(mode="LENGTH")
+                bpy.ops.object.mode_set(mode="OBJECT")
+            ob.data.uv_layers.active_index = old_active
+            out[ob.name] = {"straightened": len(todo), "skipped": skipped}
+    finally:
+        bpy.context.scene.tool_settings.use_uv_select_sync = sync
+        _restore(prev)
+    return out
+
+
 def pair_faces(ob, src_faces, offset, tol=None):
     """The faces of a copy, in src_faces' order: for each source face, the face whose centre sits at its centre +
     offset (object space, metres). For copies whose faces are not one contiguous index range, as an Array's are once
@@ -1821,10 +1914,11 @@ def stack_faces(ob, src_faces, dst_faces, layer=0):
     return len(dst_faces)
 
 
-def _scale_density(d, target, aspect, per_island):
+def _scale_density(d, target, aspect, per_island, low_factor=None):
     """New UVs for flat arrays d: every island at target UV units per metre (per_island) or the whole object scaled
     by one factor. Islands whose faces are all marked low-density take the object's factor, keeping their size
-    relative to the rest. Returns (uv, area-weighted mean factor)."""
+    relative to the rest, or with low_factor each its own at low_factor x target. Returns (uv, area-weighted mean
+    factor)."""
     npoly = len(d["ls"])
     pa, pb, uv_split, _hard, _key = _edges(d)
     isl = _islands(npoly, pa, pb, ~uv_split)
@@ -1838,11 +1932,14 @@ def _scale_density(d, target, aspect, per_island):
     marked = (np.bincount(isl, weights=(~low).astype(float), minlength=n) == 0) & (np.bincount(isl, minlength=n) > 0)
     unm = ~marked & (au > 0)
     big = (target / math.sqrt(au[unm].sum() / max(a3[unm].sum(), 1e-30))) if unm.any() else 1.0
+    own = np.where(au > 0, target / np.sqrt(np.maximum(au, 1e-30) / np.maximum(a3, 1e-30)), 1.0)
     if per_island:
-        f = np.where(au > 0, target / np.sqrt(np.maximum(au, 1e-30) / np.maximum(a3, 1e-30)), 1.0)
+        f = own.copy()
         f[marked] = big
     else:
         f = np.full(n, big)
+    if low_factor:
+        f[marked] = own[marked] * float(low_factor)
     isl_loop = np.repeat(isl, d["lt"])
     uv = d["uv"].copy()
     corners = np.maximum(np.bincount(isl_loop, minlength=n), 1)
@@ -1852,10 +1949,11 @@ def _scale_density(d, target, aspect, per_island):
 
 
 def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_after=True, pad_px=None,
-                      keep_stacks=False, rotate=False, material=None):
+                      keep_stacks=False, rotate=False, material=None, low_factor=None):
     """Scale UV islands (UV0 unless layer says otherwise) so the surface gets px_per_m texels per metre on a map_px
     texture, measured in world space on the evaluated mesh. per_island=True also evens islands out (like Average
-    Islands Scale); islands whose faces are all marked uv_low_density keep their size relative to the rest.
+    Islands Scale); islands whose faces are all marked uv_low_density keep their size relative to the rest (or,
+    with low_factor, 0.5 for half, go to that share of px_per_m each).
     pack_after=True then packs with scale=False and keep_stacks / rotate as given. material: only the faces whose
     material name matches (a name or a pattern; the others keep their UVs), with pack_after=False: on a mesh that
     mixes trim and tiling, scale the trim strips alone. layout() is the safer call: it also separates non-stacked
@@ -1887,11 +1985,12 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
                 if not keep.any():
                     out[ob.name] = None                                # no face with that material: untouched
                     continue
-                sub, out[ob.name] = _scale_density(_subset(d, keep), px_per_m / s, (w / s, h / s), per_island)
+                sub, out[ob.name] = _scale_density(_subset(d, keep), px_per_m / s, (w / s, h / s), per_island,
+                                                   low_factor)
                 uv = d["uv"].copy()
                 uv[np.repeat(keep, d["lt"])] = sub                     # the other faces' UVs are left as they were
             else:
-                uv, out[ob.name] = _scale_density(d, px_per_m / s, (w / s, h / s), per_island)
+                uv, out[ob.name] = _scale_density(d, px_per_m / s, (w / s, h / s), per_island, low_factor)
             lay.uv.foreach_set("vector", uv.ravel())
             ob.data.update()
         finally:
@@ -2081,12 +2180,12 @@ def _bake_offsets(o, lay, faces=None):
 
 
 def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=True, rotate_method="CARDINAL",
-           bake=False, together=False, material=None, max_island_m=None):
+           bake=False, together=False, material=None, max_island_m=None, low_factor=None):
     """Step 8 of the order of work, its parts in their only safe order, on a UV map (UV0 unless layer says
     otherwise) already unwrapped, straightened, oriented and stacked (identical parts placed exactly on one copy,
     faces lowered on purpose marked):
-      1. density: every island to px_per_m, marked islands kept relative to the rest (px_per_m=None: sizes as they
-         are, and the pack scales everything to fill the tile);
+      1. density: every island to px_per_m, marked islands kept relative to the rest or at low_factor x px_per_m
+         (px_per_m=None: sizes as they are, and the pack scales everything to fill the tile);
       2. stacks found by shape (copies already moved by whole tiles count) and every stack moved clear of the
          others, so the pack merges true stacks only;
       3. one pack: stacks kept, sizes kept when px_per_m is set, rotation off when directional (else rotate_method);
@@ -2115,7 +2214,7 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
     try:
         if px_per_m and objects:
             for name, f in set_texel_density(objects, px_per_m, size, layer=layer, pack_after=False,
-                                             material=material).items():
+                                             material=material, low_factor=low_factor).items():
                 out[name]["factor"] = f
         groups = [objects] if together else [[o] for o in objects]
         for group in groups:

@@ -215,6 +215,66 @@ def edge_margin_is_reported():
         check(res["margin_px"] is not None and (res["margin_px"] >= 4 - 1e-3) is fits, "margin_px %s" % res)
 
 
+def straighten_strips():
+    """Hero prop F20: a tube's quad strip unwrapped ANGLE_BASED comes out bent; straighten() squares its best quad and
+    makes the island follow it, so every UV edge runs along U or V at its 3D length (angular stretch 1); an island
+    holding a triangle is left alone and counted."""
+    n, rings = 16, 4                                        # an open tube, 16 x 3 quads, 1 m across and high
+    verts = [(0.5 * math.cos(2 * math.pi * i / n), 0.5 * math.sin(2 * math.pi * i / n), z / (rings - 1))
+             for z in range(rings) for i in range(n)]
+    faces = [(z * n + i, z * n + (i + 1) % n, (z + 1) * n + (i + 1) % n, (z + 1) * n + i)
+             for z in range(rings - 1) for i in range(n)]
+    me = bpy.data.meshes.new("TUBE")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    me.uv_layers.new(name="UVMap")
+    ob = bpy.data.objects.new("TUBE", me)
+    bpy.context.scene.collection.objects.link(ob)
+    for e in me.edges:                                      # one vertical seam, at x = 0.5
+        a, b = (me.vertices[i].co for i in e.vertices)
+        e.use_seam = abs(a.x - b.x) < 1e-6 and abs(a.y - b.y) < 1e-6 and a.x > 0.49
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    lay = me.uv_layers.active                               # as a dry run found it: tilted 5 deg and uneven
+    uv = np.array([d.uv[:] for d in lay.data])
+    c, a = uv.mean(axis=0), math.radians(5.0)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    key = [(me.loops[i].vertex_index, round(uv[i, 0], 5), round(uv[i, 1], 5)) for i in range(len(uv))]
+    jitter = {k: np.random.default_rng(len(key) + j).normal(0.0, 0.002, 2) for j, k in enumerate(sorted(set(key)))}
+    uv = (uv - c) @ rot.T + c + np.array([jitter[k] for k in key])     # per UV vertex: the island stays whole
+    for d, v in zip(lay.data, uv):
+        d.uv = v
+    me.update()
+
+    def worst_edge_deg():
+        lay = me.uv_layers.active
+        worst = 0.0
+        for p in me.polygons:
+            uv = [lay.data[li].uv for li in p.loop_indices]
+            for k in range(len(uv)):
+                dx, dy = uv[(k + 1) % len(uv)].x - uv[k].x, uv[(k + 1) % len(uv)].y - uv[k].y
+                a = math.degrees(math.atan2(abs(dy), abs(dx)))
+                worst = max(worst, min(a, 90.0 - a))
+        return worst
+    before = worst_edge_deg()
+    res = ua.straighten([ob])[ob.name]
+    after = worst_edge_deg()
+    check(res == {"straightened": 1, "skipped": 0} and before > 1.0 and after < 0.05,
+          "straighten: %s, worst edge %.2f -> %.3f deg off U/V" % (res, before, after))
+    r = ua.audit(ob, layer=0, map_px=1024)
+    check(r["angular_p95"] < 1.01, "straightened strip stretched: %s" % r["angular_p95"])
+    check(bpy.context.mode == "OBJECT", "mode not restored: %s" % bpy.context.mode)
+    bpy.ops.mesh.primitive_cone_add(vertices=8)
+    cone = bpy.context.active_object
+    check(ua.straighten([cone])[cone.name]["skipped"] >= 1, "an island with triangles must be skipped")
+
+
 def active_layer_restored():
     q3 = [quad(2 * i, 0, 2 * i + 1, 1) for i in range(3)]
     ob = make("LAYERS", q3, [sq(0.05, 0.05, 0.1), sq(0.3, 0.05, 0.2), sq(0.6, 0.05, 0.3)], layers=("UVMap", "UV2"))
@@ -1657,7 +1717,7 @@ CASES = [tiling_kit_continues_across_joints, pack_one_material, layout_cuts_long
          text_check_follows_align_rotation,
          lightmap_uv2_seams_not_smart_project, lightmap_flags_on_the_command_line, bevel_stack_order_of_work,
          stack_faces_checks_corner_order,
-         layout_atlas_together, off_tile_island_is_reported, edge_margin_is_reported, crate_grain_by_axis_across, merged_mirror_halves_bake,
+         layout_atlas_together, off_tile_island_is_reported, edge_margin_is_reported, straighten_strips, crate_grain_by_axis_across, merged_mirror_halves_bake,
          unwrap_margin_keeps_seams, lightmap_charts_cut_at_corners, uv0_is_the_default_layer,
          trim_strip_band_and_rows, stacking_tools, lightmap_pack_and_measured_footprint, lightmap_pack_for_bakery,
          active_layer_restored,

@@ -84,8 +84,8 @@ A piece whose look needs a number loosened passes `limits=` (recorded in the rep
 ## 5. Straighten and orient
 
 - Straighten every strip of quads (trims, belts, frames, pipes, stairs): it packs tighter and its edges follow the
-  pixel grid. Square one quad, make it active, `bpy.ops.uv.follow_active_quads(mode="LENGTH")` (`LENGTH_AVERAGE`
-  stretched a strip cut from a larger mesh 0.87-1.31x), one island at a time.
+  pixel grid: `ua.straighten(objs)` squares each all-quad island's best quad and runs Follow Active Quads, mode
+  `LENGTH`, island by island (`LENGTH_AVERAGE` stretched a strip cut from a larger mesh 0.87-1.31x).
 - Directional textures (wood grain, fabric, brushed metal): grain along U on every island.
   `uv.align_rotation(method="GEOMETRY", axis=A)` turns each selected island so 3D axis A points along +V (an island
   whose normal is A stays put; Blender 5.2.2). Pass the axis ACROSS the grain, one face group at a time: Z for the
@@ -117,9 +117,9 @@ objects, or the odd one out looks blurry or oversharp.
   half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
   0.5 m tile, never 4 m); floors and ceilings unturned; curves as strips marked `uv_strip`, closed on whole tiles;
   audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
-- Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
-  mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
-  audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.
+- Lower it on purpose only where nobody looks (undersides, backs against walls), each island even, marking those
+  faces with the boolean face attribute `uv_low_density` (`_<UV map name>` for one map): the audit leaves them out of
+  the mean and spread; `layout(..., low_factor=0.5)` sets them to half the class. Map size: `texel-density.md`.
 
 ## 7. Packing and padding
 
