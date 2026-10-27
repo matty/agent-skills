@@ -1198,10 +1198,10 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("linked piece %s: instance_offset %s in its KIT file, so every placement of it is drawn that "
                        "far off" % (lp["piece"], lp["instance_offset"]))
     for pl in rep["placements"]:
-        sc = pl.get("scale") or [1.0, 1.0, 1.0]
+        sc = [abs(s) for s in pl.get("scale") or [1.0, 1.0, 1.0]]     # a mirror decomposes to negative scales
         if max(sc) > min(sc) * (1.0 + 1e-3):
             out.append("placement %s (%s) scaled unevenly %s: its texture stretches; scale it evenly or remodel it"
-                       % (pl["object"], pl["asset"], sc))
+                       % (pl["object"], pl["asset"], pl["scale"]))
         if pl.get("kind") != "grid":
             continue                          # Free props and assemblies: data only, compared with the spec (A3)
         if pl["on_grid"] is False:
