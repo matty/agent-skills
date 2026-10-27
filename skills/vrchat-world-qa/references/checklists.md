@@ -38,7 +38,8 @@ G1-G5 apply to every task. Run the rest for the task you are checking (`<FAMILY>
 | 13 | `T-BUILD-<platform>` | O5 |
 | Any, after 4 | `T-RENAME-<PIECE>` (a piece renamed after the greybox) | M9 (B2-B3 within it), N4-N5 after stage 10 |
 
-**Single MASTER** (the default layout: `qa_measure` reports `layout: single`; the ledger's `intake.blend_layout`).
+**Single MASTER** (the default layout, and the only one `vrchat-world-orchestration` builds: `qa_measure` reports
+`layout: single`).
 The pieces, assemblies and layout are collections in `blender/MASTER.blend`, so read the file-based checks this way:
 
 | Check | In a single MASTER |
@@ -171,7 +172,7 @@ prints is a failure of the check listed here; NOTE lines are advisory. `objects`
 
 | Id | Check | How |
 |---|---|---|
-| P1 | Each family has a file path (`blender/MASTER.blend` in the single layout, its KIT file when split), a material list of 1-3 materials and a texture approach (trim / tiling / atlas / unique) | Spec |
+| P1 | Each family has a material list of 1-3 materials and a texture approach (trim / tiling / atlas / unique); no family or assembly names a `file` other than `blender/MASTER.blend` (the pipeline keeps every piece and assembly there) | Spec |
 | P2 | Pieces snap: widths and heights are whole modules; corner and end pieces exist for every wall family, or the piece `desc` says why none is needed and the plan bears it out (for example walls that overlap in the corners and never end in open space) | Spec, plans |
 | P3 | Repeated elements are one piece used many times, not near-duplicates (`_A`/`_B` must differ visibly) | Spec, elevations |
 | P4 | Texel density and map size set per family, consistent across families seen side by side | Spec `families.*.texel_density`, `map_px` |

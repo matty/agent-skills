@@ -33,8 +33,8 @@ go to the user at the look gate, and the other families start from the approved 
    `@10,10`; name the files with `--output-name`, or rename them after). Blender
    cannot read a `.sbsar` without Adobe's add-on, so there is no Blender route. Only without `sbsrender`, ask the
    user to export the outputs from Designer. Checked 2026-10-17 against `sbsrender render --help`, Designer 16.0.7.
-5. Build `M_<FAMILY>_<Name>` in the KIT file from those images, so the FBX carries the material name and Unity can
-   remap it to the shared material.
+5. Build `M_<FAMILY>_<Name>` on the family's work file from those images (integrated into MASTER), so the FBX
+   carries the material name and Unity can remap it to the shared material.
 
 ## Painter (unique props, user-assisted)
 
