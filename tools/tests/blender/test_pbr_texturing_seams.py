@@ -253,6 +253,75 @@ def mirrored_piece_joins_its_neighbour():
     r = NS["joints"](placed, path)
     check(len(r["pairs"]) == 1 and r["seam_m"] > 5, "the mirrored piece's joint must be paired: %s" % r)
 
+
+def front_object(name, polys, du=0.0, material=None, other=None):
+    """A mesh of faces in the y = 0 plane facing -Y, U = x + du and V = z (a 1 m tile); polys: lists of (x, z)
+    corners counter-clockwise seen from -Y. other: (polygon, material name) faces on a second material."""
+    me = bpy.data.meshes.new(name)
+    verts, faces, idx = [], [], {}
+    for poly in polys + ([other[0]] if other else []):
+        f = []
+        for x, z in poly:
+            if (x, z) not in idx:
+                idx[(x, z)] = len(verts)
+                verts.append((x, 0.0, z))
+            f.append(idx[(x, z)])
+        faces.append(f)
+    me.from_pydata(verts, [], faces)
+    me.update()
+    lay = me.uv_layers.new(name="UVMap")
+    for p in me.polygons:
+        for li in range(p.loop_start, p.loop_start + p.loop_total):
+            co = me.vertices[me.loops[li].vertex_index].co
+            lay.data[li].uv = (co.x + du, co.z)
+    for m in (material, other[1] if other else None):
+        if m:
+            me.materials.append(bpy.data.materials.get(m) or bpy.data.materials.new(m))
+    if other:
+        me.polygons[-1].material_index = 1
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def joints_long_triangles_and_partial_edges():
+    """A joint whose faces are long triangles (a fan-triangulated spandrel: their centroids lie far along the joint
+    edge) is judged, so a 0.3-tile jump shows; edges that only partly coincide give a NOTE, not a silent pass; and the
+    normal-map check judges one material of a piece whose n-gons all lie on another."""
+    path = os.path.join(TMP, "T_EXT_Brick_BaseColor.png")
+    img = bpy.data.images.new("brick", 256, 256)
+    img.pixels.foreach_set(brick_tile().ravel())
+    img.filepath_raw, img.file_format = path, "PNG"
+    img.save()
+    left = [[(1.9, 3.0), (2.0, 0.0), (2.0, 0.3)][::-1], [(1.0, 0.0), (2.0, 0.0), (1.9, 3.0)]]
+    right = [[(2.0, 0.0), (2.1, 3.0), (2.0, 0.3)][::-1], [(2.0, 0.0), (3.0, 0.0), (2.1, 3.0)]]
+    a = front_object("A_fan", left)
+    b = front_object("B_fan", right)
+    bpy.context.view_layer.update()
+    r = NS["joints"]([a, b], path)
+    check(r["edges"] >= 1 and r["visible_m"] == 0, "long triangles at a continuing joint: %s" % r)
+    bpy.data.objects.remove(b)
+    b = front_object("B_shifted", right, du=0.3)
+    bpy.context.view_layer.update()
+    r = NS["joints"]([a, b], path)
+    check(r["visible_m"] > 0 and r["issues"], "a 0.3-tile jump between long triangles must show: %s" % r)
+    tall = front_object("C_tall", [[(0.0, 0.0), (2.0, 0.0), (2.0, 4.0), (0.0, 4.0)]])
+    short = front_object("D_short", [[(2.0, 0.0), (4.0, 0.0), (4.0, 2.0), (2.0, 2.0)]])
+    bpy.context.view_layer.update()
+    r = NS["joints"]([tall, short], path)
+    check(r["t_junctions"] and any("inside an edge" in n for n in r["notes"]), "a T-junction joint: %s" % r)
+    ngon = [(5.0, 2.0), (5.5, 2.0), (6.0, 2.2), (5.7, 2.8), (5.2, 2.6)]
+    mixed = front_object("E_mixed", [[(4.0, 0.0), (6.0, 0.0), (6.0, 2.0), (4.0, 2.0)]], material="M_EXT_Brick",
+                         other=(ngon, "M_EXT_Stone"))
+    bpy.context.view_layer.update()
+    r = NS["joints"]([short, mixed], path, kind="normal", material="M_EXT_Brick")
+    check("edges" in r, "an n-gon outside the judged material must not stop the normal check: %s" % r)
+    try:
+        NS["joints"]([short, mixed], path, kind="normal", material="M_EXT_Stone")
+        raise AssertionError("an n-gon inside the judged material must be refused")
+    except ValueError:
+        pass
+
 def maths_without_meshes():
     img = np.zeros((4, 4, 3))
     img[:, 0] = 1.0                                        # column 0 bright: wraps onto column 3's right edge
@@ -272,7 +341,8 @@ def maths_without_meshes():
 
 
 CASES = [maths_without_meshes, noise_from_uv_shows_from_object_does_not, normal_bake_clean_until_an_island_moves,
-         kit_joints_through_collection_instances, mirrored_piece_joins_its_neighbour]
+         kit_joints_through_collection_instances, mirrored_piece_joins_its_neighbour,
+         joints_long_triangles_and_partial_edges]
 
 
 def main():

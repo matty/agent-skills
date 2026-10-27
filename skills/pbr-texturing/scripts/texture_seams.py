@@ -5,7 +5,8 @@ A seam shows when the texture changes more across it than it does anywhere nearb
 pattern that ignores the seam, a normal map baked with another tangent basis or with an island moved after the bake,
 a tiling pattern whose phase jumps at a kit joint. Each seam edge is sampled at a few points along it, half a texel
 inside each of its two faces (the same point in 3D, two places in the texture); the step between the two sides is
-compared with the texture's own step between texels one apart, from there to 3.5 texels inside each face. A ratio near 1 is a seam nobody can find;
+compared with the texture's own step between texels one apart, from there to 3.5 texels inside each face. A ratio
+near 1 is a seam nobody can find;
 measured on Blender 5.2.2 (2026-10-27): noise baked from Object coordinates onto a smart-projected sphere 0.99, the
 same noise from UV coordinates 8.06.
 
@@ -214,9 +215,27 @@ def _placed(objects):
 
 def _mesh_arrays(ev, mw, uv_layer=None, normals=False, material=None):
     """Flat arrays of an evaluated object's mesh in world space: positions, corners, faces, UVs, corner normals and,
-    with normals=True, MikkTSpace tangents and signs (world space). material: faces kept by material name."""
+    with normals=True, MikkTSpace tangents and signs (world space). material: faces kept by material name. Tangents
+    need triangles and quads: n-gons outside the kept material are triangulated in the temporary mesh, one inside it
+    is refused (the piece exports triangulated: judge that mesh)."""
     me = ev.to_mesh()
     try:
+        slots = [s.material.name if s.material else "" for s in ev.original.material_slots]
+        ok = (np.array([bool(n) and fnmatch.fnmatchcase(n, material) for n in slots] or [False], bool)
+              if material else None)
+        if normals and any(len(p.vertices) > 4 for p in me.polygons):
+            big = [p for p in me.polygons if len(p.vertices) > 4]
+            if ok is None or any(ok[min(p.material_index, len(ok) - 1)] for p in big):
+                raise ValueError("%s has n-gons: MikkTSpace tangents need triangles or quads (triangulate it as it "
+                                 "exports)" % ev.name)
+            import bmesh
+            bm = bmesh.new()
+            try:
+                bm.from_mesh(me)
+                bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 4])
+                bm.to_mesh(me)
+            finally:
+                bm.free()
         lay = me.uv_layers.get(uv_layer) if uv_layer else me.uv_layers.active
         if lay is None:
             raise ValueError("%s has no UV map %r" % (ev.name, uv_layer or "(active)"))
@@ -241,9 +260,6 @@ def _mesh_arrays(ev, mw, uv_layer=None, normals=False, material=None):
         d = {"co": co, "lv": lv, "ls": ls, "lt": lt, "uv": uv.reshape(-1, 2), "cn": cn,
              "flip": -1.0 if np.linalg.det(nm) < 0 else 1.0}                   # a mirror reverses the winding
         if normals:
-            if max(lt) > 4:
-                raise ValueError("%s has n-gons: MikkTSpace tangents need triangles or quads (triangulate it as it "
-                                 "exports)" % ev.name)
             me.calc_tangents(uvmap=lay.name)
             tg = np.empty(nl * 3)
             me.loops.foreach_get("tangent", tg)
@@ -253,11 +269,9 @@ def _mesh_arrays(ev, mw, uv_layer=None, normals=False, material=None):
             tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-12)
             d["tg"], d["sg"] = tg, sg * (1.0 if np.linalg.det(nm) > 0 else -1.0)
         keep = np.ones(npoly, bool)
-        if material:
-            slots = [s.material.name if s.material else "" for s in ev.original.material_slots]
+        if ok is not None:
             mi = np.empty(npoly, np.int64)
             me.polygons.foreach_get("material_index", mi)
-            ok = np.array([bool(n) and fnmatch.fnmatchcase(n, material) for n in slots] or [False], bool)
             keep = ok[np.clip(mi, 0, len(ok) - 1)]
         d["keep"] = keep
         return d
@@ -373,8 +387,11 @@ def joints(objects, image, kind="color", uv_layer=None, material=None, tol=1e-4,
     faces at such an edge, the pair from two pieces that continue each other is judged: facing within fold_deg of the
     same way and lying on opposite sides of the edge (two walls' fronts; their end caps pressed together face apart
     and are skipped). Each side is compared with the other side's texture continued half a texel across the joint,
-    so a mortar line or plank gap that happens to fall on the joint is not mistaken for a jump. objects: mesh objects and/or
-    collection-instance empties (a kit layout). Returns the report with "issues" and "pairs" (piece pairs that meet)."""
+    so a mortar line or plank gap that happens to fall on the joint is not mistaken for a jump. Which side a face lies
+    on is read across the edge, so a long triangle (a fan-triangulated spandrel) is judged too. Edges that only partly
+    coincide (a 2 m edge against a 4 m one, a T-junction) give no pair: those pieces get a NOTE (t_junctions).
+    objects: mesh objects and/or collection-instance empties (a kit layout). Returns the report with "issues",
+    "notes" and "pairs" (piece pairs that meet)."""
     if kind not in ("color", "normal"):
         raise ValueError("kind is 'color' or 'normal'")
     img, name = load_image(image)
@@ -407,9 +424,11 @@ def joints(objects, image, kind="color", uv_layer=None, material=None, tol=1e-4,
                 dot = float(np.dot(_face_normal(da, sa[0]), _face_normal(db, sb[0])))
                 pa, pb = da["co"][da["lv"][sa[1]]], da["co"][da["lv"][sa[2]]]
                 mid = (pa + pb) / 2
-                if dot < cos_fold or float(np.dot(_face_centroid(da, sa[0]) - mid,
-                                                  _face_centroid(db, sb[0]) - mid)) >= 0:
-                    continue
+                e = (pb - pa) / max(float(np.linalg.norm(pb - pa)), 1e-12)
+                ca, cb = _face_centroid(da, sa[0]) - mid, _face_centroid(db, sb[0]) - mid
+                ca, cb = ca - e * float(np.dot(ca, e)), cb - e * float(np.dot(cb, e))   # across the edge only: a long
+                if dot < cos_fold or float(np.dot(ca, cb)) >= 0:                         # triangle's centroid lies
+                    continue                                                             # far along it
                 if best is None or dot > best[0]:
                     best = (dot, i, sa, j, sb, pa, pb)
         if best is None:
@@ -423,7 +442,51 @@ def joints(objects, image, kind="color", uv_layer=None, material=None, tol=1e-4,
             pairs.add(tuple(sorted((da["name"], db["name"]))))
     rep = dict(summarise(rows, kind, limits, baseline(img, kind)), image=name, pieces=len(datas), pairs=sorted(pairs))
     _verdicts(rep, "joints between pieces", limits)
+    tj = _t_junctions(datas, tol)
+    rep["t_junctions"] = tj
+    rep["notes"] += ["%s and %s meet with %d vertex(es) of one inside an edge of the other: no shared edge to judge "
+                     "there, so look at that joint in a close render and make the edges meet (M5)" % (a, b, n)
+                     for a, b, n in tj]
     return rep
+
+
+def _t_junctions(datas, tol):
+    """[(piece, piece, vertices)] where a vertex of one piece's kept faces lies strictly inside an edge of another's
+    (within tol metres): a joint whose edges only partly coincide, which no edge pair can judge."""
+    out = []
+    boxes = []
+    for d in datas:
+        used = np.unique(d["lv"][np.concatenate([np.arange(s, s + n) for s, n, k in zip(d["ls"], d["lt"], d["keep"])
+                                                 if k] or [np.zeros(0, np.int64)])])
+        pts = d["co"][used]
+        boxes.append((pts, pts.min(0) - tol, pts.max(0) + tol) if len(pts) else (pts, None, None))
+    for i, di in enumerate(datas):
+        for j, dj in enumerate(datas):
+            if i == j or boxes[i][1] is None or boxes[j][1] is None:
+                continue
+            lo, hi = np.maximum(boxes[i][1], boxes[j][1]), np.minimum(boxes[i][2], boxes[j][2])
+            if (lo > hi).any():
+                continue
+            pts = boxes[i][0]
+            pts = pts[((pts >= lo) & (pts <= hi)).all(1)]
+            if not len(pts):
+                continue
+            hits = set()
+            for (va, vb) in _edge_sides(dj):
+                a, b = dj["co"][va], dj["co"][vb]
+                e = b - a
+                ll = float(np.dot(e, e))
+                if ll < tol * tol:
+                    continue
+                s = (pts - a) @ e / ll
+                inside = (s > tol / ll ** 0.5) & (s < 1 - tol / ll ** 0.5)
+                if not inside.any():
+                    continue
+                dist = np.linalg.norm(pts[inside] - (a + np.outer(s[inside], e)), axis=1)
+                hits.update(map(tuple, np.round(pts[inside][dist < tol] / tol).astype(np.int64)))
+            if hits:
+                out.append((di["name"], dj["name"], len(hits)))
+    return out
 
 
 def _verdicts(rep, what, limits):

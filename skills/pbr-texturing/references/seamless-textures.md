@@ -41,7 +41,12 @@ A tiling material is continuous across faces that face the same way when the UVs
 phase 0 at each piece's pivot (`uv-unwrapping`'s `tile_project`), and across kit joints when the tile divides the
 placement step. It breaks at folds where the projection axis changes (corners: covered by a trim or a corner piece)
 and anywhere a piece was projected on its own (Cube Projection centres on each selection). `texture_seams.joints`
-measures what the player sees at the joints.
+measures what the player sees at the joints. A busy periodic texture hides a phase jump from it: a 0.1 m jump in
+brick read ratios 1.4-2.7, under the limit of 3, yet showed as a zipper of long and short bricks (measured, 5.2.2).
+So on tiling layouts the offset itself is the gate: `uv-unwrapping`'s tiling audit (each face's phase, and every seam
+inside a surface opening by whole tiles) and QA's per-placement tile phase; `texture_seams` adds what UVs cannot show
+(a texture that is not seamless, a bake). Joints whose edges only partly coincide (a T-junction) get a NOTE, not a
+verdict: make the edges meet.
 
 ## Check: `scripts/texture_seams.py`
 

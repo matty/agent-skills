@@ -14,8 +14,10 @@ Fix the layout before the trim family's UVs, write it down, and make the UV task
    10% of it, so trims match the walls around them.
 3. Put a mip-safe gap between strips: `map_px / 64` px (16 at 1024, the same rule as island gaps), filled by
    extending each strip's edge pixels, so mips never blend two strips.
-4. Write the layout as a table, one row per strip, top to bottom: name, first and last pixel row, real height, the
-   pieces that use it. A planned world keeps it at `blender/substance/<FAMILY>/layout.md`.
+4. Write the layout as a table, one row per strip: name, first and last pixel row counted from the bottom (V = 0,
+   as `uv-unwrapping`'s audit `rows=` reads them; an image editor counts from the top, so row r there is
+   map_px - 1 - r here), real height, the pieces that use it. A planned world keeps it at
+   `blender/substance/<FAMILY>/layout.md`.
 5. Check the rows add up to at most `map_px` and that no two overlap.
 
 | Strip kind | What it is for | Height (at 512 px/m on a 1024 map) |
