@@ -162,7 +162,10 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
 3. Keep the footprint exactly 2 x 0.3 x 3 m; window and door openings where the greybox has them.
 4. Model every item of each piece's detail list at its size, to its references: relief that shows in stereo at
    1.5 m (blender-mesh-topology's detail_scale.py) is geometry, shallower relief is left to the textures; chamfer
-   every edge players see, never a face that meets the next bay.
+   every edge players see, never a face that meets the next bay. A piece the spec marks bake: true also gets its
+   high poly in blender/bake/EXT_high.blend (<Part>_high objects, one vertex group per part on the low), built and
+   checked there with its low appended from the work file (high-and-low-poly reference, one scene for the gate and
+   the bake); none of these three is marked.
 5. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save the work
    file. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
 6. Through the MCP: integrate(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). If it refuses, the user edited
@@ -241,8 +244,10 @@ props too, not `_COL`), inside 0-1, no overlaps; on the lightmapped ones, gaps o
 worst case (UV2 bounding box filling the tile) and at least 1 texel to the tile edge; `kit_status = uv`. Give the
 world's `texels_per_m`, its `lighting.baker` and each piece's `lightmap_scale`, and paste stage 6's per-mesh sizing
 from `stages.md` into the steps: the builder sizes each modelled mesh's `--map` and gap from its real surface area,
-never from the spec's footprint table, which plans the fill only. Load: `uv-unwrapping` (+ `rizomuv-uv-pipeline` if
-RizomUV is installed). Checks: U1-U6, the UV2 audit run per mesh as `uv_audit ... --layer 1 --lightmap --map <--map>
+never from the spec's footprint table, which plans the fill only. Tiling UV0 by
+`uv_audit.tile_project(pieces, tile_m=1.0, material="M_EXT_*")` (the 512 px tile at 512 px/m: 1 m, phase 0 at each
+pivot), never Cube Projection, outside corners left to their trim. Load: `uv-unwrapping` (+ `rizomuv-uv-pipeline` if
+RizomUV is installed). Checks: U1-U7, the UV2 audit run per mesh as `uv_audit ... --layer 1 --lightmap --map <--map>
 --pad 2`. Fallback: stage 6's Smart UV Project route in `stages.md`, noted in the QA brief.
 
 **Stage 7, T-TEX-TRIM-LAYOUT (texture artist).** Goal: the trim sheet's strip layout (strip heights in pixels, which
@@ -252,15 +257,19 @@ strip is which trim) in `blender/substance/<FAMILY>/layout.md`, before the trim 
 **Stage 7, T-TEX-EXT (texture artist).** Goal: `M_EXT_Brick`, `M_EXT_Stone` with base colour, normal and packed
 metallic-smoothness maps at the family's `map_px` (channel plan in `texturing.md`), a detail map where the family
 has `detail_map: true`, matching the swatch mockups, `look.references` and the `look.materials` targets, worn to
-`look.wear`. Load: `pbr-texturing` (without it, paste `texturing.md`); the Substance MCP if available. Paste the
-spec's `look`. Self-check with `pbr-texturing`'s `pbr_check.py` before reporting. When EXT is `look.lead_family`,
-its QA's look-dev renders go to the user at the look gate. Checks: X1-X5, X7, X8.
+`look.wear`. Every signal of a unique map from 3D space (bakes, Object-coordinate procedurals, Box-projected
+images); the tiling maps even at tile scale (`pbr_check.py --tiling`, `tile_flatten.py` when it fails); `bake: true`
+pieces baked from their highs with `bake_maps.py` (`--explode` where parts sit close), the report kept beside the
+maps. Load: `pbr-texturing` (without it, paste `texturing.md`); the Substance MCP if available. Paste the
+spec's `look`. Self-check with `pbr_check.py` and `texture_seams.py` before reporting. When EXT is
+`look.lead_family`, its QA's look-dev renders go to the user at the look gate. Checks: X1-X5, X7-X10.
 
 **Stage 8, T-ASM-SHOPFRONT-A (integrator).** Goal: the assembly checked with final pieces, sockets added. Checks:
-A1-A4, M9.
+A1-A5, M9.
 
-**Stage 8, T-DRESS-SQUARE (integrator).** Goal: props and trims placed from the spec, plus dressing within budget.
-Checks: A1-A4, M9.
+**Stage 8, T-DRESS-SQUARE (integrator).** Goal: props and trims placed from the spec, plus dressing within budget,
+variants ordered so no two identical ones touch and no sequence repeats, breakers at irregular spacing on long runs.
+Checks: A1-A5, M9.
 
 **Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`
 (exported from a work file checked out just before, the status then set in MASTER). Load:

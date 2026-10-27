@@ -32,6 +32,11 @@ placement sync matches them exactly.
 2. Make the family materials in `<FAMILY>/_Shared/` (and a prop's own `M_<Piece>.mat` in its folder), named exactly
    like the Blender materials (`M_INT_Wallpaper` in both). Texture maps for Unity's Standard shader: `_MainTex`
    albedo, `_MetallicGlossMap` with metallic in R and smoothness (1 - roughness) in A, occlusion as its own map.
+   `T_*_Normal` and detail normal maps import as Texture Type **Normal map** ("formats the texture asset so it's
+   suitable for real-time normal mapping",
+   https://docs.unity3d.com/2022.3/Documentation/Manual/texture-type-normal-map.html, checked 2026-10-27) and are
+   never crunched (*practice*: crunch's block artefacts land on the shading and repeat in every tile); formats and
+   sizes are `vrchat-texture-and-vram`'s.
    A material made by script (Unity MCP `execute_code`) also calls `EnableKeyword` for each feature it uses,
    `_NORMALMAP`, `_METALLICGLOSSMAP`, `_DETAIL_MULX2`, `_EMISSION`: only the material inspector sets them, and
    without them the assigned map is ignored ("you must enable that variant by using the EnableKeyword function",

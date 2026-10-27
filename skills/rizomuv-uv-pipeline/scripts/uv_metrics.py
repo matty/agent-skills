@@ -47,9 +47,15 @@ import numpy as np
 # 2027.0.598 (see ../references/distortion-and-quality.md). angular_p95/area: a well-unwrapped organic prop
 # passes, the default QuadLoopCutter unwrap of a curved body fails (it measured angular p95 1.44, area p95 0.50).
 # angular_p99: the tail p95 hides. angular_max: a hard limit on the worst non-sliver triangle (folds and collapsed
-# UVs). area_global_mean and islands_per_100_faces: kept by this grader for its retries (shattering, uneven packs).
+# UVs). island_*: the same p95 limits on every island holding ISLAND_MIN_SHARE of the area (the worst one), since
+# the whole-object numbers hide a small stretched island (a label); area_local_max: log2 of the worst non-sliver
+# face's density against its island's (a patch at 2x or 1/2 the texel density). area_global_mean and
+# islands_per_100_faces: kept by this grader for its retries (shattering, uneven packs).
 GATE = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_local_p95": 0.20,
+        "island_angular_p95": 1.25, "island_area_local_p95": 0.50, "area_local_max": 2.0,
         "area_global_mean": 0.05, "islands_per_100_faces": 25.0}
+ISLAND_MIN_SHARE = 0.005        # islands with at least this share of the area meet the island_ limits on their own
+                                # (the texel band between islands, 0.8-1.25x, held inside one)
 FRAGMENT_FREE_ISLANDS = 12      # per shell: a box's 6 islands or a small kit piece's dozen are never "fragmented"
 SLIVER_QUALITY = 0.02           # triangle quality 4*sqrt(3)*area / sum(edge^2): 1 equilateral, < 0.02 a sliver
 PAD_TOL_PX = 0.5                # RizomUV's PaddingPerfect pads on a pixel grid: measured gaps 3.5-3.9 px at pad 4
@@ -320,12 +326,25 @@ def distortion(mesh, uvw_ids, uvw, tri=None, info=None, region_angle=FRAGMENT_RE
     local = np.where(good, np.abs(np.log2(np.maximum(R, 1e-300) / np.maximum(imean[isl], 1e-300))), np.inf)
     glob = np.where(good, np.abs(np.log2(np.maximum(R, 1e-300) / max(gmean, 1e-300))), np.inf)
     nisl, nfaces = int(isl_face.max() + 1), len(sizes)
+    isl_a95, isl_l95 = 1.0, 0.0
+    big = np.flatnonzero(asum >= ISLAND_MIN_SHARE * max(float(asum.sum()), 1e-300))
+    if len(big):
+        order = np.argsort(isl, kind="stable")
+        cuts = np.searchsorted(isl[order], np.arange(len(asum) + 1))
+        for i in big:
+            m = order[cuts[i]:cuts[i + 1]]
+            m = m[good[m]]
+            isl_a95 = max(isl_a95, _wpct(ang[m], a3[m], 0.95))
+            isl_l95 = max(isl_l95, _wpct(local[m], a3[m], 0.95))
+    even = good & shaped
     frag, nshells = fragmentation(sizes, xid, isl_face, regions=lambda: planar_regions(mesh, region_angle))
     return {"angular_mean": round(float(np.sum(w * ang)), 4), "angular_p95": round(_wpct(ang, w, 0.95), 4),
             "angular_p99": round(_wpct(ang, w, 0.99), 4),
             "angular_max": round(float(ang[shaped].max()) if shaped.any() else float(ang.max()), 3),
             "angular_max_all": round(float(ang.max()), 3),
             "area_local_mean": round(float(np.sum(w * local)), 4), "area_local_p95": round(_wpct(local, w, 0.95), 4),
+            "island_angular_p95": round(float(isl_a95), 4), "island_area_local_p95": round(float(isl_l95), 4),
+            "area_local_max": round(float(local[even].max()) if even.any() else 0.0, 4),
             "area_global_mean": round(float(np.sum(w * glob)), 4), "linear_ratio": float(np.sqrt(max(gmean, 0.0))),
             "finite": bool(finite.all()), "islands": nisl, "faces": nfaces, "shells": nshells,
             "islands_per_100_faces": frag, "islands_per_100_faces_all": round(100.0 * nisl / nfaces, 2),
@@ -752,9 +771,11 @@ def bbox_share(uvw_ids, uvw):
 
 
 def merge_gate(gate=None):
-    """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest.
-    A value of float('inf') switches that check off. Raises TypeError or ValueError for anything but a dict of
-    known keys and numbers, so a typo fails at once instead of sending every piece to review."""
+    """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest; a
+    whole-object key it loosens past its per-island twin (angular_p95, area_local_p95) loosens the twin with it unless
+    the gate sets that too, as uv-unwrapping's audit does. A value of float('inf') switches that check off. Raises
+    TypeError or ValueError for anything but a dict of known keys and numbers, so a typo fails at once instead of
+    sending every piece to review."""
     if gate is None:
         return dict(GATE)
     if not isinstance(gate, dict):
@@ -767,6 +788,9 @@ def merge_gate(gate=None):
             raise TypeError("gate[%r] must be a number, not %r" % (k, v))
     merged = dict(GATE)
     merged.update(gate)
+    for whole, island in (("angular_p95", "island_angular_p95"), ("area_local_p95", "island_area_local_p95")):
+        if whole in gate and island not in gate:
+            merged[island] = max(merged[island], gate[whole])
     return merged
 
 

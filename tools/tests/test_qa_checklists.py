@@ -23,13 +23,15 @@ except ImportError:
     yaml = None
 
 # The ids this round fixed (A5 retired; M9, X6, N8 new; X8 and L7 added 2026-10-18): letter -> count.
-EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 7, "M": 9, "U": 6, "X": 8, "A": 4, "E": 4, "N": 8, "L": 7, "I": 4,
+EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 7, "M": 10, "U": 7, "X": 10, "A": 5, "E": 4, "N": 8, "L": 7, "I": 4,
             "O": 5}
-ID = r"[GCSPBMUXAENLIO][1-9]"
-# flags of other tools the documents quote (uv_audit, Blender itself, git, a Chromium screenshot)
+ID = r"[GCSPBMUXAENLIO][1-9]\d?"
+# flags of other tools the documents quote (uv_audit, texture_seams, pbr_check, Blender itself, git, a Chromium
+# screenshot)
 OTHER_FLAGS = {"--objects", "--layer", "--lightmap", "--map", "--pad", "--td", "--baking", "--python",
                "--factory-startup", "--python-exit-code", "--porcelain", "--name-only", "--headless", "--screenshot",
-               "--force-device-scale-factor", "--window-size"}
+               "--force-device-scale-factor", "--window-size", "--purpose", "--material", "--tile-m", "--steps",
+               "--tile-offset", "--image", "--kind", "--joints", "--tiling", "--out", "--hard-deg", "--fold-deg"}
 
 
 def table_ids(text):

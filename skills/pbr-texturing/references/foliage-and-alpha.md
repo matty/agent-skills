@@ -24,7 +24,8 @@ it under the cutoff, and trees go bald with distance. Fix it in the mips:
 - Coverage-preserving mips rescale each mip's alpha so the share of pixels above the cutoff stays the same; the
   importer needs the material's cutoff value to do it.
 - Dilate colour into the transparent pixels (bake margin, or a dilation filter) so filtering at the edges blends with
-  leaf colour, not with black: dark halos round every leaf mean the transparent pixels' RGB is black. Ship it as one
+  leaf colour, not with black: dark halos round every leaf mean the transparent pixels' RGB is black (Unity's
+  importer can dilate it too, Alpha Is Transparency: `references/engine-notes.md`, Alpha). Ship it as one
   RGBA base-colour map (RGB the dilated colour, A the coverage): `bake_maps.save_png` writes 1-4 channels (grey,
   grey + alpha, RGB, RGBA) from rows top to bottom.
 - Alpha-to-coverage, where the shader and MSAA allow it, turns alpha into smooth anti-aliased edges instead of
@@ -44,3 +45,16 @@ it under the cutoff, and trees go bald with distance. Fix it in the mips:
 - LODs that thin the card count, then a billboard or impostor (a card with the tree baked onto it, lit to match) for
   the far distance; a hard switch pops in VR, so cross-fade where the shader supports it or switch where it is hidden.
 - Skyline trees and treelines: cards at the low texel classes, no per-leaf detail.
+
+## Quest and other mobile GPUs
+
+Cutout costs most on tile-based mobile GPUs (above), and an engine's mobile shader set may have no alpha test at all
+(`references/engine-notes.md`, Alpha, says where to get one). Policy for a mobile build:
+
+1. Cards only where the player looks closely: along paths, at the edges of play areas, round landmarks. Each patch
+   is culled beyond a set distance (a LOD chain that ends in nothing, or a per-batch draw distance).
+2. Beyond that distance, no cards: opaque tufts (low-poly geometry, no alpha) or the ground texture itself carries
+   the grass, its colour and detail reading as grass from there.
+3. Fit outlines tightly and keep few layers (overdraw); never alpha blend foliage.
+4. Measure the distances on the device: frame time in a headset build at the densest view, then record them. They
+   are not guessed from the editor, and no number here is measured.

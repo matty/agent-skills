@@ -12,7 +12,8 @@ result (vertex count, bounding box, a render).
 | Turned or round: legs, lamp bases, bottles, knobs, vases, wheels | Revolve a profile: Screw modifier or `bmesh.ops.spin` |
 | Rails, handles, cables, piping, tubes, mouldings along an edge | Sweep: a path curve with a profile (`bevel_object` or `bevel_mode='PROFILE'`), radius and taper along it |
 | Boards, panels, tops, slabs | An extruded section at real thickness, its edge profile from bevel tiers |
-| Shells, cushions, car panels, moulded plastics | A low cage with Subdivision Surface and edge creases, or cloth for upholstery |
+| Shells, cushions, car panels, moulded plastics | A low cage with Subdivision Surface and edge creases (the `crease_edge` FLOAT EDGE attribute, 4.0+), or cloth for upholstery |
+| `cloth` and `sculpt` builds | Headless, with modifiers: Blender's cloth simulation stepped frame by frame and applied (collision distances set to a few millimetres, or the cloth floats), pressure for cushions; a sculpt as a Displace stack on a remeshed base, since brush strokes do not run headless. Recipes, measured: `blender-mesh-topology`'s organic-and-cloth reference |
 | Branching tubes, creature or root bases | Skin modifier on an edge skeleton, then Subdivision Surface |
 | Whole-part taper, bend, belly or swell | Simple Deform (TAPER, BEND) or a 3x3x3 Lattice; needs enough segments along the axis |
 | Cut-outs, recesses, slots | Boolean (`EXACT`, or `MANIFOLD` from 4.5 on manifold operands), bevel by weight after |

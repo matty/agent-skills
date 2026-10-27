@@ -12,7 +12,14 @@ covers wiring exported maps back into a material for a look-dev render. Measured
    linear 0.5 becomes 0.735), a Non-Color image stores the value itself. So base colour bakes into an sRGB image;
    metallic, roughness, height and masks into Non-Color images. The DIFFUSE bake (colour pass only) and the ROUGHNESS
    bake type work too.
-3. Float images save as 16-bit PNGs with `Image.save()` (measured); keep those as masters.
+3. Float images save as 16-bit PNGs with `Image.save()` (measured); keep those as masters. On a unique layout,
+   dilate each bake over the whole map (or a margin of the island gap at least) before `pbr_check`: the empty space
+   between islands is black, and a crate's raw base colour read luma p1 0 and its smoothness 13.7% mirror from it
+   (`pbr_check` now leaves exactly black base colour out and notes its share; the smoothness still reads it). A
+   procedural laid in 3D is a bake like any other: copies stacked inside 0-1 receive one copy's signal, so lay out
+   with `layout(bake=True)` first (16 stacked barrel staves showed 19.2 m of seams, 0 m with it).
+   An edge mask for wear comes from the low's own Bevel node or an Ambient Occlusion node here, in 3D (even across
+   UV seams), rather than a hard threshold on the baked curvature (`wear-and-variation.md`).
 4. Tiling materials: bake one tile of the family's UV0 layout. At `map_px` pixels and `texel_density` px/m one tile
    covers `map_px / texel_density` metres (2 x 2 m at 512 px/m on 1024): every pattern must repeat a whole number of
    times across it. Check with `pbr_check.py --tiling --out <scratch>` and look at the 3 x 3 composite.
@@ -36,7 +43,11 @@ out.file_format = "PNG"
 out.save()                                      # a 16-bit RGBA PNG
 ```
 
-6. Run `pbr_check.py` on the exports before reporting.
+6. Unique textures (props, hero pieces): every procedural on Texture Coordinate > Object (or Generated), images
+   through an Image Texture node with `projection = "BOX"` and `projection_blend` about 0.2-0.3 on Object coordinates,
+   baked into the unique UVs. A texture on UV coordinates breaks at every seam (`references/seamless-textures.md`:
+   measured 1.0 against 8-14 for the same noise); check with `texture_seams.py`.
+7. Run `pbr_check.py` on the exports before reporting.
 
 ## Wiring exported maps into a material (look-dev)
 

@@ -110,14 +110,14 @@ Arguments of `unwrap_objects` and `unwrap_selected` (passed on to `unwrap_object
 `hard` is for kit pieces, planar and developable parts and anything with its seams marked; `organic` for curved
 bodies, revolved parts and props with no obvious seams (Auto settings, sweep: `references/distortion-and-quality.md`).
 
-Every attempt is graded by `uv_metrics.grade()`: the distortion gate (angular p95 <= 1.15, p99 <= 1.5, max <= 2.0
-over non-sliver triangles, area p95 <= 0.20, plus this grader's global area mean <= 0.05 and islands beyond a shell's
-planar regions <= 25 per 100 faces, on shells cut into more than 12 islands), the layout (inside 0-1, no overlap,
-padding and margin as asked, no flipped polygons) and, for a filled UV0 of up to 100 islands, coverage >= 0.35,
-lowered for long thin pieces to 0.8 x what their shape allows (3D area / the largest connected shell's bounding-box
-diagonal squared; a 3 m beam 0.16). On a failure the unwrap is retried with `Quality` 0.85, then Mosaic 0.9; a `hard`
-pack that covers too little or does not fit goes straight to the organic preset. If every attempt fails, the least
-failing one is kept and marked for review.
+Every attempt is graded by `uv_metrics.grade()`: the distortion gate (angular p95 <= 1.15, p99 <= 1.5, max <= 2.0 over
+non-sliver triangles, area p95 <= 0.20, each island over 0.5% of the area at angular p95 <= 1.25 and area p95 <= 0.50,
+area max <= 2.0, plus this grader's global area mean <= 0.05 and islands beyond a shell's planar regions <= 25 per 100
+faces, on shells cut into more than 12 islands), the layout (inside 0-1, no overlap, padding and margin as asked, no flipped polygons) and, for
+a filled UV0 of up to 100 islands, coverage >= 0.35, lowered for long thin pieces to 0.8 x what their shape allows (3D
+area / the largest connected shell's bounding-box diagonal squared; a 3 m beam 0.16). On a failure the unwrap is
+retried with `Quality` 0.85, then Mosaic 0.9; a `hard` pack that covers too little or does not fit goes straight to
+the organic preset. If every attempt fails, the least failing one is kept and marked for review.
 
 ## 7. Read the result
 
@@ -128,7 +128,7 @@ and notes, the attempt used and the time.
 |---|---|---|
 | `OK` | every written layer passed the grade and fitted | nothing |
 | `OK` with `thin piece` or `many islands` | a square tile cannot hold a long thin piece better (a 3 m beam covers 0.16), or hundreds of islands: the map/64 gaps take the tile (a 5120-face rock: 0.21) | thin: a texel-density pack (`pack_spec(map_px, px_per_unit=TD)`) or a trim; many islands: accept it, or reduce surface detail first |
-| `OK` with `visible seams N m` (advisory) | seams you did not mark run N m through smooth faces that face up or to the front (-Y): the grade measures distortion, not where the cuts are, and a tiling texture jumps there | look: `br.checker_preview(ob, cell_m=0.25)`; the report's `seams.visible_seam_bounds` says where. Upholstery, flat tops, fronts: mark the structural seams (section 5) and unwrap again. A body seen from every side (an urn 1.17 m, a rock 5.9 m): expected; move the long runs to the back with marked seams, or accept it on a unique (baked) texture |
+| `OK` with `visible seams N m` (advisory) | seams you did not mark run N m through smooth faces that face up or to the front (-Y): the grade measures distortion, not where the cuts are, and a tiling texture jumps there | look: `br.checker_preview(ob, cell_m=0.25)`; the report's `seams.visible_seam_bounds` says where. Upholstery, flat tops, fronts: mark the structural seams (section 5) and unwrap again. A body seen from every side (an urn 1.17 m, a rock 5.9 m): never accepted as it comes; mark its seams on buried or ground-contact faces, concave cracks and undersides (an urn: down its back, under its foot), shade the low smooth whole (*practice*), and unwrap again. A baked texture hides a seam only when every signal in it comes from 3D space (bakes, Object-coordinate procedurals, projections): `pbr-texturing`'s seam check measures that after texturing |
 | `REVIEW` with distortion failures | the best attempt still distorts | open its stretch map; add seams where it is strongly red or blue, or try the other `kind`; report it rather than accepting it |
 | `REVIEW` with `coverage < X` | one sprawling island: a chamfer or bevel ring, a band (a table top's rim, a washer, a hoop) or an L or T plate | seams: along the chamfers; across the band together with its edge loops; at the L's corner. Rerun; report it if it stays |
 | `REVIEW` with `islands_per_100_faces` | a shell cut into more islands than its planar regions (faces joined under the preset's SharpEdges angle, between seams): confetti | mark the structural seams or try the other `kind`; if those islands are the parts you want, pass `gate={"islands_per_100_faces": float("inf")}` |

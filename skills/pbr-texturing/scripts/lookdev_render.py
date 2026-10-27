@@ -11,6 +11,10 @@ Command line:
             --maps "blender/textures/EXT/T_EXT_Brick_*.png" --png brick.png       # the maps on a sphere and a cube
     blender -b --factory-startup KIT_Arch_Exterior.blend --python-exit-code 1 --python lookdev_render.py --
             --object EXT_Wall_2x3_A --png wall.png [--hdri courtyard] [--size 1280 720] [--engine cycles]
+    blender -b --factory-startup chest_bake.blend --python-exit-code 1 --python lookdev_render.py --
+            --object Chest_low --maps "textures/T_PROP_Chest_*.png" --eye 0 -0.5 1.1 --target 0 0 0.4 --png held.png
+            (the exported maps on the object, in place of its own material such as a bake's, seen from the player's
+            eye: a pickup held at 0.5 m, a wall from 1.6 m up at its usual distance)
 As a module (Blender MCP or another script):
     ns = {"LOOKDEV_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
     mat = ns["material_from_maps"]("M_EXT_Brick", base_color=..., metallic_smoothness=..., normal=...)
@@ -129,10 +133,11 @@ def _set_engine(scene, engine):
 
 
 def render(objects, png, size=(960, 540), hdri="studio", strength=1.0, engine="eevee", samples=32,
-           view=(1.0, -1.6, 0.9), lens=50.0):
+           view=(1.0, -1.6, 0.9), lens=50.0, eye=None, target=None):
     """Render objects (a list) to png from a three-quarter view that frames their bounds (view: the camera direction
-    from their centre, in units of their size), lit only by the HDRI (a name from Blender's studiolights/world or a
-    file path) at the given strength, Standard view transform, no look, exposure 0. Returns the engine used."""
+    from their centre, in units of their size), or from eye (world metres) looking at target (default their centre),
+    lit only by the HDRI (a name from Blender's studiolights/world or a file path) at the given strength, Standard
+    view transform, no look, exposure 0. Returns the engine used."""
     scene = bpy.context.scene
     hdri_path = hdri if os.path.isfile(str(hdri)) else os.path.join(HDRI_DIR, "%s.exr" % hdri)
     if not os.path.isfile(hdri_path):
@@ -172,6 +177,11 @@ def render(objects, png, size=(960, 540), hdri="studio", strength=1.0, engine="e
         dist = (extent / 2.0) / (sensor_half / lens) * 1.15 * max(1.0, size[1] / float(size[0]) * 16 / 9)
         cam.location = centre + d * dist
         cam.rotation_euler = (-d).to_track_quat("-Z", "Y").to_euler()
+        if eye is not None:                         # the player's eye: a pickup held at 0.5 m, a wall at its distance
+            cam.location = Vector(eye)
+            aim = Vector(target) if target is not None else centre
+            cam.rotation_euler = (aim - Vector(eye)).to_track_quat("-Z", "Y").to_euler()
+            cam_data.clip_start = 0.01
         scene.camera = cam
         used = _set_engine(scene, engine)
         if used == "CYCLES":
@@ -215,9 +225,14 @@ def render(objects, png, size=(960, 540), hdri="studio", strength=1.0, engine="e
 
 def main(argv):
     ap = argparse.ArgumentParser(prog="lookdev_render.py", description=__doc__.split("\n")[0])
-    src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--maps", help="maps or a quoted glob: T_<FAMILY>_<Name>_BaseColor/MetallicSmoothness/Normal.png")
-    src.add_argument("--object", action="append", help="an object in the open .blend (repeat for several)")
+    ap.add_argument("--maps", help="maps or a quoted glob: T_<FAMILY>_<Name>_BaseColor/MetallicSmoothness/Normal.png "
+                    "(alone: on a sphere and a cube; with --object: on those objects in place of their materials)")
+    ap.add_argument("--object", action="append", help="an object in the open .blend (repeat for several)")
+    ap.add_argument("--eye", type=float, nargs=3, metavar=("X", "Y", "Z"), help="camera position in metres (the "
+                    "player's eye) instead of the framed three-quarter view")
+    ap.add_argument("--target", type=float, nargs=3, metavar=("X", "Y", "Z"), help="with --eye: where it looks "
+                    "(default the objects' centre)")
+    ap.add_argument("--lens", type=float, default=50.0, help="focal length in mm (36 mm sensor; 24 for a wide view)")
     ap.add_argument("--png", required=True)
     ap.add_argument("--hdri", default="studio")
     ap.add_argument("--strength", type=float, default=1.0)
@@ -226,7 +241,9 @@ def main(argv):
     ap.add_argument("--samples", type=int, default=32)
     ap.add_argument("--tiling", type=float, default=1.0, help="with --maps: repeats per UV unit on the preview meshes")
     a = ap.parse_args(argv)
-    made, mat = [], None
+    if not (a.maps or a.object):
+        ap.error("give --maps, --object, or both")
+    made, mat, swapped = [], None, []
     try:
         if a.maps:
             roles = maps_by_role(sorted(glob.glob(a.maps)) or [a.maps])
@@ -234,18 +251,32 @@ def main(argv):
                 print("[lookdev] no map matched %s" % a.maps)
                 return 2
             mat = material_from_maps("lookdev_material", tiling=a.tiling, **roles)
-            objects = made = preview_meshes(mat)
-        else:
+        if a.object:
             missing = [n for n in a.object if n not in bpy.data.objects]
             if missing:
                 print("[lookdev] no object named %s" % ", ".join(missing))
                 return 2
             objects = [bpy.data.objects[n] for n in a.object]
+            for ob in objects if mat is not None else ():      # the maps in place of each slot's material
+                if not ob.material_slots:
+                    ob.data.materials.append(mat)
+                    swapped.append((ob, None, None))
+                for i, slot in enumerate(ob.material_slots):
+                    if slot.material is not mat:
+                        swapped.append((ob, i, slot.material))
+                        slot.material = mat
+        else:
+            objects = made = preview_meshes(mat)
         used = render(objects, a.png, size=tuple(a.size), hdri=a.hdri, strength=a.strength, engine=a.engine,
-                      samples=a.samples)
-        print("[lookdev] %s -> %s (%s, %s)" % (a.maps or ", ".join(a.object), a.png, used, a.hdri))
+                      samples=a.samples, lens=a.lens, eye=a.eye, target=a.target)
+        print("[lookdev] %s -> %s (%s, %s)" % (", ".join(a.object or []) or a.maps, a.png, used, a.hdri))
         return 0
     finally:
+        for ob, i, old in reversed(swapped):
+            if i is None:
+                ob.data.materials.pop()
+            else:
+                ob.material_slots[i].material = old
         for ob in made:
             me = ob.data
             bpy.data.objects.remove(ob)

@@ -18,7 +18,7 @@ mesh and drops the Triangulate and Weighted Normal: 12.59 deg off after export).
 
 | Surface | `purpose` | UVs |
 |---|---|---|
-| Walls, floors, terrain, large plain surfaces | `tiling` | world scale, never scaled or packed to fit 0-1; then `ua.home_tiling(objs)` moves each island home by whole tiles (section 6) |
+| Walls, floors, terrain, large plain surfaces | `tiling` | world scale from each piece's axes (`tile_project`), never scaled or packed to fit 0-1; then `ua.home_tiling(objs)` moves each island home by whole tiles (section 6) |
 | Mouldings, frames, pipes, trims, kit edges | `trim` | straightened strips on the trim sheet's rows, U free along the strip |
 | Props and hero pieces with their own texture or a bake; objects sharing an atlas | `unique` | the order of work below, inside 0-1 |
 | Every render mesh of a kit (LODs and probe-lit props too, not `_COL`) | `lightmap` | the second UV map; its gaps and bends matter where it is lightmapped (section 9) |
@@ -37,7 +37,8 @@ per asset type as runnable Python: [references/workflows.md](references/workflow
    normals) is never shaded by angle again: seam it by angle, `ua.seams_by_angle(objs)` (`edges_select_sharp` at 30
    deg, then Mark Seam), keeping its sharp edges. A plain piece whose sharp edges nobody set (`not
    st["shading_designed"]`): `ob.data.set_sharp_from_angle(angle=math.radians(30))`, `ob.data.shade_smooth()` (this
-   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object).
+   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object); a baked low
+   `radians(60)`, hard only at folds (30 cut a chamfered crate into 220 seams); organic (rock, sculpt) smooth whole.
 3. Seams (section 3); a baked piece starts with `ua.seams_from_hard_edges(objs)`.
 4. Unwrap UV0: `ob.data.uv_layers.active_index = 0`, then `bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)`.
    Without `method` it reuses the last one; at margin 0, islands that land touching along a seam fuse into one.
@@ -75,15 +76,18 @@ Measure, do not eyeball. The gate (this skill owns the numbers; `rizomuv-uv-pipe
 | Angular p99 | <= 1.5 | the tail p95 hides: a folded or collapsed band |
 | Angular max, over triangles that are not 3D slivers | <= 2.0 | one squashed face fails it |
 | Area p95 (log2 of the density change inside an island) | <= 0.20 | 0 = even density inside each island |
+| Per island (each with >= 0.5% of the area): angular p95, area p95; the `uv_text` faces: angular p95; area max (faces of a texel or more, not slivers) | <= 1.25, <= 0.50 (the 0.8-1.25x texel band inside one island); <= 1.15; <= 2.0 | the object's numbers hide a small island: a label on 2.5% stretched 1.45x passed them (5.2.2); 2.0 = a patch at 2x or 1/2 the density |
 
 Fix with seams first; keep a `uv.minimize_stretch` result only if the audit improves (sphere p95 1.06 to 1.23, 5.2.2).
-Texture placement must stay (a shipped look, directional fabric, a bake UV from it): `ua.reunwrap_in_place(objs)`
-re-unwraps each island in its borders and fits it back where it was (p95 1.64 to 1.00, 5.2.2), never a plain unwrap.
+A piece whose look needs a number loosened passes `limits=` (recorded in the report: uv-audit.md). Texture placement
+must stay (a shipped look, directional fabric, a bake UV from it): `ua.reunwrap_in_place(objs)` re-unwraps each
+island in its borders and fits it back where it was (p95 1.64 to 1.00, 5.2.2), never a plain unwrap.
 
 ## 5. Straighten and orient
 
 - Straighten every strip of quads (trims, belts, frames, pipes, stairs): it packs tighter and its edges follow the
-  pixel grid. Square one quad, make it active, `bpy.ops.uv.follow_active_quads(mode="LENGTH_AVERAGE")`.
+  pixel grid: `ua.straighten(objs)` squares each all-quad island's best quad and runs Follow Active Quads, mode
+  `LENGTH`, island by island (`LENGTH_AVERAGE` stretched a strip cut from a larger mesh 0.87-1.31x).
 - Directional textures (wood grain, fabric, brushed metal): grain along U on every island.
   `uv.align_rotation(method="GEOMETRY", axis=A)` turns each selected island so 3D axis A points along +V (an island
   whose normal is A stays put; Blender 5.2.2). Pass the axis ACROSS the grain, one face group at a time: Z for the
@@ -99,8 +103,7 @@ re-unwraps each island in its borders and fits it back where it was (p95 1.64 to
 
 ## 6. Texel density
 
-Texels per metre of surface: `px_per_m = map_px x sqrt(UV area / surface area in m2)`. Keep it the same on neighbouring
-objects, or the odd one out looks blurry or oversharp.
+Texels per metre: `px_per_m = map_px x sqrt(UV area / surface m2)`. Keep it equal on neighbours, or one looks blurry.
 
 - Targets: about 1024 px/m for first-person games, 512 for third-person (Maxon, checked 2026-10-17,
   https://help.maxon.net/c4d/en-us/Content/html/Texel_Density.html). In VR a headset resolves about 1150 / d px/m at
@@ -110,14 +113,17 @@ objects, or the odd one out looks blurry or oversharp.
   0.8-1.25x of their class; inside a piece `texel_cv` <= 0.15. The audit checks the mean and every unmarked island.
 - Blender has no texel-density tool (5.2; Average Islands Scale only evens islands): `ua.layout(..., px_per_m=...)`,
   or on a non-square trim sheet, which `layout` refuses, `ua.set_texel_density(..., pack_after=False)` (workflows).
-- Tiling: Cube Projection maps `cube_size` metres to one UV tile in object space, so `cube_size = map_px / px_per_m`
-  (2048 / 512 = 4.0, verified on 5.2.2). An unapplied scale of 2 halves the density.
+- Tiling: `ua.tile_project(objs, tile_m)`, `tile_m = map_px / px_per_m` (512 / 512 = 1 m): a box projection from
+  each piece's axes, phase 0 at its pivot. Not Cube Projection: it centres on each selection (5.2.2: a 2 m wall began
+  half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
+  0.5 m tile, never 4 m); floors and ceilings unturned; curves as strips marked `uv_strip`, closed on whole tiles;
+  audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
 - Tiling and trim islands then go home: `ua.home_tiling(objs, period=1 / material tiling)` moves each by whole
-  repeats, so it never changes the look and the UVs stay small where an engine stores UV0 as FP16 (the audit fails
-  what FP16 would round by over 1 px: manual). Never home a unique or lightmap layer.
-- Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
-  mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
-  audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.
+  repeats, so it never changes the look or the phase and the UVs stay small where an engine stores UV0 as FP16 (the
+  audit fails what FP16 would round by over 1 px: manual). Never home a unique or lightmap layer.
+- Lower it on purpose only where nobody looks (undersides, backs against walls), each island even, marking those
+  faces with the boolean face attribute `uv_low_density` (`_<UV map name>` for one map): the audit leaves them out of
+  the mean and spread; `layout(..., low_factor=0.5)` sets them to half the class. Map size: `texel-density.md`.
 
 ## 7. Packing and padding
 
@@ -130,10 +136,9 @@ objects, or the odd one out looks blurry or oversharp.
 Mips and a platform override that caps the map shrink the gap in pixels. Polycount gives 4, 8 and 16 px of padding
 round each shell at 512, 1024 and 2048 and twice that between shells (http://wiki.polycount.com/wiki/Edge_padding):
 `map_px / 64` is the minimum gap, the `layout` and `pack` default, pixel-exact. Bake dilation fills half the gap
-(Blender's 16 px: maps up to 2048). A shared texture: `ua.layout(objs, ..., together=True)`, then `--shared`.
-A bake atlas for one material of meshes that carry others (fabric baked, wood not): add `material="M_Fabric"`,
-so the other faces keep their UVs and take no atlas space, and `max_island_m=0.8` when a long shell (a sofa's
-back) caps the scale; then `--shared --material M_Fabric`.
+(Blender's 16 px: maps up to 2048). A shared texture: `ua.layout(objs, ..., together=True)`, then `--shared`. A bake
+atlas for one material of meshes that carry others (fabric baked, wood not): `material=`, and `max_island_m=` when a
+long shell caps the scale ([manual](references/uv-audit.md)).
 
 ## 8. Stacking, mirroring and overlap
 
@@ -141,7 +146,7 @@ back) caps the scale; then `--shared --material M_Fabric`.
 |---|---|
 | Tiling and trim UV0 | yes, freely |
 | Unique UV0, painted, no bake | stack identical parts and mirrored halves exactly; mirrored islands print text backwards |
-| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently |
+| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently, copies seen together within about 1 m (identical wear on four brackets reads as a stamp), and copies whose texture signals come from 3D space with a smooth seam (the copy shows the other's texels there: 1.08 m of visible seam on a stacked box end) |
 | Lightmap UV | never |
 
 - Stack by face correspondence, before triangulating: `ua.stack_faces(ob, src_faces, copy_faces)` copies UVs corner by
@@ -183,6 +188,8 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 | Stretch fails the gate but the texture must stay where it is | islands unwrapped or projected badly, then textured | `ua.reunwrap_in_place(objs)` (section 4), then audit; a folded or closed island needs a new seam first |
 | Blurry here, crisp there | uneven texel density inside or between objects | `layout(px_per_m=...)`, the same px/m for neighbours |
 | A line across a flat surface | seam in view, or seam pixels not padded | move the seam to a hard edge or hidden side; pad the gap (section 7) |
+| The tiling pattern jumps at every joint between kit pieces | Cube Projection (centred per piece), or a tile that does not divide the grid step | `tile_project`; tile divides module and storey; `audit(tile_m=, steps=)` |
+| Tiling stretched on a slope, arch or curved wall | a box projection on faces far off its axis (1 / cos: 1.15 at 30 deg) | strip unwrap along the curve at the density, or a separate mesh per slope (workflows) |
 | Normal-map line along a hard edge, light leaking at corners | hard edge without a UV seam, or a bake without a cage | a seam on every hard edge (`baking=True` audit), bake with an averaged cage |
 | X-shaped shading blotches, seams only in the engine | baker and engine triangulated or computed tangents differently | triangulate before baking and export that mesh; MikkTSpace tangents in the engine |
 | Coloured fringe at island edges from a distance | gaps under `map_px / 64`, or a platform override that caps the map | `map_px / 64` gaps at the shipped size; bake dilation that fills them |

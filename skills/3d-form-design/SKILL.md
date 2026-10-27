@@ -63,7 +63,7 @@ reference. Only then open the modelling tool.
 
 **Edges** (`references/bevels.md`):
 1. Sharp, always: on the floor or a wall, meeting another part, hidden, cut sheet, glass, and any edge whose bevel
-   would pass a quarter of the part's thinnest side.
+   would pass a quarter of the part's thinnest side. A pickup has no floor side: its base is seen in the hand.
 2. The rest by material, in three tiers (silhouette 1x, part edges 0.5x, small 0.25x, *practice*). Real edges are
    0.2-6 mm; a 2 cm bevel on a chair has no counterpart.
 3. At least 2 px at the usual distance: about 2 mm per metre (0.87 mm per px per metre on a 20 ppd headset, 1.07 at
@@ -96,7 +96,10 @@ stitching and weave are always texture.
 - Look up any API call you have not used in this Blender version (`references/blender-techniques.md` lists the 4.x-5.x
   traps) instead of falling back to a primitive. Never "fix" a failing call by deleting the step.
 - The modifier stack and normals that make the bevels shade cleanly (Harden Normals or Weighted Normal, Triangulate)
-  are `blender-mesh-topology`'s.
+  are `blender-mesh-topology`'s. A prop that takes a bake (carving, rivets, upholstery folds, a hero piece seen within
+  1 m) is built twice, a high and a low: `blender-mesh-topology`'s high-and-low-poly reference, before any bake. A
+  part that moves (a lid, a door, a drawer) keeps the faces it reveals: an openable inside counts as seen; a lid that
+  only looks hinged and never opens is one closed body with the hinge and a cut parting line, no inside.
 
 ## 5. Verify once
 

@@ -19,6 +19,9 @@ Wireframe-modifier copies that keep every modifier except subdivision. Objects i
 get no wire there: review a piece in its KIT file. Matcap names are Blender's (check_reflection_horizontal.exr ships
 with 5.2.2).
 A matcap shows curved bands across flat faces in a perspective view: that is the matcap, not smooth shading.
+Back faces are culled by default, as the engine's stock shaders cull them (Unity's Standard, VRChat's mobile
+shaders): a single-sided piece wound inside out vanishes here as it will in the game. cull=False shows them (to look
+inside an open piece, or at cards a double-sided shader will draw).
 """
 
 import contextlib
@@ -37,10 +40,11 @@ def _view3d():
     return area, next(r for r in area.regions if r.type == 'WINDOW'), area.spaces.active
 
 
-def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO", matcap=None, wire=False):
+def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO", matcap=None, wire=False,
+           cull=True):
     """Render from eye towards target (object-space points, transformed by matrix if given, for example a placed
     object's matrix_world) to a PNG. light: 'STUDIO', 'MATCAP' (matcap: a studio-light name such as
-    'check_reflection_horizontal.exr') or 'FLAT'."""
+    'check_reflection_horizontal.exr') or 'FLAT'. cull: hide back faces, as the engine does (default)."""
     eye, target = Vector(eye), Vector(target)
     if matrix is not None:
         eye, target = matrix @ eye, matrix @ target
@@ -54,18 +58,20 @@ def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO
     if bpy.app.background or bpy.context.screen is None or not any(
             a.type == 'VIEW_3D' for a in bpy.context.screen.areas):
         try:
-            return _render_scene(path, cam, w, h, light, matcap, wire, (target - eye).length)
+            return _render_scene(path, cam, w, h, light, matcap, wire, (target - eye).length, cull)
         finally:
             bpy.data.objects.remove(cam)
             bpy.data.cameras.remove(cd)
     area, region, sp = _view3d()
     sh, ov = sp.shading, sp.overlay
     keep_type = sh.type
-    keep = (sh.light, sh.studio_light, ov.show_overlays, ov.show_wireframes, ov.wireframe_threshold, ov.show_floor,
-            ov.show_axis_x, ov.show_axis_y, ov.show_cursor, ov.show_object_origins)
+    keep = (sh.light, sh.studio_light, sh.show_backface_culling, ov.show_overlays, ov.show_wireframes,
+            ov.wireframe_threshold, ov.show_floor, ov.show_axis_x, ov.show_axis_y, ov.show_cursor,
+            ov.show_object_origins)
     try:
         sh.type = 'SOLID'                     # the light settings below apply to Solid shading only
         sh.light = light
+        sh.show_backface_culling = cull
         if matcap:
             sh.studio_light = matcap
         ov.show_overlays = True
@@ -84,15 +90,16 @@ def render(path, eye, target, matrix=None, lens=24, w=1200, h=800, light="STUDIO
             off.free()
         _save(px, w, h, path)
     finally:
-        (sh.light, sh.studio_light, ov.show_overlays, ov.show_wireframes, ov.wireframe_threshold, ov.show_floor,
-         ov.show_axis_x, ov.show_axis_y, ov.show_cursor, ov.show_object_origins) = keep
+        (sh.light, sh.studio_light, sh.show_backface_culling, ov.show_overlays, ov.show_wireframes,
+         ov.wireframe_threshold, ov.show_floor, ov.show_axis_x, ov.show_axis_y, ov.show_cursor,
+         ov.show_object_origins) = keep
         sh.type = keep_type
         bpy.data.objects.remove(cam)
         bpy.data.cameras.remove(cd)
     return path
 
 
-def _render_scene(path, cam, w, h, light, matcap, wire, distance):
+def _render_scene(path, cam, w, h, light, matcap, wire, distance, cull=True):
     """Headless path (blender -b has no 3D viewport or GPU context for GPUOffScreen): a Workbench scene render.
     Wireframe overlays do not exist in a render, so wire=True adds temporary copies of the visible meshes with a
     Wireframe modifier after their own modifiers (subdivision dropped, so the wire is the cage the viewport shows),
@@ -101,7 +108,7 @@ def _render_scene(path, cam, w, h, light, matcap, wire, distance):
     sh = scene.display.shading
     keep_scene = (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
                   scene.render.resolution_percentage, scene.render.filepath, scene.render.image_settings.file_format)
-    keep_sh = (sh.light, sh.studio_light, sh.color_type, sh.single_color[:])
+    keep_sh = (sh.light, sh.studio_light, sh.color_type, sh.single_color[:], sh.show_backface_culling)
     shown = [o for o in scene.objects if o.type == 'MESH' and o.visible_get()]
     # A render ignores viewport hide flags (isolate() sets those), so hide the hidden ones from the render as well.
     unrender = [o for o in scene.objects if o.type == 'MESH' and not o.visible_get() and not o.hide_render]
@@ -115,6 +122,7 @@ def _render_scene(path, cam, w, h, light, matcap, wire, distance):
         scene.render.image_settings.file_format = 'PNG'
         scene.render.filepath = path
         sh.light = light
+        sh.show_backface_culling = cull
         if matcap:
             sh.studio_light = matcap
         if wire:
@@ -140,7 +148,7 @@ def _render_scene(path, cam, w, h, light, matcap, wire, distance):
         (scene.camera, scene.render.engine, scene.render.resolution_x, scene.render.resolution_y,
          scene.render.resolution_percentage, scene.render.filepath,
          scene.render.image_settings.file_format) = keep_scene
-        sh.light, sh.studio_light, sh.color_type, sh.single_color = keep_sh
+        sh.light, sh.studio_light, sh.color_type, sh.single_color, sh.show_backface_culling = keep_sh
     return path
 
 

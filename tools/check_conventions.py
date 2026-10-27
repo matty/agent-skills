@@ -66,7 +66,11 @@ CANON = {
     # gets a note instead).
     "lightmap": {"coverage": 0.85, "plan": 0.65, "max": 0.80, "min_footprint_px": 64, "gap_texels": 2},
     # UV distortion gate shared by uv-unwrapping's audit and the RizomUV grader, and the texel-density bands
-    "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20},
+    "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0,
+                "island_angular_p95": 1.25, "island_area_p95": 0.50},
+    "uv_island_min_share": 0.005,
+    "tile_phase_texels": 0.5,
+    "free_scale_band": (0.8, 1.25),   # the even scale a Free piece may be placed at without its own scale_range
     "texel_band": {"unique": (0.8, 1.25), "tiling": (0.9, 1.1), "trim": (0.9, 1.1)},
     "sliver_quality": 0.02,     # triangle quality below which both UV graders skip a triangle as a sliver
     "mobile_limit_text": "104,857,600",      # VRChat's 100 MB mobile world limit in bytes (its MB is 2^20)
@@ -154,6 +158,7 @@ CONSTANTS = [
 
 # The PBR checker ships identically in these skills (texturing self-checks, QA's X8 runs the same code).
 PBR_CHECK_COPIES = ("pbr-texturing/scripts/pbr_check.py", "vrchat-world-qa/scripts/pbr_check.py")
+TEXTURE_SEAMS_COPIES = ("pbr-texturing/scripts/texture_seams.py", "vrchat-world-qa/scripts/texture_seams.py")
 
 # Text a file must contain because it states that fact: (CANON key, files).
 TEXT_PRESENT = [
@@ -529,10 +534,32 @@ def check_task_checks():
         fail(TASK_BRIEFS, 'no "**Stage <n>, T-...**" briefs found to compare with QA\'s rows')
 
 
+def check_tile_phase():
+    """The half-texel tolerance a tiling face or placement may sit off the tile grid: uv_audit (each face), the spec
+    validator and qa_measure (each placement); and the phase-variant suffix the two placement checks read."""
+    for rel, name in (("uv-unwrapping/scripts/uv_audit.py", "TILE_PHASE_PX"),
+                      ("vrchat-world-orchestration/scripts/spec_validate.py", "TILE_PHASE_TEXELS"),
+                      ("vrchat-world-qa/scripts/qa_measure.py", "TILE_PHASE_TEXELS")):
+        got = module_constant(rel, name)
+        if got != CANON["tile_phase_texels"]:
+            fail(rel, "%s is %r, canon %r" % (name, got, CANON["tile_phase_texels"]))
+    pat = r'PHASE_VARIANT_RE = re\.compile\((r"[^"]*")\)'
+    a = re.search(pat, read("vrchat-world-orchestration/scripts/spec_validate.py"))
+    b = re.search(pat, read("vrchat-world-qa/scripts/qa_measure.py"))
+    if not (a and b and a.group(1) == b.group(1)):
+        fail("vrchat-world-qa/scripts/qa_measure.py", "PHASE_VARIANT_RE differs from spec_validate's (or is missing)")
+    for rel in ("vrchat-world-orchestration/scripts/spec_validate.py", "vrchat-world-qa/scripts/qa_measure.py"):
+        got = module_constant(rel, "FREE_SCALE_BAND")
+        if got != CANON["free_scale_band"]:
+            fail(rel, "FREE_SCALE_BAND is %r, canon %r" % (got, CANON["free_scale_band"]))
+
+
 def check_uv_gate():
     """uv-unwrapping's LIMITS and RizomUV's GATE carry the same distortion gate; uv_audit's TEXEL_BAND the bands."""
     for rel, name, rename in (("uv-unwrapping/scripts/uv_audit.py", "LIMITS", {}),
-                              ("rizomuv-uv-pipeline/scripts/uv_metrics.py", "GATE", {"area_p95": "area_local_p95"})):
+                              ("rizomuv-uv-pipeline/scripts/uv_metrics.py", "GATE",
+                               {"area_p95": "area_local_p95", "area_max": "area_local_max",
+                                "island_area_p95": "island_area_local_p95"})):
         got = module_constant(rel, name)
         if got is MISSING:
             fail(rel, "no %s dict" % name)
@@ -540,6 +567,9 @@ def check_uv_gate():
         for k, want in CANON["uv_gate"].items():
             if got.get(rename.get(k, k)) != want:
                 fail(rel, "%s[%r] is %r, canon %r" % (name, rename.get(k, k), got.get(rename.get(k, k)), want))
+        if module_constant(rel, "ISLAND_MIN_SHARE") != CANON["uv_island_min_share"]:
+            fail(rel, "ISLAND_MIN_SHARE is %r, canon %r" % (module_constant(rel, "ISLAND_MIN_SHARE"),
+                                                           CANON["uv_island_min_share"]))
     rel = "uv-unwrapping/scripts/uv_audit.py"
     bands = module_constant(rel, "TEXEL_BAND")
     for purpose, want in CANON["texel_band"].items():
@@ -685,6 +715,7 @@ def main():
     check_identical("blender-kit-library/scripts/kit_library.py",
                     "vrchat-world-orchestration/scripts/kit_library.py")
     check_identical(*PBR_CHECK_COPIES)
+    check_identical(*TEXTURE_SEAMS_COPIES)
     for rel in PBR_CHECK_COPIES:
         limits = module_constant(rel, "PBR_LIMITS")
         if limits is MISSING or list(limits.get("albedo_srgb", ())) != CANON["pbr_albedo_srgb"]:
@@ -701,6 +732,7 @@ def main():
              % (CANON["lod_lightmap_cost"], CANON["lod_lightmap_scale"]))
     check_constants()
     check_uv_gate()
+    check_tile_phase()
     check_qa_ids()
     check_task_checks()
     check_blender_commands()

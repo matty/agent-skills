@@ -67,6 +67,21 @@ needs a 2048 map counted over its full surface but fits a 1024 counted once per 
 A piece that does not fit at its class on the capped map (`layout` reports `fits` False): split it into two texture
 sets or remove faces nobody sees, rather than letting its density drop below 0.8x its class.
 
+**A hero prop over the cap.** A chest of 0.9 x 0.5 x 0.5 m has about 2.3 m2 of surface; at T2048 (seen within 0.75 m)
+it needs `next_pow2(2048 x sqrt(2.3 / 0.65))` = 4096 px (*derived*), over a 2048 PC cap, and a 1024 mobile override
+leaves about 545 px/m. In this order:
+
+1. Stack what repeats (both ends, the four brackets: but unstack copies seen together, so their wear differs) and
+   drop faces nobody sees (the base, the back against a wall; an openable inside counts as seen).
+2. Split the texture by material into two or three sets (wood, iron, leather), each its own map at the class: each
+   set is a draw call, which a hero prop seen up close earns.
+3. Close-range sharpness on the mobile build from a detail map on the largest material (wood grain, leather grain) at
+   its own tiling: it costs a small map and holds the class where the override halves the main one.
+4. Report the class each set reaches on each platform; never let a set fall under 0.8x its class silently.
+5. Still short after 1-4 (a few large rectangles: Blender's packer stops near coverage 0.6, where a shelf of the same
+   rectangles fits): lay the largest islands in rows by hand, then `layout` the rest around them; or give the one
+   surface seen closest its own 4096 on PC; or accept the class it reaches and say so in the report.
+
 ## Lightmaps are a different density
 
 Lightmaps run at a few to a few tens of texels per metre, set per scene and weighted per renderer with a lightmap

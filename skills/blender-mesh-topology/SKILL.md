@@ -1,6 +1,6 @@
 ---
 name: blender-mesh-topology
-description: Retopology and clean low-count topology in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading, too many triangles, an over-dense low, edge flow; a greybox piece that looks plain, boxy or too clean, what detail to model, at what size. Reduction grids, loop removal, Quad Remesher, hard-surface chamfers, weighted normals, audit, review renders. Blocky props (3d-form-design); textures (pbr-texturing).
+description: Retopology and clean low-count topology in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading, too many triangles, an over-dense low, edge flow; a greybox piece that looks plain, boxy or too clean, what detail to model, at what size; a high and low poly for baking, sculpted rocks or bark, cloth. Reduction grids, loop removal, Quad Remesher, hard-surface chamfers, weighted normals, audit, review renders. Blocky props (3d-form-design); textures (pbr-texturing).
 ---
 
 # Clean topology for generated and hard-surface meshes
@@ -19,6 +19,7 @@ engine does with the result is in `references/engine-notes.md`.
 | A prop or piece that looks blocky or over-bevelled, or furniture: its form, proportions and bevel sizes | Load the `3d-form-design` skill, then come back for the stack and validation | - |
 | A greybox piece to finish, or one that looks plain, boxy or too clean | Detail at real sizes, geometry or normal map by viewing distance, joints (section 5) | `references/form-and-detail.md`, `references/real-world-sizes.md`, `scripts/detail_scale.py` |
 | A hand-modelled static hard-surface piece (kit walls, door surrounds, trims, furniture) | Chamfers, custom normals, flat-face rules (section 6) | `references/hard-surface.md` |
+| A piece that takes a bake: building the high poly and the low it bakes onto, pairing parts, the pre-bake gate | Shading that bakes clean, edge widths in texels, silhouette and skew measured (section 5) | `references/high-and-low-poly.md`; rocks, bark, sculpts and cloth headless: `references/organic-and-cloth.md` |
 | Any of them, before calling it done | Validate (section 7) | `references/validation.md`, `scripts/topology_audit.py`, `scripts/review_render.py` |
 
 A remesher never fixes a shape, and on engineered surfaces fixed on every side it leaves knots at the borders: when
@@ -83,7 +84,9 @@ validates and retries other targets. Engine, settings, a worked call and the fai
   make a groove at every joint. A profile that runs across pieces is identical at both ends.
 - Imperfection (sag, chipped corners, uneven boards) goes on the body only, never on joint faces; variants differ in it.
 - Mid-poly with custom normals for hard-surface kit pieces; a high-poly bake for ornament and organic or cloth props
-  (the bake is `pbr-texturing`'s).
+  (the bake is `pbr-texturing`'s). The high is shaded smooth with every fold sharp (smoothing across a fold baked 41
+  deg off); the low holds the silhouette (`high_low_gap`) and leans its rays little (`bake_skew`); carving close up
+  keeps its depth step in the low: `references/high-and-low-poly.md`.
 - Review from eye height (1.6-1.7 m) at the nearest walkable and the usual distance, beside the reference, and report
   every detail item with its measured size.
 
@@ -128,7 +131,8 @@ Details, measurements and sources: `references/hard-surface.md`.
   `problems(r, flat_tol=0.5)` fails the last for flat-faced pieces; smooth curved parts are over it by design, so on
   a piece with them read `r["flat_faces"]` (each face over the tolerance once, as the mesh data's face index and a
   centre) and judge only the flat parts. A hard-surface piece:
-  `audit_stack(obj, flat_tol=0.5)` instead. `joint_match` for vertices shared with a neighbouring piece.
+  `audit_stack(obj, flat_tol=0.5)` instead. `joint_match` for vertices shared with a neighbouring piece, `joint_normals` for
+  the shading across them.
 - `review_render.render(...)`: close-up wire, studio, and a reflective matcap. Before and after:
   `review_render.compare(dense, low, views, out)` renders each alone from the same eye relative to its own centre,
   into a before | after | silhouette sheet, and returns the silhouette mismatch per view. Never put both in one wide
@@ -146,8 +150,8 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | `scripts/loop_decimate.py` | `loop_decimate(ob, tol, protect_uv="all", max_loops=None)` removes edge loops by least sag while it stays within `tol`, keeping seams, sharp edges, material boundaries and UV maps; `deviation(dense, low, samples="verts")` measures max, p95 and mean |
 | `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run, `weld_layout()`, `mirror_half()`, `find_engine()` |
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
-| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)` |
-| `scripts/review_render.py` | `render(path, eye, target, ...)` live or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)` |
+| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `joint_normals(a, b, select, ...)`, `determinism_hash(obj)`, `high_low_gap(low, highs)` (how far high and low part: bulges, recesses, relief), `bake_skew(low, highs=, faces=)` (how far the bake's rays lean from the high) |
+| `scripts/review_render.py` | `render(path, eye, target, ..., cull=True)` live or headless, back faces culled as in the engine, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)` |
 | `scripts/detail_scale.py` | Plain Python, no Blender: `px_per_m(d)`, `texel_class(d)`, `stereo_relief_m(d)`, `min_width_m(d, px=2)`, each with `ppd=20` (25 for Quest 3); `python detail_scale.py 0.5 1 2 [--ppd 25]` prints the table |
 
 Load a Blender script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions

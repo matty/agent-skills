@@ -62,8 +62,9 @@ pipeline's working rules. QA runs its own copy of the check (`vrchat-world-qa`, 
 
 ## Channel plan for Unity's Built-in Render Pipeline
 
-VRChat worlds use the Built-in pipeline's Standard shader (PC) and VRChat's mobile shaders (Quest and iOS). Pack for
-what they read, not for a glTF-style ORM map, which Standard wires up wrong:
+VRChat worlds use the Built-in pipeline, usually with Unity's Standard shader on PC and VRChat's Standard Lite on Quest
+and iOS (worlds may use any shader on any platform; the mobile-shader rule binds avatars, `pbr-texturing`'s engine
+notes). Pack for what they read, not for a glTF-style ORM map, which Standard wires up wrong:
 
 | Map | Channels | Colour space | Unity slot |
 |---|---|---|---|
@@ -87,7 +88,9 @@ A tiling material repeats everything in its tile, so a one-off mark (a seam arou
 one wall) cannot go into the tiling map: it would appear on every bay. Plan it before UVs, in the spec or the brief:
 give that face its own UV0 region outside the tiled area and a second material or a trim strip for it, or use a
 decal (a separate quad with its own small texture). Never ask the UV task for an island that both "tiles with the
-wall" and "carries its own detail": the two conflict.
+wall" and "carries its own detail" on UV0: the two conflict. The reverse is fine and often best: a unique or atlas
+map on UV0 with a tiling detail in the material's detail slot, which has its own tiling (rocks, a long wall built as
+one mesh, terrain: `pbr-texturing`'s terrain and ground reference).
 
 ## Rules that save rework
 

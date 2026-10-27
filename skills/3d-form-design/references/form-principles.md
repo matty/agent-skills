@@ -53,7 +53,8 @@ numbers (rectangularity, solidity) are a first filter, the renders the judgement
 
 Rules for a modelling agent (*practice*):
 - Any box-derived part over about 0.3 m gets at least one non-parallel pair of faces (2-10 deg of taper or draft)
-  unless it is a sawn board or a panel.
+  unless it is a sawn board, a panel, or square by its job (a crate, a case, a carcass that stacks or sits flush):
+  those break the box with lids, rails, bands, overhangs and corner pieces instead.
 - A plane over about 0.25 m^2 that is not a floor, glass or a tiling surface gets a crown of 0.5-2% of its span, or is
   broken into facets or panels.
 - Secondary forms sit on, wrap or interpenetrate their parent (a lip, a flange, a panel in a 5-20 mm recess) rather

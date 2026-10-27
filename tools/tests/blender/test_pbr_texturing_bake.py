@@ -3,8 +3,8 @@ AO and curvature from a high poly through a cage that encloses it (a cage that d
 detail: black AO, rings for domes), restores everything it touched, writes 16-bit PNGs and dithered 8-bit ones (grey,
 grey + alpha, RGB, RGBA), bakes non-square maps, sizes a uniform cage by the faces the detail stands on (not the
 sharpest corner), fits a per-vertex cage that clears a narrow channel without losing floating piping, Gaussian
-pre-filters before downsampling (a steadier sloped edge than a box filter), refuses highs in an excluded collection, and
-its CLI bakes a saved .blend; lookdev_render.py shows a metal's roughness map where Workbench shows none of it, and
+pre-filters before downsampling (a steadier sloped edge than a box filter), refuses highs in an excluded collection,
+bakes parts that sit close together apart (bake_exploded) and puts them back, and its CLI bakes a saved .blend; lookdev_render.py shows a metal's roughness map where Workbench shows none of it, and
 renders maps from the command line; pbr_check.py's convention test reads real Cycles bakes as OpenGL (and a green-flipped
 copy as DirectX), and its Blender loader returns the same codes as its own PNG reader for 8- and 16-bit PNGs written by
 Blender and by the scripts (a 16-bit PNG read under the default sRGB tag comes back linearised: the reason it sets
@@ -15,6 +15,7 @@ Host: Blender 4.2+ (bpy, Cycles; tested on 5.2.2), run from anywhere:
 Builds its fixtures in a temp folder, prints PASS <case> / FAIL <case>: <why>, and raises if any case failed.
 """
 
+import json
 import math
 import os
 import shutil
@@ -174,7 +175,33 @@ def test_bake_normal_ao_curvature():
     c_edge = float(sample(curv, *island_uv(i, 0.5, 0.995))[0])
     check(abs(c_flat - 0.5) < 0.03 and c_edge > c_flat + 0.05,
           "curvature flat %.3f, convex bevel %.3f: convex should read brighter than 0.5" % (c_flat, c_edge))
+    check(rep["maps"]["curvature"]["saturated_share"] < 0.05 and not rep.get("notes"), rep)
+    hot = BAKE["bake"](low, [high], maps=("curvature",), size=64, out_dir=str(out), name="T_TST_Hot",
+                       curvature_gain=200.0)["report"]                     # a gain borrowed from a denser high
+    check(hot["maps"]["curvature"]["saturated_share"] > 0.05 and any("clipped" in n for n in hot.get("notes", [])),
+          "a saturating gain must be reported: %s" % hot)
 
+
+
+def test_ao_ignores_other_objects_unless_asked():
+    """A slab hanging just over the cube (another texture set, a design leftover) occluded the AO bake: bake() hides
+    every render-visible object that is not the low, a high or the cage, and puts it back; occluders= keeps one."""
+    low, high = build_fixture()
+    i = POS_FACE[0]
+    n = low.data.polygons[i].normal
+    ax = max(range(3), key=lambda k: abs(n[k]))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=tuple(0.62 * n[k] for k in range(3)))
+    slab = bpy.context.active_object                  # parallel to that face, 6 cm beyond the high, within AO reach
+    slab.scale = tuple(0.05 if k == ax else 3.0 for k in range(3))
+    bpy.context.view_layer.update()
+    out = TMP / "occluder"
+    res = BAKE["bake"](low, [high], maps=("ao",), size=64, out_dir=str(out), name="T_TST_Alone")
+    alone = float(sample(PC.load(res["ao"])[0], *island_uv(i, 0.3, 0.3))[0])
+    check(res["report"]["hidden_for_bake"] >= 1 and not slab.hide_render, "the slab was not hidden and restored")
+    res = BAKE["bake"](low, [high], maps=("ao",), size=64, out_dir=str(out), name="T_TST_Under", occluders=[slab])
+    under = float(sample(PC.load(res["ao"])[0], *island_uv(i, 0.3, 0.3))[0])
+    check(alone > 0.9 and under < alone - 0.1, "AO alone %.3f, with the slab kept as an occluder %.3f" % (alone, under))
+    bpy.data.objects.remove(slab)
 
 def test_cage_that_does_not_enclose_bakes_black_ao():
     low, high = build_fixture()
@@ -250,6 +277,8 @@ def test_cli_bakes_a_saved_blend():
     check(run.returncode == 0, "CLI exit %d: %s" % (run.returncode, run.stdout[-800:] + run.stderr[-800:]))
     png = TMP / "cli" / "out" / "T_TST_Cli_Normal.png"
     check(png.is_file() and PC.png_header(str(png))[:2] == (64, 32), "CLI wrote no 64 x 32 normal map")
+    rep = TMP / "cli" / "out" / "T_TST_Cli_bake.json"
+    check(rep.is_file() and "cage_inside" in json.loads(rep.read_text(encoding="utf-8")), "CLI wrote no bake report")
     bad = subprocess.run(base + ["--low", "nope", "--high", "cube_high"], capture_output=True, text=True,
                          timeout=300)
     check(bad.returncode == 2, "a missing object exits %d, expected 2" % bad.returncode)
@@ -453,6 +482,17 @@ def test_bake_refuses_an_excluded_high():
         check("not evaluated" in str(ex) and "cube_high" in str(ex), "message: %s" % ex)
     finally:
         bpy.data.collections.remove(coll)
+    if not high.users_collection:
+        bpy.context.scene.collection.objects.link(high)
+    tri = low.modifiers.new("Triangulate", "TRIANGULATE")      # props sweep: switched off for the UV work only
+    tri.show_viewport = False
+    try:
+        BAKE["bake"](low, [high], maps=("normal",), size=32, out_dir=str(TMP / "split_toggle"))
+        raise AssertionError("baked a low whose viewport and render stacks differ")
+    except ValueError as ex:
+        check("Triangulate" in str(ex) and "viewport or the render" in str(ex), "message: %s" % ex)
+    finally:
+        low.modifiers.remove(tri)
 
 
 def write_maps(d, smooth):
@@ -532,7 +572,115 @@ def test_lookdev_cli_renders_maps():
     check(float(px[:, :, :3].mean()) > 0.05, "look-dev render is black")
 
 
-for fn in (test_bake_normal_ao_curvature,
+def test_lookdev_maps_on_an_object_from_the_eye():
+    """Hero prop F16: --object with --maps renders the exported maps in place of the object's own material (here a red
+    emission, as an EMIT bake leaves it) from --eye towards --target, and puts the material back."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_plane_add(size=1.0)
+    ob = bpy.context.active_object
+    ob.name = "P_low"
+    red = bpy.data.materials.new("M_BakeEmit")
+    red.use_nodes = True
+    nt = red.node_tree
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (1.0, 0.0, 0.0, 1.0)
+    nt.links.new(em.outputs[0], next(n for n in nt.nodes if n.type == "OUTPUT_MATERIAL").inputs["Surface"])
+    ob.data.materials.append(red)
+    base, ms = write_maps(TMP / "eye_maps", 0.3)
+    png = TMP / "eye_maps" / "eye.png"
+    code = LOOK["main"](["--object", "P_low", "--maps", str(TMP / "eye_maps" / "T_TST_*.png"), "--eye", "0", "-0.8",
+                         "0.6", "--target", "0", "0", "0", "--lens", "35", "--png", str(png), "--size", "96", "54",
+                         "--samples", "4"])
+    check(code == 0 and png.is_file(), "lookdev exit %s" % code)
+    px = PC.load(str(png))[0][:, :, :3]
+    centre = px[20:34, 40:56].reshape(-1, 3).mean(axis=0)
+    check(centre[0] < centre[1] * 1.5 + 0.05, "the bake's red material rendered, not the maps: %s" % centre)
+    check(ob.material_slots[0].material is red and "lookdev_material" not in bpy.data.materials,
+          "the object's material was not put back")
+
+
+def test_exploded_bake_keeps_close_parts_apart():
+    """A body and a lid 3 mm above it, one low with a vertex group per part, each high 1 mm proud of its part and a
+    bump 15 mm proud on the body's side (Body_high_bump), so the uniform cage pushes about 16 mm: baked assembled, the
+    lid's rays start inside the body's high and hit its top from inside (normals into the surface); bake_exploded
+    moves each part and its highs apart for every map (AO too: assembled, its rays land in the neighbour's high just
+    the same), then puts every vertex and object back exactly. A vertex group that is no part (Wear) is ignored; a
+    high parented to its part's high (Lid_high_knob) moves with its parent and comes back with it; one parented to
+    another part's high is refused."""
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
+    bm = bmesh.new()
+    add_box(bm, (-0.15, -0.1, 0.0), (0.15, 0.1, 0.15), cuts=2)
+    n_body = len(bm.verts)
+    add_box(bm, (-0.15, -0.1, 0.153), (0.15, 0.1, 0.18), cuts=2)
+    low = object_from_bm("Chest_low", bm)
+    body, lid = low.vertex_groups.new(name="Body"), low.vertex_groups.new(name="Lid")
+    body.add(list(range(n_body)), 1.0, "REPLACE")
+    lid.add(list(range(n_body, len(low.data.vertices))), 1.0, "REPLACE")
+    low.vertex_groups.new(name="Wear").add(list(range(0, len(low.data.vertices), 3)), 0.5, "REPLACE")
+    bpy.context.view_layer.objects.active = low
+    low.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.03)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    low.modifiers.new("Triangulate", "TRIANGULATE")
+    highs = []
+    for name, lo, hi in (("Body_high", (-0.151, -0.101, -0.001), (0.151, 0.101, 0.151)),
+                         ("Lid_high", (-0.151, -0.101, 0.152), (0.151, 0.101, 0.181))):
+        bmh = bmesh.new()
+        add_box(bmh, lo, hi, cuts=6)
+        highs.append(object_from_bm(name, bmh))
+    bmh = bmesh.new()
+    bmesh.ops.create_uvsphere(bmh, u_segments=24, v_segments=12, radius=0.03)
+    bump = object_from_bm("Body_high_bump", bmh)
+    bump.location = (0.0, -0.1 + 0.015, 0.07)                                  # stands 15 mm out of the front
+    highs.append(bump)
+    bmh = bmesh.new()
+    add_box(bmh, (-0.02, -0.02, 0.181), (0.02, 0.02, 0.19), cuts=1)
+    knob = object_from_bm("Lid_high_knob", bmh)
+    knob.parent = highs[1]                                                     # parented to its own part's high
+    highs.append(knob)
+    bpy.context.view_layer.update()
+    parts = BAKE["parts_by_name"](low, highs)
+    check(sorted(parts) == ["Body", "Lid"] and parts["Lid"] == [highs[1], knob] and bump in parts["Body"], parts)
+    co0 = [v.co.copy() for v in low.data.vertices]
+    mw0 = [h.matrix_world.copy() for h in highs]
+    out = TMP / "exploded"
+    together = BAKE["bake"](low, highs, maps=("normal",), size=128, out_dir=str(out), name="T_TST_Together")
+    check(together["report"]["cage_inside"]["neighbour"] > 0,
+          "assembled, the cage should reach into the other part: %s" % together["report"]["cage_inside"])
+    apart = BAKE["bake_exploded"](low, parts, maps=("normal", "ao"), size=128, out_dir=str(out), name="T_TST_Apart")
+    rep = apart["report"]
+    check(rep["exploded"]["maps"] == ["normal", "ao"] and list(rep["passes"]) == ["exploded"]
+          and rep["passes"]["exploded"]["cage_inside"]["neighbour"] == 0,
+          "exploded, no ray may start in the other part: %s" % rep)
+    ex = rep["passes"]["exploded"]                     # sized from the assembled low, not the spread-out parts
+    check(abs(ex["ao_distance"] - together["report"]["ao_distance"]) < 1e-6
+          and abs(ex["extrusion"] - together["report"]["extrusion"]) < 0.002,
+          "exploded defaults %s / %s against assembled %s / %s" % (ex["ao_distance"], ex["extrusion"],
+                                                                   together["report"]["ao_distance"],
+                                                                   together["report"]["extrusion"]))
+    check(os.path.isfile(apart["normal"]) and os.path.isfile(apart["ao"]), apart)
+    check(all((v.co - c).length == 0.0 for v, c in zip(low.data.vertices, co0)), "low vertices not restored")
+    check(all(h.matrix_world == m for h, m in zip(highs, mw0)), "highs not restored")
+    knob.parent = highs[0]                                                     # now under the body's high
+    try:
+        BAKE["bake_exploded"](low, parts, maps=("normal",), size=32, out_dir=str(out), name="T_TST_Cross")
+        raise AssertionError("a high parented to another part's high must be refused")
+    except ValueError as ex:
+        check("Body_high" in str(ex), ex)
+    a, _ = PC.load(apart["normal"])
+    b, _ = PC.load(together["normal"])
+    check(float(np.abs(a[:, :, :3] - b[:, :, :3]).max()) > 0.1, "the exploded normal map should differ")
+    try:
+        BAKE["parts_by_name"](low, [highs[0], object_from_bm("Handle_high", bmesh.new())])
+        raise AssertionError("a high with no matching part group must be refused")
+    except ValueError:
+        pass
+
+
+for fn in (test_bake_normal_ao_curvature, test_ao_ignores_other_objects_unless_asked,
            test_cage_that_does_not_enclose_bakes_black_ao,
            test_bpy_loader_matches_png_reader,
            test_dithered_8bit_tracks_a_shallow_gradient,
@@ -542,9 +690,10 @@ for fn in (test_bake_normal_ao_curvature,
            test_fitted_cage_clears_a_channel_and_keeps_floating_piping,
            test_downsample_filter_steadies_a_sloped_edge,
            test_bake_refuses_an_excluded_high,
+           test_exploded_bake_keeps_close_parts_apart,
            test_cli_bakes_a_saved_blend,
            test_lookdev_shows_roughness_and_workbench_does_not,
-           test_lookdev_cli_renders_maps):
+           test_lookdev_cli_renders_maps, test_lookdev_maps_on_an_object_from_the_eye):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

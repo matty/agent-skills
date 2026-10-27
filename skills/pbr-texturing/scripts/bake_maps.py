@@ -15,20 +15,23 @@ Command line (open the .blend that holds the meshes):
             --low PROP_Crate_Free_A --high Crate_high --size 2048 --out blender/substance/PROP/bake
             --name T_PROP_Crate --maps normal,ao,curvature [--size 1024x2048] [--cage fitted] [--supersample 2]
             [--filter-sigma 0.5] [--extrusion 0.02] [--margin 16] [--samples 64] [--ao-distance 0.2] [--bits 16]
-            [--gpu]
+            [--gpu] [--explode]
 As a module (Blender MCP or another script):
     ns = {"BAKE_MAPS_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
     paths = ns["bake"](low, [high], maps=("normal", "ao"), size=1024, out_dir=..., name="T_PROP_Crate")
     paths = ns["bake"](low, highs, size=(1024, 2048), cage="fitted")         # per-vertex cage, a tall map
+    paths = ns["bake_exploded"](low, ns["parts_by_name"](low, highs), size=1024, out_dir=...)  # parts close together
 
 Output: <out_dir>/<name>_Normal.png, _AO.png, _Curvature.png; returns {map: path} plus "report" (sizes, seconds, the
-cage push and how far the high polys stand out, the curvature gain used). The low poly bakes as it exports:
+cage push and how far the high polys stand out, cage_inside, the curvature gain used), which the command line also
+writes to <out_dir>/<name>_bake.json. The low poly bakes as it exports:
 modifiers applied (keep its Triangulate on, so the baker and the engine see the same triangles), through its active
 render UV layer unless uv_layer is given. The low and high polys must be in the view layer: an object in an excluded
 or disabled collection is not evaluated, and its matrix_world is stale (identity after a load).
 """
 
 import argparse
+import json
 import os
 import struct
 import sys
@@ -42,6 +45,7 @@ MAP_SUFFIX = {"normal": "Normal", "ao": "AO", "curvature": "Curvature"}
 NEUTRAL = {"normal": (0.5, 0.5, 1.0), "ao": (1.0, 1.0, 1.0), "curvature": (0.5, 0.5, 0.5)}
 PNG_COLOUR = {1: 0, 2: 4, 3: 2, 4: 6}        # channels -> PNG colour type: grey, grey + alpha, RGB, RGBA
 FILTER_SIGMA = 0.5       # Gaussian pre-filter, in output texels: a box filter alone steps thin sloped detail
+CURVATURE_SATURATED = 0.05     # a curvature map with more of its texels clipped than this gets a note in the report
 FITTED = {"safety": 1.15, "margin": 0.0015, "floor": 0.002, "min_cos": 0.5, "dilate": 2, "repair": 10}  # metres
 
 
@@ -296,7 +300,8 @@ def cage_faults(low, highs, pushes, depsgraph=None):
     return {"neighbour": n_across, "own": n_short, "rays": rays}
 
 
-def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, report=None, **settings):
+def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, report=None, reference_size=None,
+                           **settings):
     """A cage push per vertex of the evaluated low poly, for pieces where no single push works: narrow channels
     (a channel-tufted back: a cage deep enough for one pad starts rays inside the next), concave creases, and pieces
     whose high stands far off in places and close in others.
@@ -340,7 +345,8 @@ def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, repor
     push = req.copy()
     lower, upper = np.zeros(nv), np.full(nv, np.inf)            # per vertex: its own last exit, its cap
     capped = 0
-    reach = max(2.0 * float(req.max()) if nv else 0.0, 0.02 * low.dimensions.length)   # sparse highs: gaps in samples
+    size = float(reference_size) if reference_size else low.dimensions.length
+    reach = max(2.0 * float(req.max()) if nv else 0.0, 0.02 * size)   # sparse highs: gaps in samples
     for v in range(nv):
         origin, direction = Vector(lm["co"][v]), Vector(lm["vn"][v]).normalized()
         last_exit, cap = 0.0, None
@@ -533,7 +539,7 @@ def _restore_materials(mat, saved):
 
 def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supersample=2, extrusion=None, margin=16,
          samples=None, ao_distance=None, bits=16, uv_layer=None, curvature_gain=None, gpu=False, cage=None,
-         filter_sigma=FILTER_SIGMA):
+         filter_sigma=FILTER_SIGMA, reference_size=None, occluders=()):
     """Bake `maps` (normal, ao, curvature) from `highs` onto `low` and write <name>_<Map>.png into out_dir.
     size: 1024, (width, height) or "1024x2048"; cage: None or "uniform" (one push along the averaged normals:
     extrusion, default cage_extrusion(), enough to enclose the high polys), "fitted" (a push per vertex,
@@ -543,7 +549,11 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
     about 3 texels wide); samples: Cycles samples per map (default normal 8, ao 64, curvature 8); ao_distance: AO
     ray length in metres (default 10% of the diagonal); curvature_gain: fixed contrast for the curvature map
     (default: per map, so the 99th percentile of |pointiness - 0.5| reaches 0.5; give one value for every piece of
-    a set so they match)."""
+    a set so they match). reference_size: the diagonal in metres the default cage floor and AO distance scale with
+    (default the low's; bake_exploded passes the assembled low's, not the spread-out one's). Every other
+    render-visible object is hidden while baking and restored (an unrelated box over the low took its AO from 0.99 to
+    0.70): occluders lists objects that should still cast AO (a floor for contact shadow); the report counts the
+    hidden ones."""
     t0 = time.time()
     scene = bpy.context.scene
     name = name or low.name
@@ -557,8 +567,14 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
     if mode == "fitted" and extrusion is not None:
         raise ValueError("extrusion sets a uniform cage: leave it out with cage='fitted'")
     _require_evaluated([low] + highs, bpy.context.evaluated_depsgraph_get())
+    split = [m.name for m in low.modifiers if m.show_viewport != m.show_render]
+    if split:
+        raise ValueError("%s: modifier(s) %s are on in the viewport or the render but not both; the bake evaluates the "
+                         "render stack and its cage the viewport one, so their faces differ (Blender's 'cage mesh "
+                         "must have the same number of faces'). Turn the Triangulate back on after the UV layout, or "
+                         "match the two toggles" % (low.name, ", ".join(split)))
     out_w, out_h = map_size(size)
-    diag = max(low.dimensions.length, 1e-6)
+    diag = max(float(reference_size) if reference_size else low.dimensions.length, 1e-6)
     stats, fitted = {}, {}
     push = None
     if mode == "uniform":
@@ -567,7 +583,7 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
             extrusion = max(extrusion, 0.005 * diag)          # a little push even when the high poly sits inside
         push = extrusion = float(extrusion)
     elif mode == "fitted":
-        push = fitted_cage_extrusions(low, highs, report=fitted)
+        push = fitted_cage_extrusions(low, highs, report=fitted, reference_size=diag)
     ao_distance = 0.1 * diag if ao_distance is None else float(ao_distance)
     ss = max(1, int(supersample))
     w, h = out_w * ss, out_h * ss
@@ -596,6 +612,13 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
         report["cage_inside"] = fitted["faults"]
     elif mode == "uniform":
         report["cage_inside"] = cage_faults(low, highs, push)
+    keepers = {low, cage} | set(highs) | set(occluders or ())
+    hidden = [o for o in scene.objects if (o.type in ("MESH", "CURVE", "SURFACE", "META", "FONT")
+                                           or (o.type == "EMPTY" and o.instance_type == "COLLECTION"))
+              and not o.hide_render and o not in keepers]
+    for o in hidden:
+        o.hide_render = True
+    report["hidden_for_bake"] = len(hidden)
     try:
         for m in maps:
             if m not in MAP_SUFFIX:
@@ -645,6 +668,14 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
                         0.5 / max(float(np.percentile(dev, 99)), 1e-6) if dev.size else 1.0)
                     a = np.clip(0.5 + p * gain, 0.0, 1.0)[:, :, None]
                     info["gain"] = round(gain, 3)
+                    used = np.abs(p) > 1e-4                    # texels the bake wrote something into
+                    sat = float(((a[:, :, 0] <= 0.001) | (a[:, :, 0] >= 0.999))[used].mean()) if used.any() else 0.0
+                    info["saturated_share"] = round(sat, 4)
+                    if sat > CURVATURE_SATURATED:
+                        report.setdefault("notes", []).append(
+                            "curvature: %.0f%% of its texels clipped to 0 or 1 at gain %.3g: a shared gain from a "
+                            "denser high, or a sparse high read as all edges; cut the high to a grid of about 2 bake "
+                            "texels before its bevels, or bake this set with its own gain" % (100 * sat, gain))
                 path = os.path.join(out_dir, "%s_%s.png" % (name, MAP_SUFFIX[m]))
                 save_png(path, a, bits=bits)
                 out[m] = path
@@ -656,6 +687,8 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
                 _undo(undo)
                 bpy.data.images.remove(img)
     finally:
+        for o in hidden:
+            o.hide_render = False
         if own_cage:
             me = cage.data
             bpy.data.objects.remove(cage)
@@ -671,6 +704,101 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
         bpy.context.view_layer.objects.active = keep["active"]
     report["seconds"] = round(time.time() - t0, 2)
     out["report"] = report
+    return out
+
+
+def parts_by_name(low, highs):
+    """{vertex group of low: [highs]} from names: a high called <Part>_high (or <Part>_high.001, <Part>_high_bolts)
+    belongs to the low's vertex group <Part>. Raises on a high with no matching group."""
+    groups = {g.name for g in low.vertex_groups}
+    parts = {}
+    for h in highs:
+        base = h.name.split("_high")[0] if "_high" in h.name else None
+        if base not in groups:
+            raise ValueError("%s: no vertex group %r on %s for it (name highs <Part>_high after the low's part "
+                             "groups)" % (h.name, base, low.name))
+        parts.setdefault(base, []).append(h)
+    return parts
+
+
+def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("normal", "ao", "curvature"), distance=None,
+                  **kw):
+    """Bake a low poly made of parts that sit close together (a lid on a body, brackets on planks) so no part's rays
+    catch another part's high poly: parts {low vertex group: [its highs]} (parts_by_name builds it from <Part>_high
+    names). For the maps in `explode` (all three by default), part k (in name order) and its highs move k x distance
+    along +X (default twice the low's diagonal), bake() runs, and every vertex and object goes back exactly where it
+    was; maps left out of `explode` bake with everything assembled. AO assembled keeps the contact shadows between
+    parts but lets a part's rays land on its neighbour's high, the fault exploding prevents: leave "ao" out only when
+    the assembled pass's cage_inside neighbour count is 0. Low vertices in no part group (or only in other groups)
+    stay put with part 0. Only highs with no high among their parents move (their children follow), and a high
+    parented to another part's high is refused. kw: bake()'s options (size, out_dir, name, cage, ...). Returns
+    bake()'s dict, its report with "exploded" (the maps and the distance) and one report per pass."""
+    names = sorted(parts)
+    gi = {g.name: g.index for g in low.vertex_groups}
+    missing = [n for n in names if n not in gi]
+    if missing:
+        raise ValueError("%s has no vertex groups %s" % (low.name, ", ".join(missing)))
+    highs = [h for n in names for h in parts[n]]
+    if len(set(highs)) != len(highs):
+        raise ValueError("a high poly is listed under two parts")
+    part_of = {h: k for k, n in enumerate(names) for h in parts[n]}
+    roots = []
+    for h in highs:
+        up = h.parent
+        while up is not None and up not in part_of:
+            up = up.parent
+        if up is None:
+            roots.append(h)
+        elif part_of[up] != part_of[h]:
+            raise ValueError("%s is parented to %s, a high of another part: clear its parent (keep transform) "
+                             "before an exploded bake" % (h.name, up.name))
+    me = low.data
+    group_part = {gi[n]: k for k, n in enumerate(names)}
+    member = np.full(len(me.vertices), -1, np.int64)
+    for v in me.vertices:
+        for g in v.groups:
+            k = group_part.get(g.group)
+            if g.weight > 0 and k is not None:
+                if member[v.index] not in (-1, k):
+                    raise ValueError("vertex %d of %s is in two part groups" % (v.index, low.name))
+                member[v.index] = k
+    size = max(low.dimensions.length, 1e-3)                   # assembled: the defaults scale with this, not with
+    kw.setdefault("reference_size", size)                     # the parts spread out (an 18 m spread made a 90 mm
+    dist = float(distance) if distance else 2.0 * size        # cage floor and 1.8 m AO rays)
+    out, reports = {}, {}
+    first = [m for m in maps if m in explode]
+    rest = [m for m in maps if m not in explode]
+    if first:
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        keep_co = co.copy()
+        keep_basis = {h.name: h.matrix_basis.copy() for h in roots}
+        inv = np.array(low.matrix_world.inverted().to_3x3())
+        try:
+            shift = np.zeros((len(me.vertices), 3))
+            ks = np.clip(member, 0, None)
+            shift[:, 0] = ks * dist
+            me.vertices.foreach_set("co", (co.reshape(-1, 3) + shift @ inv.T).ravel())
+            me.update()
+            for h in roots:
+                m = h.matrix_world.copy()
+                m.translation.x += part_of[h] * dist
+                h.matrix_world = m
+            bpy.context.view_layer.update()
+            r = bake(low, highs, maps=tuple(first), **kw)
+        finally:
+            me.vertices.foreach_set("co", keep_co)
+            me.update()
+            for h in roots:
+                h.matrix_basis = keep_basis[h.name]
+            bpy.context.view_layer.update()
+        reports["exploded"] = r.pop("report")
+        out.update(r)
+    if rest:
+        r = bake(low, highs, maps=tuple(rest), **kw)
+        reports["assembled"] = r.pop("report")
+        out.update(r)
+    out["report"] = {"exploded": {"maps": first, "distance": round(dist, 4), "parts": names}, "passes": reports}
     return out
 
 
@@ -693,6 +821,8 @@ def main(argv):
     ap.add_argument("--bits", type=int, choices=(8, 16), default=16)
     ap.add_argument("--uv-layer")
     ap.add_argument("--gpu", action="store_true")
+    ap.add_argument("--explode", action="store_true", help="parts close together: pair <Part>_high objects with the "
+                    "low's <Part> vertex groups and bake every map with the parts moved apart")
     a = ap.parse_args(argv)
     obs = bpy.data.objects
     missing = [n for n in [a.low] + a.high if n not in obs]
@@ -704,14 +834,24 @@ def main(argv):
     except ValueError as ex:
         print("[bake] --size %s: %s" % (a.size, ex))
         return 2
-    res = bake(obs[a.low], [obs[n] for n in a.high], maps=tuple(m.strip() for m in a.maps.split(",") if m.strip()),
-               size=size, out_dir=a.out, name=a.name, supersample=a.supersample, extrusion=a.extrusion,
-               margin=a.margin, samples=a.samples, ao_distance=a.ao_distance, bits=a.bits, uv_layer=a.uv_layer,
-               curvature_gain=a.curvature_gain, gpu=a.gpu, cage=a.cage, filter_sigma=a.filter_sigma)
+    kw = dict(maps=tuple(m.strip() for m in a.maps.split(",") if m.strip()), size=size, out_dir=a.out, name=a.name,
+              supersample=a.supersample, extrusion=a.extrusion, margin=a.margin, samples=a.samples,
+              ao_distance=a.ao_distance, bits=a.bits, uv_layer=a.uv_layer, curvature_gain=a.curvature_gain, gpu=a.gpu,
+              cage=a.cage, filter_sigma=a.filter_sigma)
+    highs = [obs[n] for n in a.high]
+    try:
+        res = (bake_exploded(obs[a.low], parts_by_name(obs[a.low], highs), **kw) if a.explode
+               else bake(obs[a.low], highs, **kw))
+    except ValueError as ex:
+        print("[bake] %s" % ex)
+        return 2
     for m, p in res.items():
         if m != "report":
             print("[bake] %s -> %s" % (m, p))
-    print("[bake] report %s" % res["report"])
+    rp = os.path.join(a.out, "%s_bake.json" % (a.name or a.low))
+    with open(rp, "w", encoding="utf-8") as f:
+        json.dump(res["report"], f, indent=1)
+    print("[bake] report %s -> %s" % (res["report"], rp))
     return 0
 
 

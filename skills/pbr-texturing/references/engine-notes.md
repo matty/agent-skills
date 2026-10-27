@@ -4,11 +4,14 @@ What an engine reads from the maps this skill makes. One section per engine; sou
 
 ## Unity, Built-in Render Pipeline (VRChat worlds)
 
-VRChat worlds run on Unity 2022.3.22f1 with the Built-in pipeline: Unity's Standard shader on PC and VRChat's mobile
-shaders on Android (Quest) and iOS. Formats, sizes, crunch and per-platform overrides are `vrchat-texture-and-vram`'s;
-lightmap modes are `vrchat-lighting-and-baking`'s. Shader facts below are read from the shader sources: Unity's
-CGIncludes in the 2022.3.22f1 editor install (`Editor/Data/CGIncludes`) and the VRChat Worlds SDK 3.10.5 package
-(`Packages/com.vrchat.base/Runtime/VRCSDK/Sample Assets/Shaders/Mobile/` in a VRChat project), read 2026-10-18.
+VRChat worlds run on Unity 2022.3.22f1 with the Built-in pipeline: usually Unity's Standard shader on PC and VRChat's
+mobile shaders on Android (Quest) and iOS, but a world may use any shader on any platform (Alpha, below). Formats,
+sizes, crunch and per-platform overrides are `vrchat-texture-and-vram`'s; lightmap modes are
+`vrchat-lighting-and-baking`'s. Shader facts below are read from the shader sources: Unity's CGIncludes in the
+2022.3.22f1 editor install (`Editor/Data/CGIncludes`; Unity's downloadable `builtin_shaders-2022.3.22f1.zip` adds a
+two-line licence header, so its line numbers run 2 higher) and the VRChat Worlds SDK 3.10.5 package
+(`Packages/com.vrchat.base/Runtime/VRCSDK/Sample Assets/Shaders/Mobile/` in a VRChat project), read 2026-10-18 and
+re-checked 2026-10-27.
 
 ### Standard (PC)
 
@@ -19,7 +22,7 @@ CGIncludes in the 2022.3.22f1 editor install (`Editor/Data/CGIncludes`) and the 
 | Normal Map (`_BumpMap`) | `T_*_Normal`, imported as texture type Normal map | "Unity uses Y+ normal maps", "sometimes known as OpenGL format" (https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterNormalMap.html, checked 2026-10-18) |
 | Occlusion (`_OcclusionMap`) | Its own map; Standard reads only G (`UnityStandardInput.cginc` lines 117-125) | In a baked world the lightmap carries large-scale occlusion: use it only for small crevices |
 | Emission (`_EmissionMap` x `_EmissionColor`) | sRGB on | Set the material's Global Illumination to Baked so it lights the bake: BakedEmissive "emits lighting into baked lightmaps and baked lightprobes" (https://docs.unity3d.com/2022.3/Documentation/ScriptReference/MaterialGlobalIlluminationFlags.BakedEmissive.html, checked 2026-10-18) |
-| Secondary maps: Detail Mask, Detail Albedo x2, Detail Normal Map | A finer tiling layer for close-range sharpness on tiling surfaces | Detail albedo multiplies by `unity_ColorSpaceDouble` (`UnityStandardInput.cginc` line 96), 4.59 in a linear project (`UnityCG.cginc` line 33): mid-grey (sRGB 128) is neutral. The detail tiling is the Detail Albedo slot's own; UV0 or UV1 per material. The mask's alpha limits it ("mask off certain areas", https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterDetail.html, checked 2026-10-18) |
+| Secondary maps: Detail Mask, Detail Albedo x2, Detail Normal Map | A finer tiling layer for close-range sharpness on tiling surfaces | Detail albedo multiplies by `unity_ColorSpaceDouble` (`UnityStandardInput.cginc` line 96), 4.59 in a linear project (`UnityCG.cginc` line 33): mid-grey (sRGB 128) is neutral. Both detail maps use the Detail Albedo slot's own tiling and offset (`_DetailAlbedoMap_ST`) on UV0 or UV1 (Secondary UV Set); the Detail Mask's alpha is sampled on the main UV with the Albedo slot's tiling (`UnityStandardInput.cginc` lines 73-74, 92, 206-207). The mask's alpha limits it ("mask off certain areas", https://docs.unity3d.com/2022.3/Documentation/Manual/StandardShaderMaterialParameterDetail.html, checked 2026-10-18) |
 
 **Keywords come from the inspector.** Standard compiles each feature only with its keyword: `_NORMALMAP`,
 `_METALLICGLOSSMAP`, `_DETAIL_MULX2`, `_EMISSION` (`UnityStandardInput.cginc` lines 11, 15, 95, 155, 193, 200). The
@@ -38,9 +41,9 @@ Lit world materials on mobile; GPU instancing on (tick it on the material).
 |---|---|---|
 | Metallic = map R x `_Metallic`, smoothness = map A x `_Glossiness`, both sliders always applied (defaults 1.0) | lines 8-10, 153-155; the inspector draws both beside the map (`GUI/StandardLiteShaderGUI.cs` lines 310-317) | **Set `_Metallic` and `_Glossiness` to 1 when the map carries the values.** A Standard material switched to Standard Lite keeps Standard's `_Metallic` (unused by Standard once a map is set, default 0): it renders as non-metal, and at Standard's default `_Glossiness` 0.5 at half the smoothness |
 | Occlusion from G | line 158 | As Standard; the inspector suggests packing it into the metallic map's G |
-| Detail maps: mask (A), albedo x2 (`unity_ColorSpaceDouble`), detail normal with a scale, UV0 or UV1 (`_UVSec`), the albedo slot's tiling | lines 21-26, 60, 117-124, 138-139, 180-200; keyword `_DETAIL`, set by the inspector (`StandardLiteShaderGUI.cs` line 334) | The same close-range layer works on mobile, at extra samples per pixel |
+| Detail maps: mask (A), albedo x2 (`unity_ColorSpaceDouble`), detail normal with a scale. Both detail maps use the Detail Albedo slot's own tiling and offset (`_DetailAlbedoMap_ST`) on UV0 or UV1 (`_UVSec`); the mask is sampled on the main UV, with the Albedo slot's tiling; the detail normal is skipped wherever the main normal map is (the Non-Directional row below) | lines 21-26, 60, 117-124; line 139 (detail UV), 137 and 181 (mask on the main UV), 187-188 (albedo), 190-198 (normal); keyword `_DETAIL`, set by the inspector (`StandardLiteShaderGUI.cs` line 334) | The same close-range layer works on mobile, at extra samples per pixel; a mask painted on the unique layout lines up with the albedo while the detail tiles at its own rate |
 | Geometric specular anti-aliasing (keyword `_ENABLE_GEOMETRIC_SPECULAR_AA`; property default on, variance 0.1, threshold 0.2) | lines 31-33, 66, 174-178; `VRChat.cginc` lines 494-498; the keyword is set only by the inspector (`StandardLiteShaderGUI.cs` line 351) | Reduces the shimmer of glossy, finely detailed surfaces in VR, but a material made or edited by script has it off until the keyword is enabled. Unity's Standard has none |
-| Opaque only, no parallax | `RenderType` Opaque and no alpha in the surface pragma (lines 44, 83); no height property | Cutout or transparent surfaces need another shader on mobile, and cost there (Alpha, below) |
+| Opaque only, no alpha test, no parallax | `RenderType` Opaque and no alpha in the surface pragma (lines 44, 83); no `_Cutoff`, no height property | Cutout or transparent surfaces need another shader on mobile, and cost there (Alpha, below) |
 | Lightmap type Default, MonoSH or MonoSH without highlights (Bakery MonoSH) | lines 35, 63, 72-79; `VRChat.cginc` lines 273-293; directional lightmaps `VRChat.cginc` line 346 | Normal maps respond to baked light only with directional or MonoSH lightmaps |
 | On a lightmapped surface with Non-Directional lightmaps, glossy reflections off and no realtime light, the normal map is not even sampled | lines 163-172 | A normal map there shows nothing: put the form in geometry and base colour, or bake directional or MonoSH |
 | Vertex colour multiplies albedo unless the material sets `DISABLE_VERTEX_COLORING` | lines 67-68, 147-149 | Unity's Standard ignores vertex colour: a mesh exported with a colour attribute tints on mobile only |
@@ -62,6 +65,31 @@ everything else in the material is wasted texture memory.
 
 - VRChat counts cutout as transparency on mobile: "As an aside, yes, 'alpha cutout' counts as transparency"
   (https://creators.vrchat.com/platforms/android/cross-platform-setup/, updated 2026-09-15, checked 2026-10-18).
+- Worlds may use custom shaders on every platform. The mobile-shader rule binds avatars: "Shaders are restricted for
+  avatars in VRChat on Android, and you can only use the VRChat Mobile shaders included in the VRChat SDK", while
+  "Shaders are not restricted for worlds in VRChat on Android" (https://creators.vrchat.com/platforms/android/quest-content-optimization/,
+  updated 2025-06-25); iOS follows the Android rules (https://creators.vrchat.com/platforms/iOS/); both checked
+  2026-10-27.
+- No VRChat mobile shader alpha-tests (Worlds SDK 3.10.5): Standard Lite and Toon Standard are opaque (Toon
+  Standard's Cutout mode and `_Cutoff` are commented out, `ToonStandard.shader` lines 8, 12, 133), the particle
+  shaders blend, and Supersampled UI is a blended UI shader whose Use Alpha Clip clips at alpha 0.001
+  (`VRChat-Mobile-SupersampledUnlit.shader` lines 46, 150). So Quest grass, foliage and fence cards need a cutout
+  shader from elsewhere:
+  - Unity's `Legacy Shaders/Transparent/Cutout/Diffuse`: a Lambert surface shader with `alphatest:_Cutoff`, queue
+    AlphaTest (`DefaultResourcesExtra/AlphaTest-Diffuse.shader` lines 3-15 in Unity's `builtin_shaders-2022.3.22f1.zip`,
+    read 2026-10-27). Unity: "Unity's Standard Shader supports GPU instancing, as do all surface shaders", with baked
+    GI (https://docs.unity3d.com/2022.3/Documentation/Manual/GPUInstancing.html, checked 2026-10-27). Its `_Color`
+    is one per material, it has no normal map (`Legacy Shaders/Transparent/Cutout/Bumped Diffuse` has one) and,
+    without `noforwardadd`, a realtime point or spot light adds a pass per object. Verified from source and docs
+    only: not built for Quest or measured on a device here.
+  - A small custom alpha-test shader with instancing, where copies need a per-instance tint or wind: the
+    `unity-batching-and-instancing` skill's instancing surface shader with `alphatest:_Cutoff` added. Not written or
+    tested here.
+  Which cards to keep on Quest, and where: `references/foliage-and-alpha.md`, Quest and other mobile GPUs.
+- Cutout colour maps: tick the importer's **Alpha Is Transparency** ("Indicates whether to dilate the color channels.
+  This helps to avoid filtering artifacts on the edges of the alpha channel if the alpha channel represents
+  transparency", https://docs.unity3d.com/2022.3/Documentation/Manual/texture-type-default.html, checked 2026-10-27;
+  `TextureImporter.alphaIsTransparency` from a script), as well as Preserve Coverage below.
 - A cutout texture keeps its coverage in the distance with the importer's Mip Maps Preserve Coverage
   (`TextureImporter.mipMapsPreserveCoverage`: "rescale the alpha values of computed mipmaps so coverage is preserved")
   at the material's cutoff, `TextureImporter.alphaTestReferenceValue` ("the reference value (also known as the alpha

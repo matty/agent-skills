@@ -214,6 +214,14 @@ seams somewhere, the facing directions are a guess for a piece seen from every s
 cuts (`Quality`, Mosaic), so a failure would spend the attempts and end in REVIEW with the same seams. Moving a seam
 takes a marked one.
 
+Advisory does not mean accepted. On an organic piece with a baked texture (a rock, a stump, an urn) mark the seams
+where nobody looks: buried or ground-contact faces first, then concave cracks and undersides, then a back nobody
+walks round to; never across a face in view. Shade the low smooth whole, no split normals along the seams
+(*practice*). A baked texture hides a seam only when every signal in it comes from 3D space (bakes, procedurals on
+Object coordinates, projections): anything laid out in UV space jumps there. That is the texture's part, measured
+after texturing by the `pbr-texturing` skill's seam check; the UV's part is that the note is gone or names only
+seams you marked.
+
 Measured 24 Oct 2026 on RizomUV 2027.0.598 and Blender 5.2.2 (UV0 1024 px, filled). Rounded-box cushions: a box cut
 7 times each way, its edges bevelled in 4 segments, one subdivision level, then QuadriFlow to 2,100-2,350 quads (a
 quad remesh): a seat 0.6 x 0.6 x 0.15 m, a back cushion 0.6 x 0.15 x 0.55 m tilted back 12 deg, a bench pad 1.4 x
@@ -242,7 +250,9 @@ staircase line; with the panels marked it was one unbroken checker.
 `uv_metrics.grade(report)` is the one verdict, for every attempt and every written layer:
 
 - **Distortion gate** (`uv_metrics.GATE`, the `uv-unwrapping` skill's values): angular p95 <= 1.15, p99 <= 1.5,
-  max <= 2.0 (non-sliver triangles), area local p95 <= 0.20; this grader also keeps area global mean <= 0.05 and
+  max <= 2.0 (non-sliver triangles), area local p95 <= 0.20, the two p95 limits again on every island holding 0.5%
+  of the area (`island_angular_p95`, `island_area_local_p95`: the whole-object numbers hide a small stretched label),
+  area local max <= 2.0 (`area_local_max`, non-sliver faces); this grader also keeps area global mean <= 0.05 and
   islands per 100 faces <= 25 for its retries; non-finite UVs fail. Fragmentation counts per connected shell
   against its planar regions: only a shell cut into more than 12 islands and into more islands than it has regions
   counts. A crate of 19 planks (6 islands per box), a mitred window frame (16 islands, 16 regions) and a 5-step stair
@@ -330,4 +340,4 @@ them); `br.um.visible_seams(mesh, ids, uv, view_dirs=None)` counts every side.
 | Texel density | within 0.8-1.25x of the class for unique textures, within 10% for shared trims and tiling materials (`texel-density.md`); CV <= 0.15 inside a piece |
 | Direction | for `directional` packs, the grain or world up along U or +V on every island (the smoke test checks it) |
 | Repeatability | run twice: islands within about 5%, angular p95 within 0.01, coverage within 0.02, density exact |
-| Seam placement | a piece that takes a tiling material, or is seen from above or the front: no `visible seams` note, or the seams it names looked at with `checker_preview(ob, cell_m=0.25)` and accepted (advisory, not graded) |
+| Seam placement | a piece that takes a tiling material, or is seen from above or the front: no `visible seams` note, or the seams it names looked at with `checker_preview(ob, cell_m=0.25)` and accepted (advisory, not graded); an organic baked piece: its seams marked on buried, ground-contact, concave or underside faces (Visible seams) |

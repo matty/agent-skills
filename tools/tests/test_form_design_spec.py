@@ -74,6 +74,16 @@ class Rules(unittest.TestCase):
         s = table()
         part(s, "leg")["attach_to"] = "top"
         self.assertIn("floating_part", failing(s))     # nothing reaches the floor any more
+        for holder in ("ceiling", "free"):             # a pendant lamp; a pickup carried or set down anywhere
+            s = table()
+            for p in s["parts"]:
+                if p["attach_to"] == "floor":
+                    p["attach_to"] = holder
+            self.assertNotIn("floating_part", failing(s), holder)
+        s = table()
+        part(s, "leg")["attach_to"] = "free"
+        part(s, "leg")["edges"] = [{"where": "corners", "tier": "secondary"}]
+        self.assertNotIn("warn_no_sharp_edge", keys(s))   # a pickup's base is seen and takes its tier
 
     def test_primitive_box(self):
         s = table()
@@ -175,6 +185,17 @@ class Build(unittest.TestCase):
         b = dict(built)
         b["leg"] = (60, 60, 760)
         self.assertIn("part_size", [k for k, _ in fs.check_build(s, b)])
+
+    def test_check_build_names(self):
+        # hero prop F14: a part whose name starts with another's (leg_brace) or a bake high is not a copy of it
+        s = table()
+        built = {"top": (1800, 900, 25), "leg_1": (60, 60, 725), "leg_2": (60, 60, 725), "leg_low.001": (60, 60, 725),
+                 "leg_low.002": (60, 60, 725), "leg_brace": (30, 30, 400), "leg_high": (70, 70, 730),
+                 "apron_long": (1580, 22, 90), "apron_long.001": (1580, 22, 91),
+                 "apron_short": (680, 22, 90), "apron_short.001": (680, 22, 90)}
+        self.assertEqual(fs.check_build(s, built), [])
+        self.assertTrue(fs.is_part("leg.012", "leg") and fs.is_part("leg_low", "leg"))
+        self.assertFalse(fs.is_part("leg_brace", "leg") or fs.is_part("leg_high", "leg") or fs.is_part("legs", "leg"))
 
 
 class Cli(unittest.TestCase):

@@ -21,7 +21,8 @@ group, never one by one.
 ## When this is the right tool
 
 Good for many identical, purely decorative copies: grass, debris, crowd fillers, stars, particles-as-geometry, LED
-arrays. It skips per-GameObject transforms, culling and components entirely.
+arrays. It skips per-GameObject transforms, culling and components entirely. Grass on uneven or lit ground needs more
+than the example script gives (section What the example does not do).
 
 Wrong for anything that needs colliders, interaction or per-copy culling: a thousand copies behind a wall still cost
 their vertex work, and occlusion culling never removes single copies.
@@ -59,6 +60,29 @@ VRC.Udon.VRCWrapperModules.dll on 2026-10-17):
 | `Mathf.CeilToInt`, `Mathf.FloorToInt`, `Mathf.Clamp`, `int[]` | `UnityEngineMathf.__CeilToInt__SystemSingle__SystemInt32`, `__FloorToInt__SystemSingle__SystemInt32`, `__Clamp__SystemInt32_SystemInt32_SystemInt32__SystemInt32`, `SystemInt32Array.__ctor__SystemInt32__SystemInt32Array` (and `__Get__`, `__Set__`) |
 
 `Matrix4x4[][]` is a jagged array, which UdonSharp stores as `object[]`; `ShadowCastingMode` is in Udon's type list.
+
+## What the example does not do (grass on a terrain)
+
+`InstancedField.cs` scatters on a flat plane at the GameObject's height (every copy at `origin + (x, 0, z)`), varies
+only yaw and tint (scale is always 1), and `InstancedUnlit.shader` is unlit and opaque: no lightmap, no light probes,
+no alpha test. That is enough for a flat lawn of solid blades in flat light, not for grass on a terrain, where it
+floats or sinks, repeats visibly and does not take the ground's lighting. A terrain field needs, in this order:
+
+1. Heights sampled at edit time: an editor script raycasts each copy down onto the ground collider and stores the
+   positions (and the ground normal, to tilt each copy to the slope) in serialized arrays the behaviour only reads;
+   never raycast per frame.
+2. Per-copy scale jitter as well as yaw, so no clump reads as a repeated stamp.
+3. A lit, alpha-tested instancing shader: a surface shader with `alphatest:_Cutoff` and the instancing buffer
+   (instanced-shader.md); surface shaders get light probes and lightmaps. Drawn through `DrawMeshInstanced`, per-copy
+   probe lighting needs `LightProbeUsage.CustomProvided` with the probe data in the MaterialPropertyBlock (Unity's
+   DrawMeshInstanced page: "To render the instances with light probes, provide the light probe data via the
+   MaterialPropertyBlock"); whether Udon exposes the calls that fill it is not checked here. Where the field's
+   lighting changes (shade under trees, a building's shadow), real renderers with GPU instancing get probe lighting
+   per renderer without that.
+4. On Quest and iOS, cutout cards are expensive: VRChat says to "avoid transparency at all costs! It is quite
+   expensive", and "alpha cutout" counts as transparency
+   (https://creators.vrchat.com/platforms/android/cross-platform-setup/, checked 2026-10-27). Cards near paths
+   only, with a short `drawDistance` measured on the device; opaque tufts or the ground texture beyond.
 
 ## Cost notes
 

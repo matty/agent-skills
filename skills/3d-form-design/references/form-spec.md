@@ -39,12 +39,13 @@ range checks, so check its sizes against `furniture.md` or the reference by hand
 | --- | --- |
 | `type` | One of `dining_table`, `desk`, `coffee_table`, `dining_chair`, `stool`, `armchair`, `sofa`, `bed`, `bookcase`, `sideboard`, `kitchen_base`, `wardrobe`, `lamp`, or your own (no range checks) |
 | `view.display` | `vr20` (Quest 2 and 3S), `vr25` (Quest 3) or `screen1080` (1080 px, 60 deg vertical): sets the 2 px floor with `usual_m` |
+| `view.nearest_m` | The closest the player gets: a pickup's is where it is held, 0.3-0.5 m, and its review renders go there |
 | `bevel_tiers_mm` | The three widths reused on every edge; an edge may override with `"mm"` |
 | `key_dims` | The type's checked dimensions (table below), in mm or degrees |
 | `parts[].size` | The part's own bounding box [x, y, z] in mm, in its own axes |
 | `parts[].made` | `wood`, `board` (plywood, MDF, veneered panel), `machined_metal`, `sheet_metal`, `extruded_aluminium`, `cast_metal`, `moulded_plastic`, `glass`, `cut_sheet`, `stone`, `concrete`, `rubber`, `upholstery`, `fabric` |
 | `parts[].build` | `box`, `extrude`, `revolve`, `sweep`, `loft`, `subd`, `cloth`, `sculpt`, `boolean`, `skin`, `array` (`blender-techniques.md`) |
-| `parts[].attach_to` | Another part's name, `floor` or `wall`: what holds it |
+| `parts[].attach_to` | Another part's name, `floor`, `wall`, `ceiling` (a pendant, a hanging sign) or `free` (a pickup, carried or set down anywhere: its base is seen, so it takes a tier, not `sharp`): what holds it |
 | `parts[].shape` | `taper` (`faces`, `from_mm`, `to_mm`), `splay_deg`, `rake_deg`, `crown_pct`, `dish_mm`, `plan_radius_mm`, `box_ok` (why a plain block is right), anything else the build needs |
 | `parts[].edges` | Every edge group with a tier (`primary`, `secondary`, `small`) or `sharp` |
 
@@ -55,7 +56,7 @@ range checks, so check its sizes against `furniture.md` or the reference by hand
 | Key | Fails when | Rule from |
 | --- | --- | --- |
 | `missing_field`, `units`, `view`, `part_size`, `part_made`, `part_build`, `part_names`, `edge_tier`, `taper` | The spec is incomplete or malformed | |
-| `floating_part` | A part's `attach_to` is not another part, `floor` or `wall`, or nothing reaches the floor or a wall | Floating parts are the commonest failure in agent-built models |
+| `floating_part` | A part's `attach_to` is not another part, `floor`, `wall`, `ceiling` or `free`, or no part reaches one of them | Floating parts are the commonest failure in agent-built models |
 | `primitive_box` | `build: box` for a part that is not a board or panel (thinnest side over a quarter of the middle one) and has no taper or `box_ok` | Scaled primitives |
 | `flat_upholstery`, `upholstery_build` | Upholstery without `crown_pct`, or built other than cloth, subd or sculpt (swept piping excepted) | `furniture.md` section 3 |
 | `edges_undecided` | A part without an edge list | Bevel per edge, never all |
@@ -94,8 +95,9 @@ length, door widths against the carcass): add those up yourself and write the su
 
 ## Building from the spec
 
-- One Blender object per part, named exactly as the part (`front_leg`, `front_leg.001` for its copies), so
-  `check_build(spec, measure_parts(spec))` can find them. Join them for export only after the check.
+- One Blender object per part, named exactly as the part (`front_leg`; copies `front_leg.001` or `front_leg_1`; a
+  baked low may end `_low`), so `check_build(spec, measure_parts(spec))` can find them; `front_leg_brace` and
+  `front_leg_high` are never read as a front leg. Join them for export only after the check.
 - Build each part completely once, in this order: its profile and build method, its shape (taper, splay, crown,
   dish) as part of the construction rather than a later fix, its edges by tier (bevel weights per tier from the
   edge list, `blender-techniques.md`), then place it against what it attaches to.

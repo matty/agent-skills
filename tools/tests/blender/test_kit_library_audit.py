@@ -204,6 +204,13 @@ def test_material_names():
     assert by["INT_Wall_2x3_A"] == [] and by["INT_Wall_2x3_C"] == [], by
     assert any("M_INT_Paper.001 is not named M_<FAMILY>_<Name>" in i for i in by["INT_Wall_2x3_B"]), by
     assert any("outside M_INT_/M_TRIM_" in i for i in by["INT_Wall_2x3_D"]), by
+    path = TMP / "materials.blend"                               # the command line takes another set of prefixes
+    bpy.ops.wm.save_as_mainfile(filepath=str(path))
+    out = TMP / "materials.json"
+    code, text = blender(path, "--python", KIT_LIBRARY, "--", "--audit", "--module", "1.0", "--json", out,
+                         "--materials", "M_INT_,M_EXT_,M_TRIM_")
+    by = {r["piece"]: r["issues"] for r in json.loads(out.read_text(encoding="utf-8"))["pieces"]}
+    assert by["INT_Wall_2x3_D"] == [] and by["INT_Wall_2x3_B"], (code, by)
 
 
 def test_new_file_starts_empty_and_saved():

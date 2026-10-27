@@ -6,8 +6,10 @@ hard_surface.py's Smooth by Angle and hand-off functions with their
 refusals, audit_stack with the Triangulate live, off, applied or missing, routes from enabled modifiers only, a late
 Smooth by Angle, flat shading, and normals_snapshot across UV work and scale), grid_topology in bmesh
 (PointCache.weld, flat_fill, step_reduce), quad_remesh's patch_input, weld_layout and mirror_half (and a real engine
-run when Quad Remesher is installed), and review_render's headless wire over a mirrored mesh with the scene restored
-afterwards, and loop_decimate on flat plates (protected loops and UV maps) and a tube (the chord rule).
+run when Quad Remesher is installed), review_render's headless wire over a mirrored mesh with the scene restored
+afterwards, high_low_gap against a known sagitta, bake_skew with and without a bevel, the high-poly routes the
+high-and-low-poly reference calls verified headless (and brush sculpting, which is not), and loop_decimate on flat
+plates (protected loops and UV maps) and a tube (the chord rule).
 
 Host: Blender 4.2+ (bpy, bmesh; tested on 5.2.2), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_topology_scripts.py
@@ -981,6 +983,372 @@ def test_review_compare_frames_each_object_alone():
     check(len(bpy.data.objects) == 4, "temporary objects left behind")
 
 
+def test_small_pieces_and_cards():
+    """Props sweep: a 5 mm screw's 0.5 mm edges are not short for its size (2% of its smallest side over 1 mm), a
+    50 cm piece's are; leaf cards with custom normals on planar quads and no hard-surface stack are not flagged,
+    a bent quad is."""
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(0.005, 0.005, 0.0005), verts=bm.verts)              # a 5 x 5 x 0.5 mm head
+    bm.verts.ensure_lookup_table()
+    small = object_from_bmesh("Screw", bm)
+    r = AUDIT["audit"](small)
+    check(r["short_edges"] == 0 and r["short_edge_m"] == 0.00005, "small piece: %s %s" % (r["short_edges"],
+                                                                                     r["short_edge_m"]))
+    check(AUDIT["audit"](small, short_edge=0.001)["short_edges"] > 0, "an explicit 1 mm still counts them")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(0.5, 0.5, 0.0005), verts=bm.verts)                 # 0.5 mm thick, 50 cm wide
+    check(AUDIT["audit"](object_from_bmesh("Board", bm))["short_edges"] > 0, "a 0.5 mm edge on a 50 cm piece")
+    bm = bmesh.new()
+    for x in (0.0, 1.5):                                                         # two cards, the second bent
+        vs = [bm.verts.new(co) for co in ((x, 0, 0), (x + 1, 0, 0), (x + 1, 0, 1), (x, 0.3 if x else 0.0, 1))]
+        bm.faces.new(vs)
+    cards = object_from_bmesh("Cards", bm)
+    cards.data.shade_smooth()
+    bpy.ops.mesh.primitive_ico_sphere_add(radius=2.0, location=(1.25, 0.0, 0.5))     # the hull the normals come from
+    hull = bpy.context.active_object
+    dt = cards.modifiers.new("Normals", "DATA_TRANSFER")
+    dt.object, dt.use_loop_data, dt.data_types_loops = hull, True, {"CUSTOM_NORMAL"}
+    bpy.context.view_layer.update()
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check(s["on"]["cn_quads"] == 2 and s["on"]["cn_quads_bent"] == 1 and "custom_normals_on_quads" in s["problems"],
+          "cards: %s" % {k: s["on"][k] for k in ("cn_quads", "cn_quads_bent")})
+    for v in cards.data.vertices:
+        v.co.y = 0.0                                                             # flatten the bent card
+    cards.data.update()
+    bpy.context.view_layer.update()
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check("custom_normals_on_quads" not in s["problems"], "planar cards flagged: %s" % s["problems"])
+    with bpy.context.temp_override(object=cards, active_object=cards, selected_objects=[cards],
+                                   selected_editable_objects=[cards]):
+        bpy.ops.object.modifier_apply(modifier="Normals")     # the transferred normals now in the mesh data
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check(cards.data.has_custom_normals and "custom_normals_on_quads" not in s["problems"],
+          "applied card normals flagged: %s" % s["problems"])
+
+
+def test_review_render_culls_back_faces_like_the_engine():
+    """A single-sided plate wound inside out (its normal away from the eye) passes every audit; the engine's stock
+    shaders cull it. review_render culls by default, so it vanishes there too; cull=False draws it."""
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)
+    bm = bmesh.new()
+    bm.faces.new([bm.verts.new(c) for c in ((-0.5, -0.5, 0), (-0.5, 0.5, 0), (0.5, 0.5, 0), (0.5, -0.5, 0))])
+    ob = object_from_bmesh("inside_out", bm)                     # wound clockwise from above: normal -Z
+    check(ob.data.polygons[0].normal.z < 0, "fixture should face down")
+
+    def covered(**kw):
+        path = str(TMP / ("cull_%s.png" % kw.get("cull", True)))
+        RR["render"](path, eye=(0, 0, 3), target=(0, 0, 0), w=200, h=100, light="FLAT", **kw)
+        return float(RR["_silhouette"](RR["_load"](path)).mean())     # pixels unlike the background corners
+    shown, culled = covered(cull=False), covered()
+    check(shown > 0.05 and culled < 0.001, "coverage drawn %.3f, culled %.3f" % (shown, culled))
+    check(not scene.display.shading.show_backface_culling, "the scene's culling setting was not restored")
+
+def test_high_low_gap_reads_the_sagitta_and_a_fat_low():
+    """A 16-sided low cylinder against a 128-sided high of the same radius: the high stands out by the low's sagitta,
+    r (1 - cos(pi / 16)) = 1.92 mm, and the low nowhere outside it; the high shrunk 2% (2 mm) puts the low 2 mm out."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NGON")
+    low = bpy.context.active_object
+    bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=0.1, depth=0.3, end_fill_type="NGON")
+    high = bpy.context.active_object
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    sag = 0.1 * (1 - math.cos(math.pi / 16))
+    check(abs(r["high_outside_max"] - sag) < 2e-4 and r["low_outside_max"] < 1e-4, (r, sag))
+    high.scale = (0.98, 0.98, 1.0)
+    bpy.context.view_layer.update()
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.002) < 2e-4 and r["high_outside_max"] < 1e-4, r)
+    for ob in (low, high):                                      # a mirrored pair (negative scale) reads the same
+        ob.scale.x = -ob.scale.x
+    bpy.context.view_layer.update()
+    m = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(m["low_outside_max"] - r["low_outside_max"]) < 2e-4 and m["high_outside_max"] < 1e-4, (m, r))
+
+
+def _grid_box(name, sx, sy, sz, step, lift=None):
+    """A closed box x 0..sx, y 0..sy, z 0..sz, each side a grid of `step` quads; lift(x, y) raises top vertices."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(sx, sy, sz), verts=bm.verts)
+    bmesh.ops.translate(bm, vec=(sx / 2, sy / 2, sz / 2), verts=bm.verts)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=int(round(max(sx, sy, sz) / step)) - 1, use_grid_fill=True)
+    if lift:
+        for v in bm.verts:
+            if abs(v.co.z - sz) < 1e-6:
+                v.co.z += lift(v.co.x, v.co.y)
+    return object_from_bmesh(name, bm)
+
+
+def _blocks(name, parts):
+    """One object of closed boxes given as (size, centre)."""
+    bm = bmesh.new()
+    for size, centre in parts:
+        geom = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+        bmesh.ops.scale(bm, vec=size, verts=geom)
+        bmesh.ops.translate(bm, vec=centre, verts=geom)
+    return object_from_bmesh(name, bm)
+
+
+def test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split():
+    """A 2 x 1 x 1 m low with a 25 cm patch of its top raised 4 cm (0.6% of its area) against the flat high: the old
+    p99 read 0 (a bump the player sees at 23 px from 2 m); low_outside_max reads 4 cm. A 3 cm boss on the high
+    reads the same whether it is part of the body's object or its own, and nine rivets do not dilute a 2 cm panel."""
+    fresh()
+    ns = AUDIT
+
+    def bump(x, y):
+        d = max(abs(x - 1.0), abs(y - 0.5))
+        return 0.04 if d <= 0.125 else 0.04 * max(0.0, 1 - (d - 0.125) / 0.05)
+    low = _grid_box("low_bump", 2, 1, 1, 0.025, bump)
+    high = _blocks("box_high", [((2, 1, 1), (1, 0.5, 0.5))])
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.04) < 1e-3 and r["low_outside_p99"] < 0.04, r)
+    flat = _blocks("box_low", [((2, 1, 1), (1, 0.5, 0.5))])
+    boss = ((0.3, 0.03, 0.2), (1.0, -0.015 + 1e-4, 0.5))
+    merged = _blocks("merged_high", [((2, 1, 1), (1, 0.5, 0.5)), boss])
+    body, own = _blocks("body_high", [((2, 1, 1), (1, 0.5, 0.5))]), _blocks("boss_high", [boss])
+    a = ns["high_low_gap"](flat, [merged], samples=8000)
+    b = ns["high_low_gap"](flat, [body, own], samples=8000)
+    check(abs(a["high_outside_p99"] - b["high_outside_p99"]) < 2e-3 and abs(a["high_outside_max"] - 0.03) < 1e-3, (a, b))
+    panel = _blocks("panel_high", [((2, 1, 1), (1, 0.5, 0.5)), ((0.55, 0.55, 0.02), (1.0, 0.5, 1.01 - 1e-4))])
+    rivets = [_blocks("rivet_high_%d" % i, [((0.02, 0.02, 0.003), (0.2 + 0.2 * i, 0.1, 1.0015 - 1e-5))])
+              for i in range(9)]
+    c = ns["high_low_gap"](flat, [panel], samples=8000)
+    d = ns["high_low_gap"](flat, [panel] + rivets, samples=8000)
+    check(abs(c["high_outside_p99"] - 0.02) < 1e-3 and abs(d["high_outside_p99"] - 0.02) < 1e-3, (c, d))
+    # a correct low over a high with a panel line: a 3 mm groove 1.5 mm deep in the top is a recess the bake carries,
+    # not a bulge of the low (it read as one, failing a crate lid with more panel lines)
+    grooved = _blocks("grooved_high", [((2, 1, 0.9985), (1, 0.5, 0.49925)),
+                                       ((0.9985, 1, 0.0015), (0.49925, 0.5, 0.99925)),
+                                       ((0.9985, 1, 0.0015), (1.50075, 0.5, 0.99925))])
+    g = ns["high_low_gap"](flat, [grooved], samples=60000)           # enough to land in a 3 mm groove
+    check(g["low_outside_max"] < 2e-4 and 0.0008 < g["recess_max"] <= 0.0015 + 1e-5,    # samples near the walls
+          "a groove is a recess, not a bulge: %s" % g)                                     # read under its 1.5 mm
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.04) < 1e-3, "the bump is still a bulge: %s" % r)
+    try:
+        ns["high_low_gap"](flat, [object_from_bmesh("faceless", bmesh.new())])
+        raise AssertionError("a high with no faces must be refused")
+    except ValueError:
+        pass
+
+def test_bake_skew_falls_with_a_bevel():
+    """A hard box's averaged normals lean up to 54.7 deg off its faces (most of its area over 15 deg); a 5 cm bevel
+    of three segments on a 1 m box brings that under 5%; a 16-sided cylinder leans at most half its facet angle."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    box = bpy.context.active_object
+    r = ns["bake_skew"](box)
+    check(r["over_share"] > 0.9 and abs(r["p95_deg"] - 54.74) < 0.1 and r["worst"] and r["shift_m"] is None, r)
+    r = ns["bake_skew"](box, relief_m=0.0007)                  # props sweep: 0.7 mm of relief moves ~1 mm here
+    check(abs(r["shift_m"] - 0.0007 * math.tan(math.radians(r["p95_deg"]))) < 1e-6, r)
+    bev = box.modifiers.new("Bevel", "BEVEL")
+    bev.width, bev.segments = 0.05, 3
+    r = ns["bake_skew"](box)
+    check(r["over_share"] < 0.05, r)
+    box.scale.x = -1.0                                          # mirrored: the winding is reversed, same skew
+    bpy.context.view_layer.update()
+    m = ns["bake_skew"](box)
+    check(abs(m["over_share"] - r["over_share"]) < 1e-4 and abs(m["p95_deg"] - r["p95_deg"]) < 0.01, (m, r))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    r = ns["bake_skew"](bpy.context.active_object)
+    check(r["over_share"] == 0.0 and abs(r["p95_deg"] - 11.25) < 0.05, r)
+    # an 8-sided handle built to the chord rule: against its own faces its rays lean 22.5 deg, but they leave it
+    # radially onto a round high, so against the high it is clean; a hard box still skews onto a box high
+    bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    handle = bpy.context.active_object
+    handle.data.shade_smooth()
+    bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    round_high = bpy.context.active_object
+    own, onto = ns["bake_skew"](handle), ns["bake_skew"](handle, highs=[round_high])
+    check(own["over_share"] > 0.3 and onto["over_share"] < 0.05 and onto["against"] == "high", (own, onto))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(5, 0, 0))
+    hard = bpy.context.active_object
+    bpy.ops.mesh.primitive_cube_add(size=1.002, location=(5, 0, 0))
+    box_high = bpy.context.active_object
+    check(ns["bake_skew"](hard, highs=[box_high])["over_share"] > 0.5, "a hard box still skews onto a box high")
+    top = [p.index for p in hard.data.polygons if p.normal.z > 0.9]
+    part = ns["bake_skew"](hard, faces=top)
+    check(0.5 < part["over_share"] <= 1.0, "the faces mask judges the top face alone: %s" % part)
+
+
+def test_high_poly_routes_run_headless():
+    """What references/high-and-low-poly.md calls verified on 5.2.2 under blender -b: the crease_edge attribute drives
+    a Subdivision Surface, voxel remesh (operator and modifier), Multires subdivision, QuadriFlow on a closed mesh,
+    Decimate, and a cloth simulation stepped frame by frame and applied; sculpt brush strokes need a 3D viewport and
+    refuse to run headless (the headless sculpt is modifiers: Displace on Multires or a subdivided mesh)."""
+    fresh()
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    ob = bpy.context.active_object
+    sub = ob.modifiers.new("Sub", "SUBSURF")
+    sub.levels = 3
+
+    def half_width():
+        ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        me = ev.to_mesh()
+        w = max(abs(v.co.x) for v in me.vertices if abs(v.co.z) < 1e-4)
+        ev.to_mesh_clear()
+        return w
+    soft = half_width()
+    att = ob.data.attributes.new("crease_edge", "FLOAT", "EDGE")
+    att.data.foreach_set("value", [1.0] * len(ob.data.edges))
+    ob.data.update()
+    check(soft < 0.43 and abs(half_width() - 0.5) < 1e-4, "crease_edge 1 keeps the subdivided corners square")
+    fresh()
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    ob = bpy.context.active_object
+    ob.data.remesh_voxel_size = 0.05
+    check(bpy.ops.object.voxel_remesh() == {"FINISHED"} and len(ob.data.polygons) > 2000, "voxel remesh headless")
+    mr = ob.modifiers.new("Multires", "MULTIRES")
+    check(bpy.ops.object.multires_subdivide(modifier="Multires", mode="CATMULL_CLARK") == {"FINISHED"}
+          and mr.total_levels == 1, "multires subdivide headless")
+    try:
+        bpy.ops.object.mode_set(mode="SCULPT")
+        bpy.ops.sculpt.brush_stroke(stroke=[{"name": "s", "location": (0, 0, 0.5), "mouse": (0, 0),
+                                             "mouse_event": (0, 0), "pen_flip": False, "is_start": True,
+                                             "pressure": 1.0, "size": 50, "time": 0, "x_tilt": 0, "y_tilt": 0}])
+        stroked = True
+    except RuntimeError:
+        stroked = False
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    check(not stroked, "a sculpt brush stroke ran headless: references/high-and-low-poly.md says it cannot")
+    fresh()
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=4)
+    ob = bpy.context.active_object
+    check(bpy.ops.object.quadriflow_remesh(target_faces=400, seed=0) == {"FINISHED"}
+          and all(len(p.vertices) == 4 for p in ob.data.polygons) and 300 < len(ob.data.polygons) < 500,
+          "QuadriFlow on a closed mesh")
+    dec = ob.modifiers.new("D", "DECIMATE")
+    dec.ratio = 0.25
+    ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    check(len(ev.data.polygons) < 0.6 * len(ob.data.polygons), "Decimate collapse")
+    fresh()
+    bpy.ops.mesh.primitive_plane_add(size=2, location=(0, 0, 1.0))
+    cloth = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.subdivide(number_cuts=20)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.4))
+    bpy.context.active_object.modifiers.new("Collision", "COLLISION")
+    cm = cloth.modifiers.new("Cloth", "CLOTH")
+    cm.point_cache.frame_end = 40
+    for f in range(1, 41):
+        bpy.context.scene.frame_set(f)
+    bpy.context.view_layer.objects.active = cloth
+    check(bpy.ops.object.modifier_apply(modifier="Cloth") == {"FINISHED"}, "cloth applied at the last frame")
+    zmin = min((cloth.matrix_world @ v.co).z for v in cloth.data.vertices)
+    check(zmin < 0.8, "the cloth should drape below the table top (0.9): lowest %.3f" % zmin)
+
+
+def test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight():
+    """A straight wall front meeting a quarter-circle wall of 16 segments, both smooth: the curve's end vertices lean
+    half a facet angle (2.81 deg) off the straight's normal; custom normals on them set to the straight's (-Y) put
+    the shading right (0 deg)."""
+    fresh()
+    ns = AUDIT
+    bm = bmesh.new()
+    vs = [bm.verts.new(c) for c in ((-1, 0, 0), (0, 0, 0), (0, 0, 3), (-1, 0, 3))]
+    bm.faces.new(vs)
+    straight = object_from_bmesh("straight", bm)
+    bm = bmesh.new()
+    cols = []
+    for i in range(17):
+        a = (math.pi / 2) * i / 16
+        cols.append((bm.verts.new((math.sin(a), 1 - math.cos(a), 0)), bm.verts.new((math.sin(a), 1 - math.cos(a), 3))))
+    for (a0, a1), (b0, b1) in zip(cols, cols[1:]):
+        bm.faces.new((a0, b0, b1, a1))
+    curved = object_from_bmesh("curved", bm)
+    for ob in (straight, curved):
+        ob.data.shade_smooth()
+    at_joint = lambda co: abs(co.x) < 1e-4 and abs(co.y) < 1e-4
+    r = ns["joint_normals"](straight, curved, at_joint)
+    check(r["positions"] == 2 and abs(r["max_deg"] - 90.0 / 16 / 2) < 0.01, r)
+    vn = [tuple(v.normal) for v in curved.data.vertices]
+    for v in curved.data.vertices:
+        if at_joint(v.co):
+            vn[v.index] = (0.0, -1.0, 0.0)
+    curved.data.normals_split_custom_set_from_vertices(vn)
+    r = ns["joint_normals"](straight, curved, at_joint)
+    check(r["max_deg"] < 0.01, r)
+
+
+
+def test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front():
+    """Closed pieces: a straight slab and a 16-segment quarter-circle wall, 0.2 m thick, folds sharp by angle. At each
+    joint corner the bottom and top match exactly and the end caps face each other; only the front and back lean
+    (half a facet angle). Taking the best pair per position would report 0 deg; each corner matched to its own face,
+    caps left out, gives 2.81 deg both ways round."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    straight = bpy.context.active_object
+    straight.scale = (1.0, 0.2, 3.0)
+    straight.location = (-0.5, 0.1, 1.5)
+    bpy.ops.object.transform_apply(location=True, scale=True)
+    bm = bmesh.new()
+    cols = []
+    for i in range(17):
+        a = (math.pi / 2) * i / 16
+        ring = []
+        for r in (1.0, 0.8):                                    # front (radius 1), back (0.8): both centred on (0, 1)
+            for z in (0.0, 3.0):
+                ring.append(bm.verts.new((r * math.sin(a), 1 - r * math.cos(a), z)))
+        cols.append(ring)                                       # front bottom, front top, back bottom, back top
+    for p, q in zip(cols, cols[1:]):
+        bm.faces.new((p[0], q[0], q[1], p[1]))                  # front
+        bm.faces.new((p[2], p[3], q[3], q[2]))                  # back
+        bm.faces.new((p[0], p[2], q[2], q[0]))                  # bottom
+        bm.faces.new((p[1], q[1], q[3], p[3]))                  # top
+    bm.faces.new((cols[0][0], cols[0][1], cols[0][3], cols[0][2]))
+    bm.faces.new((cols[-1][0], cols[-1][2], cols[-1][3], cols[-1][1]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    curved = object_from_bmesh("curved_closed", bm)
+    for ob in (straight, curved):
+        ob.data.set_sharp_from_angle(angle=math.radians(30))
+        ob.data.shade_smooth()
+    at_joint = lambda co: abs(co.x) < 1e-4
+    for pair in ((straight, curved), (curved, straight)):
+        r = ns["joint_normals"](*pair, at_joint)
+        check(r["positions"] == 4 and abs(r["max_deg"] - 90.0 / 16 / 2) < 0.01, r)
+
+
+def test_joint_normals_counts_creases_of_any_angle():
+    """Two flat plates meeting along a 60 deg bend read 60 (a skip by angle read 0); a box shaded smooth across its
+    folds against a hard-shaded one reads 54.7 at the joint; two hard boxes read 0."""
+    fresh()
+    ns = AUDIT
+    bm = bmesh.new()
+    bm.faces.new([bm.verts.new(c) for c in ((-1, 0, 0), (0, 0, 0), (0, 1, 0), (-1, 1, 0))])
+    a = object_from_bmesh("plate_a", bm)
+    bm = bmesh.new()
+    c, s = math.cos(math.radians(60)), math.sin(math.radians(60))
+    bm.faces.new([bm.verts.new(p) for p in ((0, 0, 0), (c, 0, s), (c, 1, s), (0, 1, 0))])
+    b = object_from_bmesh("plate_b", bm)
+    at_joint = lambda co: abs(co.x) < 1e-4 and abs(co.z) < 1e-4
+    r = ns["joint_normals"](a, b, at_joint)
+    check(r["positions"] == 2 and abs(r["max_deg"] - 60.0) < 0.01, r)
+    hard = _blocks("hard_beam", [((1, 0.2, 0.2), (-0.5, 0.1, 0.1))])
+    soft = _blocks("soft_beam", [((1, 0.2, 0.2), (0.5, 0.1, 0.1))])
+    hard.data.set_sharp_from_angle(angle=math.radians(30))
+    hard.data.shade_smooth()
+    soft.data.shade_smooth()
+    at_end = lambda co: abs(co.x) < 1e-4
+    r = ns["joint_normals"](hard, soft, at_end)
+    check(r["positions"] == 4 and abs(r["max_deg"] - 54.74) < 0.05, r)
+    soft.data.set_sharp_from_angle(angle=math.radians(30))
+    r = ns["joint_normals"](hard, soft, at_end)
+    check(r["max_deg"] < 0.01, r)
+
+
 def plate(name, n=10, chart_per_face=False):
     """A flat 1 x 1 m plate of n x n quads with a planar UV0 ("UVMap") and a second map ("UVLight") that is either the
     same or, with chart_per_face, one chart per face (a probe-lit piece's lightmap UV)."""
@@ -1082,6 +1450,12 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
+           test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
+           test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
+           test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front,
+           test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split,
+           test_joint_normals_counts_creases_of_any_angle, test_review_render_culls_back_faces_like_the_engine,
+           test_small_pieces_and_cards,
            test_loop_decimate_flat_plates_keep_uvs_and_protected_loops, test_loop_decimate_tube_follows_the_chord_rule):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]

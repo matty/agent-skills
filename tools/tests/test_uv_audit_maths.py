@@ -118,7 +118,9 @@ class UvAuditMaths(unittest.TestCase):
     def test_canonical_numbers(self):
         ua = self.ua
         self.assertEqual(ua.LIMITS, {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20,
-                                     "texel_cv": 0.15})
+                                     "area_max": 2.0, "texel_cv": 0.15, "island_angular_p95": 1.25,
+                                     "island_area_p95": 0.50})
+        self.assertEqual(ua.ISLAND_MIN_SHARE, 0.005)
         self.assertEqual(ua.TEXEL_BAND["unique"], (0.8, 1.25))
         self.assertEqual(ua.TEXEL_BAND["tiling"], (0.9, 1.1))
         self.assertEqual(ua.TEXEL_BAND["trim"], (0.9, 1.1))
@@ -213,6 +215,186 @@ class UvAuditMaths(unittest.TestCase):
         self.assertEqual(r["zero_area_uv_faces"], 1)
         self.assertTrue(any("zero UV area" in i for i in r["issues"]))
 
+    def test_small_stretched_island_fails_on_its_own(self):
+        """A 15 cm label (2.2% of the area) stretched 1.45x in its own island: the object's p95 is 1.0 and its p99 and
+        max stay under 1.5 and 2.0, so only the per-island gate sees it; marked as text, the text gate too."""
+        k, s = 0.5, math.sqrt(1.45)
+        verts = quad(0, 0, 1, 1) + quad(2, 0, 2.15, 0.15)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)]
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs)
+        r = self.m(d, map_px=1024)
+        self.assertEqual((r["angular_p95"], r["islands_distorted"]), (1.0, 1))
+        self.assertLess(r["angular_p99"], 1.5)
+        self.assertAlmostEqual(r["worst_islands"][0]["angular_p95"], 1.45, places=2)
+        self.assertTrue(any("stretched on their own" in i for i in r["issues"]), r["issues"])
+        d["text"] = np.array([False, True])
+        r = self.m(d, map_px=1024)
+        self.assertTrue(any("text faces stretched" in i for i in r["issues"]), r["issues"])
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], [uvs[0], square_uv(0.6, 0.6, 0.15 * k)])
+        r = self.m(d, map_px=1024)
+        self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
+        # props sweep: a curved island at 1.2x (a dome cap, a bottle neck) is inside the 0.8-1.25x texel band
+        s = math.sqrt(1.2)
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], [uvs[0], square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)])
+        r = self.m(d, map_px=1024)
+        self.assertEqual(r["islands_distorted"], 0, r["worst_islands"])
+        self.assertTrue(any("text faces stretched" in i for i in self.m(dict(d, text=np.array([False, True])),
+                                                                         map_px=1024)["issues"]))
+
+    def test_props_sweep_spread_rules(self):
+        """A quad and a trapezoid sharing an edge: one island whose density falls 2.7x across it. Unique: uneven inside
+        the island; as a lightmap chart the spread is left alone (nobody sees it at 20 texels/m); the trapezoid marked
+        uv_low_density (a grade toward a hidden side) is left out of the evenness. A stretched face under a texel is
+        left out of angular_max and area_max."""
+        verts = quad(0, 0, 1, 1) + [(2, 0, 0), (2, 1, 0)]
+        faces = [[0, 1, 2, 3], [1, 4, 5, 2]]
+        uvs = [square_uv(0.1, 0.1, 0.2), [(0.3, 0.1), (0.4, 0.15), (0.4, 0.25), (0.3, 0.3)]]
+        r = self.m(mesh(verts, faces, uvs), map_px=1024)
+        self.assertTrue(any("uneven density inside islands" in i for i in r["issues"]), r["issues"])
+        r = self.m(mesh(verts, faces, uvs), purpose="lightmap", texels_per_m=1000, pad_px=0)
+        self.assertFalse(any("uneven density" in i or "patch at" in i for i in r["issues"]), r["issues"])
+        r = self.m(mesh(verts, faces, uvs, low=[False, True]), map_px=1024)
+        self.assertLess(r["area_p95"], 0.01)
+        self.assertFalse(any("uneven density" in i for i in r["issues"]), r["issues"])
+        # a 1 mm face squashed 2.5x at 512 px/m covers a quarter of a texel: no visible stretch
+        k = 0.5
+        verts = quad(0, 0, 1, 1) + quad(3, 0, 3.001, 0.001)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.7, 0.7, 0.001 * k * 1.58, 0.001 * k / 1.58)]
+        r = self.m(mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs), map_px=1024, pad_px=0)
+        self.assertLess(r["angular_max"], 1.01, r)
+        self.assertFalse(any("stretched" in i for i in r["issues"]), r["issues"])
+
+    def test_limits_loosening_carries_to_the_island_twin(self):
+        g = self.ua.gate({"angular_p95": 1.4})
+        self.assertEqual((g["angular_p95"], g["island_angular_p95"], g["island_area_p95"]), (1.4, 1.4, 0.5))
+        self.assertEqual(self.ua.gate({"angular_p95": 1.1})["island_angular_p95"], 1.25)
+        self.assertEqual(self.ua.gate({"angular_p95": 1.4, "island_angular_p95": 1.3})["island_angular_p95"], 1.3)
+
+    def test_limits_override_lets_a_deliberate_case_through_and_is_recorded(self):
+        """A stylised piece may carry a stretch on purpose: limits= loosens one number for that audit and the report
+        says so; float('inf') switches a check off; a misspelt key raises instead of passing everything."""
+        k, s = 0.5, math.sqrt(1.45)
+        verts = quad(0, 0, 1, 1) + quad(2, 0, 2.15, 0.15)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)]
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs)
+        self.assertEqual(self.m(d, map_px=1024)["islands_distorted"], 1)
+        r = self.m(d, map_px=1024, limits={"angular_p95": 1.5})
+        self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
+        self.assertEqual(r["limits_overridden"], {"angular_p95": 1.5})
+        r = self.m(d, map_px=1024, limits={"island_min_share": float("inf")})
+        self.assertEqual(r["islands_distorted"], 0)
+        with self.assertRaises(ValueError):
+            self.m(d, map_px=1024, limits={"angular_p59": 1.2})
+        with self.assertRaises(TypeError):
+            self.m(d, map_px=1024, limits={"angular_p95": "1.2"})
+        self.assertEqual(self.ua.gate()["island_min_share"], self.ua.ISLAND_MIN_SHARE)
+
+    def test_area_max_finds_a_blurred_patch_slivers_absorbed(self):
+        """A label inside its panel's island, a 2 mm ring of slivers round it, the label's UVs shrunk to 1/8: the
+        slivers take the distortion and are left out of angular_max, the label is 99% of nothing in p95; area_max
+        (log2 of the label's density against its island's) is 6."""
+        xs, zs, e, f = [0, 0.25, 0.75, 1], [0, 0.35, 0.65, 1], 0.002, 1.0 / 8
+        verts, idx = [], {}
+
+        def v(x, y):
+            if (x, y) not in idx:
+                idx[(x, y)] = len(verts)
+                verts.append((x, y, 0.0))
+            return idx[(x, y)]
+        uv_of = lambda x, y: (0.05 + 0.5 * x, 0.05 + 0.5 * y)
+        cx, cy = uv_of(0.5, 0.5)
+        shrink = lambda x, y: (cx + (uv_of(x, y)[0] - cx) * f, cy + (uv_of(x, y)[1] - cy) * f)
+        faces, uvs = [], []
+        for i in range(3):
+            for j in range(3):
+                if (i, j) != (1, 1):
+                    c = [(xs[i], zs[j]), (xs[i + 1], zs[j]), (xs[i + 1], zs[j + 1]), (xs[i], zs[j + 1])]
+                    faces.append([v(*p) for p in c])
+                    uvs.append([uv_of(*p) for p in c])
+        outer = [(0.25, 0.35), (0.75, 0.35), (0.75, 0.65), (0.25, 0.65)]
+        inner = [(0.25 + e, 0.35 + e), (0.75 - e, 0.35 + e), (0.75 - e, 0.65 - e), (0.25 + e, 0.65 - e)]
+        for q in range(4):
+            a, b = outer[q], outer[(q + 1) % 4]
+            c, dd = inner[(q + 1) % 4], inner[q]
+            faces.append([v(*a), v(*b), v(*c), v(*dd)])
+            uvs.append([uv_of(*a), uv_of(*b), shrink(*c), shrink(*dd)])
+        faces.append([v(*p) for p in inner])
+        uvs.append([shrink(*p) for p in inner])
+        r = self.m(mesh(verts, faces, uvs), map_px=1024)
+        self.assertLessEqual(r["angular_p95"], 1.15)
+        self.assertLessEqual(r["angular_max"], 2.0)
+        self.assertAlmostEqual(r["area_max"], 6.0, places=1)
+        self.assertTrue(any("texel density (area max" in i for i in r["issues"]), r["issues"])
+
+    def test_tiling_ring_must_close_on_whole_tiles(self):
+        """A 16-facet ring unwrapped as one strip (U along it at the facets' chord length, V = z): its one seam lies
+        between faces 22.5 deg apart, inside the surface, so it must open by whole tiles. Closing on 4 tiles passes;
+        4.1 tiles is a 0.1-tile (102 px) jump, the zipper of long and short bricks a ring that does not close shows.
+        Marked uv_strip, tile_phase leaves the ring to this check instead of failing it against a box projection."""
+        n, r, h = 16, 0.65, 1.0
+
+        def ring(total):
+            verts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n), z)
+                     for z in (0.0, h) for i in range(n)]
+            faces, uvs = [], []
+            for i in range(n):
+                j = (i + 1) % n
+                faces.append([i, j, n + j, n + i])
+                u0, u1 = total * i / n, total * (i + 1) / n
+                uvs.append([(u0, 0.0), (u1, 0.0), (u1, h), (u0, h)])
+            return mesh(verts, faces, uvs)
+        ok = self.m(ring(4.0), map_px=1024, purpose="tiling")
+        self.assertEqual(ok["seams_off_phase"], 0, ok["issues"])
+        bad = self.m(ring(4.1), map_px=1024, purpose="tiling")
+        self.assertEqual(bad["seams_off_phase"], 1)
+        self.assertAlmostEqual(bad["seam_phase_px_max"], 102.4, places=0)
+        self.assertTrue(any("open by up to" in i for i in bad["issues"]), bad["issues"])
+        d = ring(4.0)
+        self.assertGreater(self.ua.tile_phase(d, 1.0, 1024)["off_faces"], 0)       # not what a box projection gives
+        d["strip"] = np.ones(n, bool)
+        tp = self.ua.tile_phase(d, 1.0, 1024)
+        self.assertEqual((tp["off_faces"], tp["strip_faces"]), (0, n))
+
+    def test_strip_ring_of_few_facets(self):
+        """An octagon tower's facets meet at 45 deg, over the 30 deg of a continuing surface: marked uv_strip, its
+        closing seam is still judged (unmarked it is not); a square's 90 deg corners never are. material= keeps the
+        marks (a tower with a trim band audited by material)."""
+        def ring(n, total, r=1.0, h=1.0):
+            verts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n), z)
+                     for z in (0.0, h) for i in range(n)]
+            faces, uvs = [], []
+            for i in range(n):
+                j = (i + 1) % n
+                faces.append([i, j, n + j, n + i])
+                u0, u1 = total * i / n, total * (i + 1) / n
+                uvs.append([(u0, 0.0), (u1, 0.0), (u1, h), (u0, h)])
+            return mesh(verts, faces, uvs)
+        for n, judged in ((8, True), (6, True), (4, False)):
+            d = ring(n, 4.25)
+            self.assertEqual(self.m(d, map_px=1024, purpose="tiling")["seams_off_phase"], 0, n)
+            d["strip"] = np.ones(n, bool)
+            self.assertEqual(self.m(d, map_px=1024, purpose="tiling")["seams_off_phase"], int(judged), n)
+        d = ring(8, 4.25)
+        d["strip"] = np.ones(8, bool)
+        d["mat_index"] = np.array([0, 1] * 4)
+        sub = self.ua._subset(d, np.array([True, False] * 4))
+        self.assertEqual(list(sub["strip"]), [True] * 4)
+
+    def test_nan_uvs_and_empty_meshes_are_issues_not_crashes(self):
+        d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
+        d["uv"][1] = np.nan
+        r = self.m(d, map_px=1024)
+        self.assertTrue(r["issues"][0].startswith("1 UV corners are not numbers"), r["issues"])
+        d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
+        d["co"][5] = np.nan                                  # a broken import: no longer passes silently
+        r = self.m(d, map_px=1024)
+        self.assertTrue(r["issues"][0].startswith("1 vertex positions are not numbers"), r["issues"])
+        empty = {"co": np.zeros((3, 3)), "lv": np.zeros(0, int), "ls": np.zeros(0, int), "lt": np.zeros(0, int),
+                 "uv": np.zeros((0, 2)), "cn": np.zeros((0, 3)), "tri": np.zeros((0, 3), int),
+                 "tpoly": np.zeros(0, int), "layer": "UVMap", "layers": ["UVMap"], "low": None}
+        r = self.m(empty, map_px=1024)
+        self.assertTrue(r["issues"] and r["issues"][0].startswith("no faces"), r["issues"])
+
     def test_small_faces_at_lightmap_scale_are_not_collapsed(self):
         # a 5 x 5 mm chamfer corner next to a 1 m face, mapped at the same density on a 12 px lightmap footprint:
         # each of its triangles covers 0.00065 px^2 (under the old absolute 0.001 px^2), but it is not collapsed
@@ -261,6 +443,11 @@ class UvAuditMaths(unittest.TestCase):
         d["low"] = np.array([False, True])            # marked but not lowered
         r = self.m(d, map_px=1024)
         self.assertTrue(any("not lowered" in i for i in r["issues"]))
+        # hero prop F20: low_factor lowers the marked island to that share of the class, the rest at the class
+        uv, _f = self.ua._scale_density(d, 0.5, (1.0, 1.0), True, low_factor=0.5)
+        r = self.m(dict(d, uv=uv), map_px=1024)
+        self.assertEqual((r["texel_px_per_m"], r["low_density_px_per_m"]), (512.0, 256.0))
+        self.assertFalse(any("not lowered" in i for i in r["issues"]), r["issues"])
 
     # ---- stacks, mirrors, folds
     def test_stacked_copies(self):
@@ -379,6 +566,9 @@ class UvAuditMaths(unittest.TestCase):
         self.assertTrue(any("run along V" in i for i in r["issues"]))
         self.assertFalse(any("run along V" in i for i in self.m(along_v, map_px=1024)["issues"]))   # not asked
         self.assertTrue(any("run along V" in i for i in self.m(along_v, map_px=1024, purpose="trim")["issues"]))
+        along_v["cross"] = np.array([True])            # a beam's end chamfer: its grain rightly runs across it
+        r = self.m(along_v, map_px=1024, directional=True)
+        self.assertEqual((r["elongated_along_v"], r["issues"]), (0, []))
 
     def test_trim_band_is_per_island(self):
         # two 1 x 0.25 m strips on a 2048 x 1024 sheet: one at 512 px/m, one at 1.15x (the mean, 1.08x, passes)
@@ -688,6 +878,74 @@ class UvAuditMaths(unittest.TestCase):
         self.assertTrue(any("hard edges" in i for i in r["issues"]))
         r = self.m(mesh(verts, faces, uvs, smooth=True), map_px=1024, baking=True)
         self.assertEqual(r["hard_edges_not_seams"], 0)
+
+    # ---- tiling phase across joints (tile_uv / tile_phase)
+    def test_tile_uv_reads_right_from_the_front_of_every_face(self):
+        ua = self.ua
+        # seen from the front, a step to the viewer's right raises U and a step up raises V
+        for n, right, up in (((0, 1, 0), (-1, 0, 0), (0, 0, 1)), ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
+                             ((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+                             ((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (-1, 0, 0), (0, 1, 0))):
+            forward = -np.asarray(n, float)
+            self.assertTrue(np.allclose(np.cross(forward, up), right) or n[2] != 0)       # right = forward x up
+            uv = ua.tile_uv([(0, 0, 0), right, up], n, 2.0)
+            np.testing.assert_allclose(uv[0], (0, 0), atol=1e-12)                         # phase 0 at the pivot
+            np.testing.assert_allclose(uv[1], (0.5, 0), atol=1e-12)
+            np.testing.assert_allclose(uv[2], (0, 0.5), atol=1e-12)
+
+    def test_tile_uv_breaks_45_deg_ties_the_same_way_in_float32_and_float64(self):
+        ua = self.ua
+        n64 = np.array([0.0, -math.sqrt(0.5), math.sqrt(0.5)])
+        n32 = n64.astype(np.float32).astype(float) + np.array([0.0, -3e-8, 0.0])        # a float32 normal, a hair off
+        p = [(0.3, 0.2, 0.1), (1.3, 0.2, 0.1)]
+        np.testing.assert_allclose(ua.tile_uv(p, n64, 1.0), ua.tile_uv(p, n32, 1.0))
+        # a 45 deg chamfer strip projected from a float32 normal audits clean against tile_phase's float64 Newell normal
+        verts = [(0, -0.1, 3.0), (2, -0.1, 3.0), (2, 0.0, 3.1), (0, 0.0, 3.1)]
+        d = mesh(verts, [[0, 1, 2, 3]], [[tuple(ua.tile_uv([v], n32, 1.0)[0]) for v in verts]])
+        self.assertEqual(ua.tile_phase(d, 1.0, 1024)["off_faces"], 0)
+
+    def test_tile_steps(self):
+        ua = self.ua
+        self.assertEqual(ua.tile_steps_issues(1.0, [1.0, 3.0]), [])
+        self.assertEqual(ua.tile_steps_issues(0.5, [1.0, 3.0]), [])
+        bad = ua.tile_steps_issues(4.0, [1.0, 3.0])                                       # the example spec's EXT
+        self.assertEqual(len(bad), 2)
+        self.assertIn("not a whole number", bad[0])
+
+    def wall(self, x0, length, uv_fn, height=3.0):
+        verts = [(x0, 0, 0), (x0 + length, 0, 0), (x0 + length, 0, height), (x0, 0, height)]
+        return mesh(verts, [[0, 1, 2, 3]], [[uv_fn(v) for v in verts]])
+
+    def test_tile_phase(self):
+        ua = self.ua
+        front = np.array([0.0, -1.0, 0.0])                                               # this quad faces -Y
+        ok = self.wall(0, 2.0, lambda v: ua.tile_uv([v], front, 1.0)[0] + (3, -2))        # whole tiles off: fine
+        r = ua.tile_phase(ok, 1.0, 1024)
+        self.assertEqual((r["off_faces"], r["mirrored_faces"], r["issues"]), (0, 0, []), r)
+        # Cube Projection centred on a 2 m piece's bounds: half a tile off
+        centred = self.wall(0, 2.0, lambda v: ((v[0] - 1.0) / 1.0 + 0.5, (v[2] - 1.5) / 1.0 + 0.5))
+        r = ua.tile_phase(centred, 1.0, 1024)
+        self.assertEqual(r["off_faces"], 1)
+        self.assertAlmostEqual(r["phase_px_max"], 512.0, delta=1e-6)
+        mirrored = self.wall(0, 2.0, lambda v: (-v[0] / 1.0 + 0.25, v[2]))
+        mirrored["uv"][:, 0] -= 0.25                                                      # U = -x: backwards
+        r = ua.tile_phase(mirrored, 1.0, 1024)
+        self.assertEqual(r["mirrored_faces"], 1)
+        self.assertIn("mirrored", r["issues"][0])
+        # a piece rotated 90 deg about Z and moved: its own frame brings it back
+        rot = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        moved = self.wall(0, 2.0, lambda v: ua.tile_uv([v], front, 1.0)[0])
+        moved["co"] = moved["co"] @ rot.T + np.array([5.0, 7.0, 0.0])
+        r = ua.tile_phase(moved, 1.0, 1024, frame=(rot, (5.0, 7.0, 0.0)), steps=[1.0, 3.0])
+        self.assertEqual((r["off_faces"], r["issues"]), (0, []), r)
+        # a mirrored frame is reported, not measured as if it were not
+        r = ua.tile_phase(moved, 1.0, 1024, frame=(rot @ np.diag([-1.0, 1.0, 1.0]), (5.0, 7.0, 0.0)))
+        self.assertIsNone(r["off_faces"])
+        self.assertIn("mirrored (negative scale)", r["issues"][-1])
+        # a phase variant: projected as if 1 m along a 2 m tile; audited with its offset it passes, without it not
+        variant = self.wall(0, 1.0, lambda v: ua.tile_uv([np.add(v, (1.0, 0, 0))], front, 2.0)[0])
+        self.assertEqual(ua.tile_phase(variant, 2.0, 1024, offset=(1.0, 0, 0))["off_faces"], 0)
+        self.assertEqual(ua.tile_phase(variant, 2.0, 1024)["off_faces"], 1)
 
 
 if __name__ == "__main__":

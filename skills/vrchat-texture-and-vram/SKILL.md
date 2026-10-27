@@ -30,8 +30,9 @@ the `vrchat-world-optimization` skill.
 2. Remove duplicates: the same image imported twice and referenced twice ships twice. A texture nothing in the
    scene references does not ship; the sweep lists only what does.
 3. Crunch large textures where download size matters: on DXT1/DXT5 (PC) or ETC/ETC2 (Android and iOS) data only, never BC7,
-   BC5, BC4 or ASTC. A crunched ETC2 override shrinks a mobile download but takes more VRAM than ASTC 6x6 (ETC2 RGB
-   0.5, RGBA 1 byte per pixel, against 0.44).
+   BC5, BC4 or ASTC, and never a normal map or detail normal map (*practice*: its block artefacts repeat in every
+   tile and show in the lighting). A crunched ETC2 override shrinks a mobile download but takes more VRAM than ASTC
+   6x6 (ETC2 RGB 0.5, RGBA 1 byte per pixel, against 0.44).
 4. Audio: Vorbis, mono for positional sources, Streaming for music (references/mesh-and-audio-import.md).
 5. Lightmaps: Non-Directional, and a lower Lightmap Resolution only before the UV2 is packed (afterwards it pushes
    the UV2 gaps under 2 texels); the `vrchat-lighting-and-baking` skill owns those numbers.
@@ -49,7 +50,8 @@ Targets for all texture memory together: PC under 1.5 GB, Quest and iOS under 15
 `vrchat-world-optimization` skill). The sweep prints the total for the active build target.
 
 1. Resolution first: halving a texture's dimensions quarters its memory. PC 2048 at most (4096 only where a player's
-   face gets within about 30 cm), Android and iOS 1024.
+   face gets within about 30 cm), Android and iOS 1024. Where a mobile override halves a map, keep its material's
+   detail maps on mobile: they hold close-range sharpness for far less memory (references/texture-formats.md).
 2. Format: nothing uncompressed (RGBA32 is 4 bytes per pixel against 1 for BC7, 0.5 for DXT1, 0.44 for ASTC 6x6);
    use the format table.
 3. Read/Write Enabled off on textures and meshes: on keeps a second, CPU-side copy.
@@ -66,12 +68,12 @@ references/texture-formats.md.
 
 | Map | PC (Standalone tab) | Android and iOS tabs |
 |---|---|---|
-| Albedo, no alpha | DXT1 (0.5); BC7 (1) where banding shows, and on surfaces seen from under 1.5 m when PC leads (`world.quality: pc_lead`) | ASTC 6x6 (0.44); 8x8 (0.25) for background |
+| Albedo, no alpha | DXT1 (0.5); BC7 (1) where banding shows, and on surfaces seen from under 1.5 m when PC leads (`world.quality: pc_lead`) | ASTC 6x6 (0.44); 8x8 (0.25) for background: surfaces a player never gets nearer than about 6 m (*practice*), never the ground or anything walked on |
 | Albedo with alpha | BC7 or DXT5 (1) | ASTC 6x6 (0.44) |
 | Normal map | BC5, or Unity's default DXT5 (both 1) | ASTC 4x4 (1); 5x5 (0.64) if size-bound |
 | Metallic (R) + smoothness (A) | BC7 or DXT5 (1) | ASTC 6x6 (0.44); 4x4 (1) if its gradients band |
 | Single channel (height, mask) | BC4 (0.5) | ASTC 6x6 (0.44) |
-| Detail albedo, detail normal | As albedo and normal map: small (256-512) and finely tiled | As albedo and normal map |
+| Detail albedo, detail normal | As albedo and normal map: small (256-512) and finely tiled | As albedo and normal map; keep them on mobile (Standard Lite reads them) |
 | HDR (skybox, cubemap) | BC6H (1) | ASTC HDR (Unity's only compressed HDR format on Android) |
 | UI, full-screen | as albedo, mipmaps off | as albedo, mipmaps off |
 
@@ -81,7 +83,7 @@ references/texture-formats.md.
 |---|---|
 | Max Size | Per platform: PC 2048 (4096 only for a hero surface), Android and iOS 1024 or less |
 | Format | Per the table; never "None" (uncompressed) |
-| Crunch | Default tab: Use Crunch Compression (Format Automatic: DXT1/DXT5 on PC, ETC/ETC2 on Android and iOS). A platform tab: pick RGB Crunched DXT1, RGBA Crunched DXT5, RGB Crunched ETC or RGBA Crunched ETC2 directly. Never with BC7, BC5, BC4 or ASTC; Compressor Quality 50-75 |
+| Crunch | Default tab: Use Crunch Compression (Format Automatic: DXT1/DXT5 on PC, ETC/ETC2 on Android and iOS). A platform tab: pick RGB Crunched DXT1, RGBA Crunched DXT5, RGB Crunched ETC or RGBA Crunched ETC2 directly. Never with BC7, BC5, BC4 or ASTC, never on a normal map or detail normal map (*practice*); Compressor Quality 50-75 |
 | Generate Mip Maps | On for all world geometry; off only for UI and full-screen effects |
 | Mip Streaming | On for world textures (VRChat streams world and avatar textures since client 2024.4.2) |
 | Mip Map Filtering | Kaiser: the SDK's build panel flags Box filtering as blurry |

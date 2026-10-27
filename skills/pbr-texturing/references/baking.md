@@ -108,12 +108,17 @@ curvature 0.10 s):
   from its active render UV map (or `--uv-layer`). `pbr_check.py` read the bakes as OpenGL, r +0.53 to +0.59, and a
   green-flipped copy as DirectX.
 - **AO.** Cycles' AO bake at the world's AO distance, set to `--ao-distance` (default 10% of the low poly's diagonal)
-  and restored.
+  and restored. AO sees every render-visible object, so `bake()` hides all but the low, its highs and the cage while
+  it bakes (an unrelated box over a low took its AO from 0.99 to 0.70, measured) and puts them back; `occluders=`
+  keeps the ones whose shadow belongs in the map (a floor under a piece that always stands on it).
 - **Curvature.** The high poly's Pointiness through an Emission bake, re-centred on 0.5 and scaled so the 99th
   percentile reaches the ends (`--curvature-gain` fixes the gain, so every piece of a set matches). Pointiness is per
   vertex and sees only connected topology: it needs a dense high poly, and floaters or unapplied booleans show no
-  crease where they meet the body (the Substance baker's raytraced curvature does). Convex reads brighter, as in
-  route A.
+  crease where they meet the body (the Substance baker's raytraced curvature does). A plain bevelled or boolean high
+  is too sparse: its flat panels read 0.63 instead of 0.5 (measured on a crate), so cut it to a grid of about 2 bake
+  texels before its bevels and booleans (the normal map does not need this; curvature does). A gain shared across
+  sets saturates a sparser set (every fitting of a crate read all-edge and textured as bare steel): the report gives
+  `saturated_share` and a note over 5%. Convex reads brighter, as in route A.
 - **Filter.** Baked into Non-Color float images, Gaussian pre-filtered at `--filter-sigma` output texels (default
   0.5; 0 is a plain box) in the supersampled image, then box-filtered down (normals renormalised). A box filter
   alone steps a thin edge at a slight slope by up to a texel (baked piping read as a dashed cord, and moving the
@@ -136,6 +141,38 @@ curvature 0.10 s):
 Blender facts behind it, measured on 5.2.2: `Image.save()` of a float image writes a 16-bit PNG; a 16-bit PNG loaded
 under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read data maps as Non-Color.
 
+## Parts that sit close together: an exploded bake
+
+A low made of parts close to one another (a lid on its box, a drawer in its carcass, a bracket on a plank) shares one
+cage: where the cage reaches across the gap, rays start inside the other part's high and bake its surface, inverted,
+onto this part. Bake every map exploded, AO included: assembled, AO's rays land in the neighbour's high just the
+same, and a contact shadow is not worth a wrong surface:
+
+1. One low object, a vertex group per part (`Body`, `Lid`); each high object named `<Part>_high` (floaters
+   `<Part>_high_rivets`): `parts_by_name(low, highs)` pairs them and refuses a high with no group. Other vertex
+   groups on the low (a wear mask) are ignored. A high may be parented to its own part's high (it moves with it),
+   never to another part's: clear that parent, keeping the transform, first (the bake refuses it).
+2. `bake_exploded(low, parts, maps=("normal", "ao", "curvature"), size=..., out_dir=..., name=...)`: part k and its
+   highs move k x twice the low's diagonal along +X for the maps in `explode` (all of them by default), the bake
+   runs, every vertex and object goes back exactly; maps left out of `explode` bake assembled. The default cage floor
+   and AO distance are sized from the assembled low (`reference_size`), never from the spread-out parts. Leave "ao" out for
+   its contact shadows only when that assembled pass reports `cage_inside` neighbour 0 (parts further apart than the
+   cage reaches). CLI: `--explode`, every map exploded.
+3. The command line writes the report to `<out>/<name>_bake.json` beside the maps (from a script, save the returned
+   `report` there): QA reads `cage_inside` in every pass under `passes`.
+
+Measured (Blender 5.2.2, 2026-10-27): a body and a lid 3 mm apart, highs 1 mm proud and a bump elsewhere that made the
+uniform cage 16.5 mm: assembled, 212 of 1,512 traced cage rays started inside the other part's high (`cage_inside`
+neighbour); exploded, none, and every vertex and high came back to its exact position. Building the parts and their
+highs: `blender-mesh-topology`.
+
+Exploding loses the contact shadow between parts (a bracket on a lid reads placed on, not attached). Put it back in
+the material instead: an AO or Ambient Occlusion node in the Blender material bake (`blender-materials.md`), which
+sees the assembled parts, or a separate assembled AO pass with each part's own highs only, multiplied in.
+Neighbour faults that remain after exploding come from shells that pass into each other inside one part (a hinge
+leaf through its knuckle): `--cage fitted` made them worse on a crate (20 to 30 rays); join the shells (a boolean
+union, then clean the slivers it leaves) or split them into parts of their own.
+
 ## Symptom, cause, fix
 
 | Symptom | Cause | Fix |
@@ -149,4 +186,7 @@ under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read dat
 | X-shaped shading or seams only in the engine | Baker and engine triangulated or computed tangents differently | Triangulate before baking; MikkT tangents on both sides |
 | Colour bleeding at island edges at a distance | Padding smaller than the mips need | `--padding_radius` / `--margin` at least half the island gap |
 | Floating parts cast AO shadows on the surface below | AO rays hit the floaters | Bake AO with name matching (`match_mesh_name`) or without the floaters |
+| One part's surface shows on its neighbour (a lid's underside on the box top, normals pointing in along a gap) | The parts share a cage that reaches across the gap | `bake_exploded`, or the Substance baker's `match_mesh_name` with `_low` / `_high` names |
 | Banding in the normal map's gradients | 8-bit master | 16-bit masters; dithered 8-bit exports |
+| A panel line or groove reads as paint, flat in the normal map | Square walls and sharp rims: every ray lands on a face parallel to the low (a 3 mm groove baked exactly 0, 0, 1 across) | Groove walls under about 45 deg (a V or a rounded section) or rims rounded at least 3 texels wide |
+| AO darkened by something that is not the piece | Another object rendered during the bake (a second texture set, a floor, a design leftover) | `bake()` hides it; pass `occluders=` only for what should shadow the map |

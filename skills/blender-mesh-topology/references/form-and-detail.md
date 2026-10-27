@@ -88,6 +88,29 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
 - Shared profiles: a moulding, skirting or cornice that runs across pieces has the identical section at both ends of
   every piece, on the same vertex rows (`grid-layout.md`, rows), so it continues without a step. Check the joint with
   `joint_match` (`validation.md`).
+- A curved piece meeting a straight one (a curved wall, an apse, a round corner): its smooth end vertices lean half a
+  facet angle off the straight neighbour (measured, Blender 5.2.2: 2.81 deg for 16 segments per quarter turn), a
+  crease in the shading at every such joint. Set the custom normal of the wall faces' corners at the joint to the
+  shared surface normal, corner by corner, keeping every other corner as it is:
+
+  ```python
+  cur = [tuple(c.vector) for c in me.corner_normals]
+  ln = []
+  for p in me.polygons:
+      for li in p.loop_indices:
+          w = joint_normal(me.vertices[me.loops[li].vertex_index].co)   # the straight face's normal there, or None
+          ln.append(tuple(w) if w is not None and p.normal.dot(w) > 0.5 else cur[li])   # caps keep their own
+  me.normals_split_custom_set(ln)    # 0.000 deg on a closed 16-segment quarter wall, flat or smooth caps (5.2.2)
+  ```
+
+  Never `normals_split_custom_set_from_vertices` on a closed piece: it gives the joint vertex's flat top, bottom and
+  end-cap corners the same normal (90 deg at the joint, measured). Check `joint_normals` (under about 0.5 deg,
+  *practice*).
+- A piece let into another at an angle (an arcade's spandrel or an engaged column against a round tower, a buttress
+  against a wall) is a masonry abutment, not an edge-to-edge joint: it may run a few centimetres into its neighbour,
+  every face it buries hidden, but no face of it may lie in the neighbour's face plane. An engaged column's capital
+  and base stand proud of the wall face or are let into it, never flush (a capital flush with the wall z-fought
+  through the brick, measured in a dry run); QA reports such faces between placements.
 - Openings keep their greybox size; frames and reveals go inside them, the lining flush with the wall face (*practice*).
 
 ## 5. Imperfection without breaking the kit
@@ -105,9 +128,9 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
 | Piece | Route |
 | --- | --- |
 | Hard-surface kit pieces, furniture, frames | Mid-poly: real chamfers with custom normals (`hard-surface.md`); texture from tiling or trim materials, no bake needed |
-| Ornament, carving, cast or worn detail | A high-poly baked onto the low-poly; the low-poly keeps the silhouette (section 3). The bake is the `pbr-texturing` skill's |
-| Organic props (rocks, roots, food) | Sculpt, remesh with Quad Remesher (`quad-remesher.md`, section 4 of SKILL.md), UVs, bake the sculpt onto it. Untested here |
-| Cloth props (curtains, tablecloths, cushions) | A cloth simulator (Marvelous Designer through its MCP when connected), then Quad Remesher with the border frozen where it meets a rail or edge, UVs, and a bake of the simulated folds onto the low-poly. Untested here |
+| Ornament, carving, cast or worn detail | A high-poly baked onto the low-poly; the low-poly keeps the silhouette and any relief past the stereo threshold (section 3: carving seen close keeps its depth step in the low). Building the pair: `high-and-low-poly.md`; the bake is the `pbr-texturing` skill's |
+| Organic props (rocks, roots, food) | A modifier-stack sculpt (brush strokes do not run headless), a QuadriFlow or decimated low, UVs, the sculpt baked onto it: `organic-and-cloth.md` |
+| Cloth props (curtains, tablecloths, cushions) | Blender's cloth simulation stepped and applied (or Marvelous Designer through its MCP when connected), a low with its border kept where it meets a rail or edge, UVs, the simulated folds baked onto it: `organic-and-cloth.md` |
 | Foliage cards | The `pbr-texturing` skill |
 
 ## 7. Review

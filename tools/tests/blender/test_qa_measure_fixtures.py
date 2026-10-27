@@ -204,6 +204,9 @@ def build(d):
     slab_v = box_verts((0, 0, 0), (2, 2, 0.1)) + [(0.5, 0.5, 0.1), (1.5, 0.5, 0.1), (1.5, 1.5, 0.1), (0.5, 1.5, 0.1)]
     piece("TST_Overlap_2x2_A", [("TST_Overlap_2x2_A", mesh("overlap", slab_v, (), BOX_FACES + [(8, 9, 10, 11)]))],
           "modelled")
+    card_v = [(-0.5, 0, 0), (0.5, 0, 0), (0.5, 0, 1), (-0.5, 0, 1)] * 2      # a leaf card and its own back
+    piece("TST_Card_Free_A", [("TST_Card_Free_A", mesh("card", card_v, (), [(0, 1, 2, 3), (7, 6, 5, 4)]))],
+          "modelled")
     grid_v = [(x, y, 0) for y in (0, 1, 2) for x in (0, 1, 2)]
     grid = mesh("grid", grid_v, (), [(0, 1, 4, 3), (1, 2, 5, 4), (3, 4, 7, 6), (4, 5, 8, 7)])
     grid.materials.append(material("M_TST_Brick_Dark"))            # underscores in the name part are allowed
@@ -451,7 +454,7 @@ def build(d):
     reset()
     save(f["master"])
     kit = link(f["kit"], ["TST_Wall_2x3_A", "TST_Bevel_1x1x1_A", "TST_Col_1x1x1_A", "TST_Offset_1x1x1_A",
-                          "TRIM_Skirting_2_A"])
+                          "TRIM_Skirting_2_A", "TST_Prop_Free_A"])
     booth_l = link(f["asm"], ["ASM_Booth_A"])["ASM_Booth_A"]
     shift_l = link(f["asm_shift"], ["ASM_Shift_A"])["ASM_Shift_A"]
     abs_wall = link(f["kit_abs"], ["ABS_Wall_2x3_A"], relative=False)["ABS_Wall_2x3_A"]
@@ -474,7 +477,23 @@ def build(d):
     copy = bpy.data.collections.new("ASM_Copy_A")                  # an appended assembly, never in the scene tree
     instance("inner", wall_l, parent=copy)
     instance("asm_copy", copy, (2.37, 12, 0), rot=(0, 0, 45), parent=zone)
-    piece("TST_Slab_2x2_A", [("TST_Slab_2x2_A", box("slab", (0, 0, 0), (2, 2, 0.1)))], "modelled")
+    instance("asm_squashed", booth_l, (40, 4, 0), scale=(1, 1, 0.8), parent=zone)   # uneven: its texels stretch
+    instance("asm_mirrored", booth_l, (44, 4, 0), scale=(-1, 1, 1), parent=zone)    # mirrored, even: no stretch
+    slab = piece("TST_Slab_2x2_A", [("TST_Slab_2x2_A", box("slab", (0, 0, 0), (2, 2, 0.1)))], "modelled")
+    # tile phase, read with --families (TST tiling at 1024 px/m, a 1 m tile): a wall 1.9 mm along, one 3 cm up, a
+    # floor slab turned 90 deg, a slab unturned; and a Free prop scaled 2 (half its texels per metre)
+    instance("wall_jog", wall_l, (16.0019, 1, 0), parent=zone)
+    instance("wall_step", wall_l, (18, 1, 0.03), parent=zone)
+    instance("slab_turned", slab, (24, 0, 0), rot=(0, 0, 90), parent=zone)
+    instance("slab_ok", slab, (26, 0, 0), parent=zone)
+    instance("prop_big", kit["TST_Prop_Free_A"], (30.4, 2.7, 0), scale=(2, 2, 2), parent=zone)
+    instance("wall_twin", wall_l, (1, 1, 0), parent=zone)              # on top of wall_ok: every face z-fights
+    instance("pair_a", wall_l, (50, 1, 0), parent=zone)                # side by side: end caps pressed together
+    instance("pair_b", wall_l, (52, 1, 0), parent=zone)                # face apart, hidden, never counted
+    instance("stage_a", wall_l, (60, 1, 0.15), parent=zone)            # a raised stage's walls meet only each
+    instance("stage_b", wall_l, (62, 1, 0.15), parent=zone)            # other: their courses start at 0.15 m
+    instance("wall_engaged", wall_l, (70, 1, 0), parent=zone)          # a block let into a wall: only their feet
+    instance("col_engaged", kit["TST_Bevel_1x1x1_A"], (70.5, 0.6, 0), parent=zone)   # share a plane, on the ground
     shadow = bpy.data.collections.new("TST_Bevel_1x1x1_A")         # same name as the linked piece (names are
     bpy.context.scene.collection.children.link(shadow)             # unique per library, so it keeps the name)
     f["shadow_name"] = shadow.name
@@ -670,6 +689,10 @@ class Runs:
 
     def _master(self):
         return self._ok(self.f["master"], [], "master")
+
+    def _master_phase(self):
+        return self._ok(self.f["master"], ["--families", '{"TST": {"texturing": "tiling", "map_px": 1024, '
+                                           '"texel_density": 1024, "scale_range": [0.5, 2.5]}}'], "master_phase")
 
     def _master_textured(self):
         return self._ok(self.f["master"], ["--expect-status", "textured"], "master_textured")
@@ -1004,6 +1027,9 @@ def coplanar_overlap_reported(r):
     check(has(kit["problems"], "TST_Overlap_2x2_A", "overlapping coplanar faces"), "no PROBLEM line")
     check(piece_of(kit, "TST_Grid_2x2_A")["coplanar_overlaps"] == 0, "adjacent faces counted as overlapping")
     check(piece_of(kit, "TST_Col_1x1x1_A")["coplanar_overlaps"] == 0, "LOD1 counted against LOD0")
+    card = piece_of(kit, "TST_Card_Free_A")        # props sweep: a double-sided card is a note, not z-fighting
+    check(card["coplanar_overlaps"] == 0 and card["double_sided_faces"] == 1 and not has(kit["problems"],
+          "TST_Card_Free_A", "coplanar") and has(kit["notes"], "TST_Card_Free_A", "back to back"), card)
 
 
 @case
@@ -1105,7 +1131,83 @@ def master_placements(r):
     check(pl["wall_ok"]["kind"] == "grid" and pl["booth"]["kind"] == "asm" and pl["asm_copy"]["kind"] == "asm",
           [(p["object"], p["kind"]) for p in rep["placements"]])
     check(not has(rep["problems"], "placement asm_copy"), "assembly grid data turned into a PROBLEM line")
+    check(pl["asm_squashed"]["scale"] == [1.0, 1.0, 0.8] and has(rep["problems"], "asm_squashed", "unevenly"),
+          "an unevenly scaled placement of any kind stretches its texture: %s" % pl["asm_squashed"])
+    check(not has(rep["problems"], "wall_scaled", "unevenly"), "an even scale is not uneven")
+    check(not has(rep["problems"], "asm_mirrored", "unevenly"), "a mirror is not uneven: %s" % pl["asm_mirrored"])
     check("inner" not in pl, "an instance inside an unplaced collection counted as a placement")
+    check(pl["wall_jog"]["on_grid"] is False and has(rep["problems"], "wall_jog", "off grid"),
+          "1.9 mm off a 1 m grid is off it (0.1 mm tolerance): %s" % pl["wall_jog"])
+    check(pl["wall_ok"]["tile_phase"] is None, "no --families: no tile phase")
+    check(has(rep["problems"], "prop_big", "scaled 2"), "a Free prop at scale 2 halves its texel density")
+    over = {(a, b): k for a, b, k in rep["placement_overlaps"]}
+    check(over.get(("wall_ok", "wall_twin"), 0) > 0 and has(rep["problems"], "wall_ok and wall_twin", "z-fight"),
+          "two placements in one place z-fight: %s" % rep["placement_overlaps"])
+    check(("pair_a", "pair_b") not in over, "end caps pressed together at a joint are not z-fighting: %s" % over)
+    check(("col_engaged", "wall_engaged") not in over, "feet on the ground are not z-fighting: %s" % over)
+    check(pl["asm_mirrored"]["mirrored"] and pl["asm_mirrored"]["rot_xy_ok"]
+          and not has(rep["problems"], "asm_mirrored", "tilted")
+          and has(rep["notes"], "asm_mirrored", "is mirrored"), "a mirror is a note, not a tilt: %s" % pl["asm_mirrored"])
+    check(("asm_mirrored", "asm_squashed") in over, "the two booths placed over each other: %s" % over)
+
+
+@case
+def master_tile_phase(r):
+    """With the spec's families, every tiling placement is checked against the world tile grid: a wall 1.9 mm along
+    (1.95 px at 1024 px/m) and one 3 cm up (30.7 px) jump against their neighbours; a floor slab turned 90 deg turns
+    its pattern; the grid walls and the unturned slab are clean."""
+    rep = r.get("master_phase")
+    pl = {p["object"]: p for p in rep["placements"]}
+    tp = pl["wall_ok"]["tile_phase"]
+    check({k: tp[k] for k in ("u_px", "v_px", "turn_deg", "tile_m", "horizontal")} ==
+          {"u_px": 0.0, "v_px": 0.0, "turn_deg": 0.0, "tile_m": 1.0, "horizontal": False}, pl["wall_ok"])
+    check(not has(rep["problems"], "wall_ok", "tile grid") and not has(rep["problems"], "wall_west", "tile grid"),
+          rep["problems"])
+    check(abs(pl["wall_jog"]["tile_phase"]["u_px"] - 1.95) < 0.02 and has(rep["problems"], "wall_jog", "tile grid"),
+          pl["wall_jog"])
+    check(abs(pl["wall_step"]["tile_phase"]["v_px"] - 30.72) < 0.02 and pl["wall_step"]["tile_phase"]["v_against"]
+          == ["wall_jog"] and has(rep["problems"], "wall_step", "courses 30.7 px off", "wall_jog"), pl["wall_step"])
+    for name in ("stage_a", "stage_b"):         # 0.15 m up, 154 px off world z, but they touch only each other
+        tp = pl[name]["tile_phase"]
+        check(tp["v_px"] == 0.0 and abs(tp["v_abs_px"] - 153.6) < 0.02 and not has(rep["problems"], name),
+              pl[name])
+    check(pl["slab_turned"]["tile_phase"]["horizontal"] and has(rep["problems"], "slab_turned", "turned 90"),
+          pl["slab_turned"])
+    check(not has(rep["problems"], "slab_ok"), "an unturned slab on the grid is clean")
+    check(pl["prop_big"]["scale_band"] == [0.5, 2.5] and not has(rep["problems"], "prop_big", "scaled"),
+          "the family's scale_range lets its Free pieces vary: %s" % pl["prop_big"])
+
+
+@case
+def tile_phase_shapes(r):
+    """Arch sweep: a kerb (thin, 0.3 m deep) turns like a wall, not a floor; a floor's phase variant k = kx + n x ky
+    along its own +X and +Y; a floor: true family's two-number Size is X by Y, with a terrain chunk's relief (over a
+    module, below its pivot) left out of the size and pivot checks."""
+    ns = {}
+    exec(compile(QA.read_text(encoding="utf-8"), str(QA), "exec"), ns)
+    fams = {"TST": {"texturing": "tiling", "map_px": 2048, "texel_density": 1024}, "TER": {
+        "texturing": "tiling", "map_px": 2048, "texel_density": 1024, "floor": True}}
+    check(ns["_tiling"](fams, "TST_Kerb_1_A", 1.0, [1.0, 0.3, 0.15])[3] is False, "a kerb read as a floor")
+    check(ns["_tiling"](fams, "TST_Slab_2x2_A", 1.0, [2.0, 2.0, 0.1])[3] is True, "a slab not read as a floor")
+    check(ns["_tiling"](fams, "TER_Chunk_4x4_A", 1.0, None)[3] is True, "a floor: true Size not read as a floor")
+    tp = ns["tile_phase"]
+    for k, pos, ok in ((0, (2, 2, 0), True), (1, (3, 2, 0), True), (2, (2, 3, 0), True), (3, (3, 3, 0), True),
+                       (0, (2, 3, 0), False), (1, (2, 2, 0), False)):
+        res = tp(pos, 0.0, 2.0, 1024.0, 1.0, k, True)
+        check((max(res["u_px"], res["v_px"]) < 0.5) is ok, "floor variant P%d at %s: %s" % (k, pos, res))
+    me = bpy.data.meshes.new("ter")
+    me.from_pydata([(x, y, 0.4 * math.sin(x + y) - 0.5) for y in range(5) for x in range(5)], [],
+                   [(j * 5 + i, j * 5 + i + 1, (j + 1) * 5 + i + 1, (j + 1) * 5 + i) for j in range(4) for i in range(4)])
+    coll = bpy.data.collections.new("TER_Chunk_4x4_A")
+    bpy.context.scene.collection.children.link(coll)
+    coll.objects.link(bpy.data.objects.new("TER_Chunk_4x4_A", me))
+    me.vertices[0].co.z = 0.62                                  # relief over a module in all: 1.3 m
+    dg = bpy.context.evaluated_depsgraph_get()
+    rep = ns["measure_piece"](coll, 1.0, dg, families=fams)
+    check(rep["size_ok"] and rep["pivot_ok"], "terrain chunk: %s" % {k: rep.get(k) for k in ("extent_modules",
+                                                                                          "bounds_m")})
+    rep = ns["measure_piece"](coll, 1.0, dg)
+    check(not rep["size_ok"], "without floor: true its relief counts as a third axis: %s" % rep["extent_modules"])
 
 
 @case

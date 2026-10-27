@@ -35,6 +35,8 @@ it, or without its JSON, did not finish.
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --tile-seam T_EXT_Brick_BaseColor.png
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --pbr "blender/textures/EXT/*.png"
             --map-px 1024 --pbr-targets '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "metal": false}}'   # X8
+    blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --pbr "textures/EXT/*.png"
+            --pbr-tiling   # X4: seams along part of an edge, tile-scale variation (--pbr-trim for a trim sheet)
 
 Renders leave out collision shells (*_COL) and every LOD but LOD0 (*_LOD1, *_LOD2...), in the file and inside
 collection instances: --lod n shows LOD n instead, --show-collision shows the shells, --hide-object hides more by
@@ -61,7 +63,10 @@ libraries [{path, relative, found}], unnamed_collections,
 local_assemblies, local_assembly_offsets {name: [x, y, z]}, images [{image, filepath, relative, packed, missing,
 size, channels, colorspace, alpha_mode, materials}], linked_pieces [{piece, library, kit_status, tris,
 instance_offset}], placements [{object, asset, kind (grid, free, asm, other), linked, id, pos, rot_z, rot_xy_ok,
-scale_ok, on_grid, right_angle, assembly (the ASM_ collection holding it in a single MASTER, else null: compare only
+mirrored (negative scale, read as the unmirrored placement: a PROBLEM on a tiling piece, else a note), scale_ok,
+on_grid, right_angle, tile_phase (with --families: u_px, v_px, turn_deg, tile_m, px_per_m, horizontal; a wall's v_px
+against the walls of its family its box touches, with v_abs_px and v_against), assembly (the ASM_ collection holding
+it in a single MASTER, else null: compare only
 those with null against the zones' placements)}], appended, shadowing_linked, ref_meshes, stray_meshes, problems, notes (advisory:
 LOD0 footprints under 64 px, where only a Free PROP or FOL piece is told to become probe-lit; UV2 box fill under 0.5
 at a footprint of 64 px or more, unless Bakery's density gate already makes it a PROBLEM),
@@ -128,6 +133,14 @@ BAKERY_INSET_TEXELS = 3       # its Default atlas packer insets each rect 3 texe
 EFFECTIVE_DENSITY_MIN = 0.5   # Bakery: a PROBLEM when a mesh of MIN_FOOTPRINT_PX or more gets under this share of the
                               # texels per metre planned for it (U4; uv-unwrapping's audit applies the same gate)
 TRIM_FAMILY = "TRIM"       # placed on grid.sub_module (--sub-module), as the pipeline's spec validator checks it
+GRID_TOL_M = 1e-4          # a grid placement within this many metres of the grid is on it (0.1 mm, any module)
+TILE_PHASE_TEXELS = 0.5    # a tiling placement further than this off its family's tile grid shows a jump at joints
+FREE_SCALE_BAND = (0.8, 1.25)   # an evenly scaled Free prop or assembly keeps its texel density within the unique
+                                # band; scale 2 halves its texels per metre against the kit's
+FLOOR_FAMILY = "STR"       # a two-number Size in this family is a floor tile (X by Y), as the spec validator reads it
+                           # (also any family the spec marks floor: true, read through --families)
+CONTACT_TOL_M = 1e-3       # two placements' boxes this close touch: a joint where a tiling pattern must continue
+PHASE_VARIANT_RE = re.compile(r"_P(\d)$")
 ROLES = ("kit", "asm", "master", "fbx")
 
 
@@ -535,6 +548,11 @@ def _overlap2d(p, q):
     return any(_tri_overlap(a, b) for a in _triangles(p) for b in tq)
 
 
+def _same_corners(a, b, tol=1e-4):
+    """True when two faces have the same corners (any order), within tol metres."""
+    return len(a) == len(b) and all(any((p - q).length <= tol for q in b) for p in a)
+
+
 def coplanar_overlaps(faces):
     """Pairs of faces (labels) that lie in one plane (to 0.1 mm) and overlap with area, facing the same way or
     opposite ways: duplicated faces, z-fighting faces, zero-thickness doubles. faces: (label, normal, [Vector])."""
@@ -588,10 +606,19 @@ def free_pivot(lo, hi, tol=0.01):
     return None
 
 
+def _floor_like(code, nums, families=None):
+    """True when a two-number Size is a floor tile laid flat (X by Y): family STR, or one the spec marks floor: true
+    (a plank floor, terrain chunks)."""
+    fam = (families or {}).get(code)
+    return nums == 2 and (code == FLOOR_FAMILY or (isinstance(fam, dict) and fam.get("floor") is True))
+
+
 def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=1.0, texel_map=None,
-                  lightmapper="unity"):
+                  lightmapper="unity", families=None):
     """lightmap_scale: Scale In Lightmap, one number or {piece: scale} (the spec's pieces[].lightmap_scale; others 1).
-    lightmapper: whose footprint lightmap_px is, unity or bakery (lightmap_footprint)."""
+    lightmapper: whose footprint lightmap_px is, unity or bakery (lightmap_footprint). families: the spec's, for which
+    two-number Sizes are floors (floor: true): their Size is X by Y, and Z is thickness or relief (a terrain chunk's
+    pivot sits at its datum, with ground above and below it)."""
     lightmapper = lightmapper_name(lightmapper)
     m = NAME_RE.match(coll.name)
     if isinstance(lightmap_scale, dict):
@@ -632,6 +659,12 @@ def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=
             faces += f
     rep["lod0_tris"] = sum(rep["objects"][o.name]["tris"] for o in lod0)
     pairs = coplanar_overlaps(faces)
+    # a face and its own back (the same corners, facing the other way) is a double-sided card under a single-sided
+    # shader: culled, the two never draw together, so they cannot z-fight (foliage-and-alpha's cards)
+    by = {f[0]: f for f in faces}
+    backs = [(a, b) for a, b in pairs if by[a][1].dot(by[b][1]) < -0.99 and _same_corners(by[a][2], by[b][2])]
+    pairs = [q for q in pairs if q not in set(backs)]
+    rep["double_sided_faces"] = len(backs)
     rep["coplanar_overlaps"] = len(pairs)
     rep["coplanar_overlap_examples"] = ["%s / %s" % p for p in pairs[:5]]
     rep["bad_materials"] = sorted({n for st in rep["objects"].values() for n in st["materials"]
@@ -643,9 +676,13 @@ def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=
         rep["extent_modules"] = [round(e, 3) for e in ext]
         if m and m.group(2) != "Free":
             want = [int(t) for t in m.group(2).split("x")]
-            grid = [e for e in ext if e >= 1.0 - 0.01]     # an axis under one module is thickness: not in Size
+            if _floor_like(m.group(1), len(want), families):
+                grid = ext[:2]                              # X by Y; Z is a slab's thickness or a terrain's relief
+                rep["pivot_ok"] = all(abs(v) <= 0.01 for v in lo[:2]) and (ext[2] >= 1.0 - 0.01 or abs(lo[2]) <= 0.01)
+            else:
+                grid = [e for e in ext if e >= 1.0 - 0.01]     # an axis under one module is thickness: not in Size
+                rep["pivot_ok"] = all(abs(v) <= 0.01 for v in lo)
             rep["size_ok"] = [round(e) for e in grid] == want and all(abs(e - round(e)) <= 0.01 for e in grid)
-            rep["pivot_ok"] = all(abs(v) <= 0.01 for v in lo)
         else:
             rep["free_pivot"] = free_pivot(lo, hi)
     return rep
@@ -768,10 +805,150 @@ def _evaluated(colls):
         vl.update()
 
 
+def placement_overlaps(depsgraph, scene=None):
+    """Faces of two different placements that lie in one plane, overlap with area and face the same way: z-fighting
+    between placed pieces (an engaged capital flush with the wall it stands against), which no per-piece check sees.
+    End caps pressed together at a joint face opposite ways, are hidden, and are not counted; so are two faces both
+    pressed against one third placement's face (an engaged column's foot and the wall's on the floor slab) and faces
+    down at the lowest level of the layout (both on the ground). LOD0 render meshes of every collection instance in
+    the scene, in world space. Returns [[placement, placement, face pairs]]."""
+    scene = scene or bpy.context.scene
+    faces, normals = [], {}
+    for inst in depsgraph.object_instances:
+        ob, top = inst.object, inst.parent
+        if not inst.is_instance or top is None or ob.type != "MESH" or COL_RE.search(ob.name) or not _is_lod0(ob):
+            continue
+        me, mw = ob.data, inst.matrix_world.copy()
+        nm = mw.to_3x3().inverted().transposed()
+        for p in me.polygons:
+            label = (top.name, len(faces))
+            n = (nm @ p.normal).normalized()
+            normals[label] = n
+            faces.append((label, n, [mw @ me.vertices[v].co for v in p.vertices]))
+    pairs = coplanar_overlaps(faces)
+    pressed = {}                                   # face: placements whose opposite-facing face lies on it
+    for a, b in pairs:
+        if a[0] != b[0] and normals[a].dot(normals[b]) < 0:
+            pressed.setdefault(a, set()).add(b[0])
+            pressed.setdefault(b, set()).add(a[0])
+    ground = min((min(p.z for p in pts) for _l, _n, pts in faces), default=0.0)
+    lowest = {f[0]: min(p.z for p in f[2]) for f in faces}
+    counts = {}
+    for a, b in pairs:
+        if a[0] == b[0] or normals[a].dot(normals[b]) <= 0:
+            continue
+        if (pressed.get(a, set()) & pressed.get(b, set())) - {a[0], b[0]}:
+            continue                               # both against one third placement's face: hidden
+        if normals[a].z < -0.99 and abs(lowest[a] - ground) < GRID_TOL_M and abs(lowest[b] - ground) < GRID_TOL_M:
+            continue                               # feet on the ground
+        key = tuple(sorted((a[0], b[0])))
+        counts[key] = counts.get(key, 0) + 1
+    return [[a, b, n] for (a, b), n in sorted(counts.items())]
+
+
+def tile_phase(pos, rot_z, tile_m, px_per_m, module=1.0, k=0, horizontal=False, turn_symmetry=360.0):
+    """How far one placement of a tiling family's piece sits off the world tile grid, in texels (tile_project puts
+    phase 0 at each piece's pivot). A wall: along its own +X, (s - k x module) mod tile with s the pivot's distance
+    along that axis (k: its phase variant, 0 for a plain piece), and up, z mod tile (measure() then judges up only
+    against the walls it touches). A floor or ceiling (horizontal): its pattern's origin, the pivot less its variant's
+    offset (k = kx + n x ky, n the tile in modules, along its own +X and +Y), x and y mod tile, and its turn about Z
+    (its pattern turns with it) modulo the texture's own turn symmetry. {"u_px", "v_px", "turn_deg"}."""
+    off = lambda v: round(min(v % tile_m, tile_m - v % tile_m) * px_per_m, 2)
+    a = math.radians(rot_z)
+    c, s_ = math.cos(a), math.sin(a)
+    if horizontal:
+        n = max(1, int(round(tile_m / module)))
+        kx, ky = (k % n) * module, (k // n) * module
+        r = rot_z % turn_symmetry
+        return {"u_px": off(pos[0] - kx * c + ky * s_), "v_px": off(pos[1] - kx * s_ - ky * c),
+                "turn_deg": round(min(r, turn_symmetry - r), 3)}
+    s = c * pos[0] + s_ * pos[1]
+    return {"u_px": off(s - k * module), "v_px": off(pos[2]), "turn_deg": 0.0}
+
+
+def _tiling(families, name, module, extents=None):
+    """(tile m, px per m, variant k, horizontal, turn symmetry) for a grid piece of a tiling family whose tile_phase
+    is grid or variants (families: the spec's), else None. horizontal: measured extents thin in Z and a module or more
+    in X and Y (a kerb or a step's nosing runs along X like a wall), or else a floor-like two-number Size."""
+    m = NAME_RE.match(name)
+    fam = (families or {}).get(m.group(1)) if m else None
+    if not isinstance(fam, dict) or fam.get("texturing") != "tiling":
+        return None
+    td, mp, phase = fam.get("texel_density"), fam.get("map_px"), fam.get("tile_phase", "grid")
+    if phase not in ("grid", "variants") or not (td and mp):
+        return None
+    var = PHASE_VARIANT_RE.search(name) if phase == "variants" else None
+    if extents:
+        horizontal = (extents[2] < min(extents[0], extents[1]) and extents[2] < module
+                      and min(extents[0], extents[1]) >= module * 0.99)
+    else:
+        horizontal = _floor_like(m.group(1), m.group(2).count("x") + 1, families)
+    return (float(mp) / float(td), float(td), int(var.group(1)) if var else 0, horizontal,
+            float(fam.get("turn_symmetry", 360)))
+
+
+def _place_box(pl, bounds, module, families=None):
+    """World [lo, hi] of a grid placement: its piece's measured local bounds (a piece in this file), else its Size token
+    (zero thickness), mirrored, turned about Z and moved to its position; None when neither is known."""
+    b = bounds.get(pl["asset"])
+    if b is None:
+        m = NAME_RE.match(pl["asset"])
+        if not m or m.group(2) == "Free":
+            return None
+        nums = [int(v) * module for v in m.group(2).split("x")]
+        if len(nums) == 3:
+            ext = nums
+        elif len(nums) == 2:
+            ext = [nums[0], nums[1], 0.0] if _floor_like(m.group(1), 2, families) else [nums[0], 0.0, nums[1]]
+        else:
+            return None
+        b = [0.0, 0.0, 0.0] + ext
+    a = math.radians(pl["rot_z"])
+    c, s = math.cos(a), math.sin(a)
+    mx = -1.0 if pl.get("mirrored") else 1.0
+    pts = [(pl["pos"][0] + c * mx * x - s * y, pl["pos"][1] + s * mx * x + c * y, pl["pos"][2] + z)
+           for x in (b[0], b[3]) for y in (b[1], b[4]) for z in (b[2], b[5])]
+    return [min(q[k] for q in pts) for k in range(3)], [max(q[k] for q in pts) for k in range(3)]
+
+
+def wall_contacts(places, bounds, module, families=None, tol=CONTACT_TOL_M):
+    """Judge a tiling wall's courses (its V phase) against the walls of its family it touches, not against world z: a
+    raised stage or a mezzanine whose walls meet only each other starts its courses at its own floor. Each wall's
+    tile_phase gets v_abs_px (z mod tile, as placed), v_px (the largest offset against a wall whose box touches its
+    own, 0 when it touches none) and v_against (the walls it is off against). In place."""
+    walls = [(i, _place_box(p, bounds, module, families)) for i, p in enumerate(places)
+             if p.get("tile_phase") and not p["tile_phase"]["horizontal"]]
+    walls = [(i, box) for i, box in walls if box]
+    for i, _box in walls:
+        tp = places[i]["tile_phase"]
+        tp["v_abs_px"], tp["v_px"], tp["v_against"] = tp["v_px"], 0.0, []
+    for x in range(len(walls)):
+        i, (lo_i, hi_i) = walls[x]
+        ti = places[i]["tile_phase"]
+        fam_i = NAME_RE.match(places[i]["asset"]).group(1)
+        for y in range(x + 1, len(walls)):
+            j, (lo_j, hi_j) = walls[y]
+            tj = places[j]["tile_phase"]
+            if NAME_RE.match(places[j]["asset"]).group(1) != fam_i or abs(ti["tile_m"] - tj["tile_m"]) > 1e-6:
+                continue
+            if any(lo_i[k] > hi_j[k] + tol or lo_j[k] > hi_i[k] + tol for k in range(3)):
+                continue
+            dz = (places[i]["pos"][2] - places[j]["pos"][2]) % ti["tile_m"]
+            d = round(min(dz, ti["tile_m"] - dz) * ti["px_per_m"], 2)
+            for a, b in ((i, j), (j, i)):
+                tp = places[a]["tile_phase"]
+                tp["v_px"] = max(tp["v_px"], d)
+                if d > TILE_PHASE_TEXELS:
+                    tp["v_against"].append(places[b]["object"])
+
+
 def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_scale=1.0, sub_module=None,
-            texel_map=None, lightmapper="unity"):
+            texel_map=None, lightmapper="unity", families=None):
     """Everything qa_measure reports about the open file. sub_module: the grid step for TRIM placements. lightmapper:
-    the spec's lighting.baker, unity ("progressive") or bakery, whose footprint lightmap_px is."""
+    the spec's lighting.baker, unity ("progressive") or bakery, whose footprint lightmap_px is. families: the spec's
+    families ({code: {texturing, map_px, texel_density, tile_phase, turn_symmetry, scale_range}}): each placement of a
+    tiling family's piece gets its tile_phase against the world grid (U7), and a Free piece its family's scale_range
+    (default FREE_SCALE_BAND) as the even scale it may take."""
     lightmapper = lightmapper_name(lightmapper)
     scene = scene or bpy.context.scene
     role = role or file_role(bpy.data.filepath)
@@ -779,7 +956,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
     local_pieces = [c for c in local if NAME_RE.match(c.name)]
     with _evaluated(local_pieces):            # pieces excluded or disabled in the outliner, measured as they export
         dg = bpy.context.evaluated_depsgraph_get()
-        pieces = [measure_piece(c, module, dg, lightmap_texels, lightmap_scale, texel_map, lightmapper)
+        pieces = [measure_piece(c, module, dg, lightmap_texels, lightmap_scale, texel_map, lightmapper, families)
                   for c in sorted(local_pieces, key=lambda c: c.name)]
     dg = bpy.context.evaluated_depsgraph_get()
     linked_names = {c.name for c in bpy.data.collections if c.library is not None}
@@ -787,7 +964,11 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
     for ob in scene.objects:
         if ob.instance_type == "COLLECTION" and ob.instance_collection is not None:
             coll = ob.instance_collection
-            loc, rot, scale = ob.matrix_world.decompose()
+            mw = ob.matrix_world
+            mirrored = mw.to_3x3().determinant() < 0
+            if mirrored:                          # read it as the unmirrored placement, mirrored in its own X
+                mw = mw @ Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0))
+            loc, rot, scale = mw.decompose()
             rm = rot.to_matrix()
             x_axis, z_axis = rm @ Vector((1, 0, 0)), rm @ Vector((0, 0, 1))
             rz = math.degrees(math.atan2(x_axis.y, x_axis.x))
@@ -796,17 +977,27 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                     else "free" if m else "other")
             step = sub_module if (sub_module and m and m.group(1) == TRIM_FAMILY) else module
             r90 = (rz + 360.0) % 90.0
+            ext = next((p.get("extent_modules") for p in pieces if p["piece"] == coll.name), None)
+            tl = (_tiling(families, coll.name, module, [e * module for e in ext] if ext else None)
+                  if kind == "grid" else None)
+            fam = (families or {}).get(m.group(1)) if m else None
+            band = fam.get("scale_range") if isinstance(fam, dict) else None
             places.append({
                 "object": ob.name, "asset": coll.name, "kind": kind, "linked": coll.library is not None,
                 "id": ob.get("placement_id"), "pos": [round(v, 4) for v in loc], "rot_z": round(rz, 3),
-                "rot_xy_ok": z_axis.z > 1.0 - 1e-6,
+                "rot_xy_ok": z_axis.z > 1.0 - 1e-6, "mirrored": mirrored,
                 "scale_ok": all(abs(s - 1.0) < EPS for s in scale),
+                "scale": [round(s, 4) for s in scale],
                 # X and Y only, heights are checked against the spec. Grid pieces must be on the grid at 90 deg
                 # steps; for assemblies the two values are data only (A3 compares them with the spec instead).
-                "on_grid": (all(abs(v / step - round(v / step)) < 1e-3 for v in loc[:2])
+                "on_grid": (all(abs(v - round(v / step) * step) < GRID_TOL_M for v in loc[:2])
                             if kind in ("grid", "asm") else None),
                 "right_angle": (min(r90, 90.0 - r90) < 1e-2 if kind in ("grid", "asm") else None),
+                "tile_phase": (dict(tile_phase(loc, (rz + 360.0) % 360.0, tl[0], tl[1], module, tl[2], tl[3], tl[4]),
+                                    tile_m=round(tl[0], 4), px_per_m=tl[1], horizontal=tl[3]) if tl else None),
+                "scale_band": (list(band) if band else list(FREE_SCALE_BAND)) if kind in ("free", "asm") else None,
             })
+    wall_contacts(places, {p["piece"]: p["bounds_m"] for p in pieces if p.get("bounds_m")}, module, families)
     single = scene.get("kit_layout") == "single"
     owner, layout_problems = _single_layout(scene, local, local_pieces) if single else ({}, [])
     for p in places:
@@ -837,6 +1028,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                           for c in sorted(bpy.data.collections, key=lambda c: c.name)
                           if c.library is not None and NAME_RE.match(c.name)],
         "placements": places,
+        "placement_overlaps": placement_overlaps(dg, scene) if places else [],
         # a kit-named local collection that is also placed here is a copy, not a link (in a single MASTER, the norm)
         "appended": sorted(n for n in used_locally if NAME_RE.match(n) or ASM_RE.match(n)),
         "shadowing_linked": sorted(c.name for c in local if (NAME_RE.match(c.name) or ASM_RE.match(c.name))
@@ -962,11 +1154,12 @@ def _pbr_module():
         sys.dont_write_bytecode = keep
 
 
-def pbr(paths, map_px=None, targets=None):
+def pbr(paths, map_px=None, targets=None, tiling=False):
     """X8: the PBR value checks of texture maps paired by name (T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness,
     _Normal), one dict per material with its stats, "problems" (blocking) and "notes" (advisory). targets: the spec's
-    look.materials, {material: {albedo_srgb, roughness, metal}}."""
-    return _pbr_module().check_files(paths, map_px=map_px, targets=targets)
+    look.materials, {material: {albedo_srgb, roughness, metal}}. tiling (X4): True judges the maps as tiling (a seam
+    along part of an edge, tile-scale variation that draws a grid), "x" as a trim sheet (along U only)."""
+    return _pbr_module().check_files(paths, map_px=map_px, targets=targets, tiling=tiling)
 
 
 def compare_placements(rep, prev):
@@ -1025,11 +1218,18 @@ def notes(rep, pieces=None, probe_lit=None):
       its empty space costs lightmap texels (U6). Below that the footprint note and the probe-lit advice govern, and
       small LODs would only make noise; a mesh under Bakery's effective-density gate gets a PROBLEM line instead."""
     bakery = rep.get("lightmapper") == "bakery"
-    out = []
+    out = ["placement %s (%s) is mirrored (negative scale): Unity keeps it, and a symmetric piece (a door hung the "
+           "other way) reads right; text, logos and one-sided wear read backwards, and the spec records turns only, so "
+           "record mirror: true on its placement in the spec" % (pl["object"], pl["asset"])
+           for pl in rep.get("placements", []) if pl.get("mirrored") and not pl.get("tile_phase")]
     for p in rep.get("pieces", []):
         n = p["piece"]
         if pieces is not None and not any(fnmatch.fnmatchcase(n, g) for g in pieces):
             continue
+        if p.get("double_sided_faces"):
+            out.append("%s: %d faces doubled back to back (a double-sided card for a single-sided shader): right "
+                       "while its material culls back faces; on a two-sided shader drop the backs" %
+                       (n, p["double_sided_faces"]))
         if any(fnmatch.fnmatchcase(n, g) for g in probe_lit or []):
             continue
         m = NAME_RE.match(n)
@@ -1194,16 +1394,50 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("linked piece %s: instance_offset %s in its KIT file, so every placement of it is drawn that "
                        "far off" % (lp["piece"], lp["instance_offset"]))
     for pl in rep["placements"]:
+        sc = [abs(s) for s in pl.get("scale") or [1.0, 1.0, 1.0]]     # a mirror decomposes to negative scales
+        if max(sc) > min(sc) * (1.0 + 1e-3):
+            out.append("placement %s (%s) scaled unevenly %s: its texture stretches; scale it evenly or remodel it"
+                       % (pl["object"], pl["asset"], pl["scale"]))
+        if pl.get("kind") in ("free", "asm") and max(sc) <= min(sc) * (1.0 + 1e-3):
+            lo, hi = pl.get("scale_band") or FREE_SCALE_BAND
+            if not lo - 1e-6 <= sc[0] <= hi + 1e-6:
+                out.append("placement %s (%s) scaled %g: its texels per metre are %.2fx the kit's (keep %g-%g, or "
+                           "the family's scale_range): model it at that size, or texture it for it"
+                           % (pl["object"], pl["asset"], sc[0], 1.0 / sc[0], lo, hi))
         if pl.get("kind") != "grid":
             continue                          # Free props and assemblies: data only, compared with the spec (A3)
+        tp = pl.get("tile_phase")
+        if tp and tp["horizontal"] and max(tp["u_px"], tp["v_px"]) > TILE_PHASE_TEXELS:
+            out.append("placement %s (%s) sits %.1f px along X and %.1f px along Y off its family's %g m tile grid: "
+                       "its pattern jumps against its neighbours (a phase variant _P<k>: k = kx + n x ky, n the tile "
+                       "in modules)" % (pl["object"], pl["asset"], tp["u_px"], tp["v_px"], tp["tile_m"]))
+        if tp and not tp["horizontal"] and tp["u_px"] > TILE_PHASE_TEXELS:
+            out.append("placement %s (%s) sits %.1f px along it off its family's %g m tile grid: its pattern jumps "
+                       "against its neighbours" % (pl["object"], pl["asset"], tp["u_px"], tp["tile_m"]))
+        if tp and not tp["horizontal"] and tp["v_px"] > TILE_PHASE_TEXELS:
+            out.append("placement %s (%s) has its courses %.1f px off the walls of its family it meets (%s): its base "
+                       "is not a whole number of %g m tiles from theirs" % (
+                           pl["object"], pl["asset"], tp["v_px"], ", ".join(tp.get("v_against", [])[:3]),
+                           tp["tile_m"]))
+        if tp and tp["turn_deg"] > 1e-3:
+            out.append("placement %s (%s) turned %g deg: a tiling floor or ceiling turns its pattern with it; place "
+                       "it unturned (or give the family turn_symmetry when the texture looks the same turned)"
+                       % (pl["object"], pl["asset"], tp["turn_deg"]))
         if pl["on_grid"] is False:
             out.append("placement %s (%s) off grid at %s" % (pl["object"], pl["asset"], pl["pos"][:2]))
         if pl["right_angle"] is False:
             out.append("placement %s (%s) rotated %s deg" % (pl["object"], pl["asset"], pl["rot_z"]))
+        if pl.get("mirrored") and tp:
+            out.append("placement %s (%s) mirrored (negative scale): its tiling pattern runs backwards against its "
+                       "neighbours; place it unmirrored, or model the mirrored piece as its own variant"
+                       % (pl["object"], pl["asset"]))
         if not pl["rot_xy_ok"]:
             out.append("placement %s (%s) tilted: rotated about X or Y" % (pl["object"], pl["asset"]))
         if not pl["scale_ok"]:
             out.append("placement %s (%s) scaled: grid pieces are placed at scale 1" % (pl["object"], pl["asset"]))
+    out += ["placements %s and %s have %d face pair(s) in one plane facing the same way: they z-fight; set one back "
+            "(an engaged capital or base stands proud of the wall face or is let into it) or remove the hidden face"
+            % (a, b, k) for a, b, k in rep.get("placement_overlaps", [])]
     out += ["%s is placed from a local copy (appended), not linked" % n for n in rep["appended"]]
     out += ["local collection %s shadows a linked one of the same name" % n for n in rep["shadowing_linked"]]
     if role != "fbx":                        # a Path Mode Strip export carries no textures: data only there
@@ -1263,12 +1497,13 @@ def render_hidden(lod=0, show_collision=False, hide_objects=(), isolate=None, hi
 
 
 def render_ortho(path, view, center, extent, px_per_m=20.0, distance=200.0, clip=None, color="random", light="studio",
-                 wire=None):
+                 wire=None, cull=None, two_sided=()):
     """Orthographic Workbench render of everything visible. view: top/front/back/right/left ("front" looks along +Y,
     so it shows a facade facing south). extent: (width, height) in metres of the framed area. clip: if given, only
     geometry from `clip` metres in front of the centre plane onward is drawn (an interior wall seen from inside the
-    room, without the opposite wall in the way). wire: edge thickness in metres for a wireframe render. Restores the
-    scene."""
+    room, without the opposite wall in the way). wire: edge thickness in metres for a wireframe render. cull: back
+    faces hidden (default; a section, with clip, shows them: it looks inside the cut). Restores the scene."""
+    cull = clip is None if cull is None else cull
     fwd, up = (Vector(v) for v in VIEWS[view])
     c = Vector((list(center) + [0, 0, 0])[:3])
     cam_data = bpy.data.cameras.new("qa_cam")
@@ -1280,10 +1515,12 @@ def render_ortho(path, view, center, extent, px_per_m=20.0, distance=200.0, clip
     right = fwd.cross(up)
     matrix = Matrix.Translation(c - fwd * distance) @ Matrix((right, up, -fwd)).transposed().to_4x4()
     return _render(path, cam_data, matrix, (max(16, int(round(extent[0] * px_per_m))),
-                                            max(16, int(round(extent[1] * px_per_m)))), color, light, wire)
+                                            max(16, int(round(extent[1] * px_per_m)))), color, light, wire, cull,
+                   two_sided)
 
 
-def render_view(path, pos, target, lens=24.0, size=(1280, 720), color="random", light="studio", wire=None):
+def render_view(path, pos, target, lens=24.0, size=(1280, 720), color="random", light="studio", wire=None,
+                cull=True, two_sided=()):
     """Perspective Workbench render from a spec view: camera at `pos` looking at `target` (world metres), focal length
     `lens` mm, 36 mm sensor fitted to the width. Use the spec's `views` so the comparison is never framed after seeing
     the result. Restores the scene."""
@@ -1292,7 +1529,7 @@ def render_view(path, pos, target, lens=24.0, size=(1280, 720), color="random", 
     cam_data.clip_start = 0.05
     direction = Vector(target) - Vector(pos)
     rot = direction.to_track_quat("-Z", "Y").to_matrix().to_4x4()
-    return _render(path, cam_data, Matrix.Translation(Vector(pos)) @ rot, size, color, light, wire)
+    return _render(path, cam_data, Matrix.Translation(Vector(pos)) @ rot, size, color, light, wire, cull, two_sided)
 
 
 def _set(obj, attr, value, saved, quiet=False):
@@ -1377,14 +1614,18 @@ def _lookdev_rig(scene, matrix, saved):
     return sun, sun_data, world
 
 
-def _render(path, cam_data, matrix, size, color="random", light="studio", wire=None):
+def _render(path, cam_data, matrix, size, color="random", light="studio", wire=None, cull=True, two_sided=()):
     """Workbench render to a PNG. random: each object its own colour with cavity and outlines, so pieces, openings
     and seams read (the default flat grey hides every edge between same-coloured faces). texture: each mesh's image
     textures through the UV layer _set_render_uv makes active (Workbench samples the ACTIVE layer), for judging
     materials; flat light shows albedo as stored, studio a
     neutral light. wire: light surfaces with near-black edges (object colours). light lookdev instead renders through
-    EEVEE with each material's own nodes under _lookdev_rig (color and wire do not apply). Standard view transform,
-    exposure 0, 8-bit PNG. Restores the scene."""
+    EEVEE with each material's own nodes under _lookdev_rig (color and wire do not apply). cull: back faces hidden,
+    as the engine's stock shaders hide them, so a single-sided piece wound inside out is missing here as it will be in
+    the game (Workbench: the scene setting; lookdev: each editable material's, linked ones are reported). two_sided:
+    material name patterns drawn from both sides under lookdev (foliage cards, cloth, glass on a two-sided shader;
+    Workbench culls or draws every material alike). Standard view transform, exposure 0, 8-bit PNG. Restores the
+    scene."""
     scene = bpy.context.scene
     cam = bpy.data.objects.new("qa_cam", cam_data)
     scene.collection.objects.link(cam)
@@ -1397,7 +1638,15 @@ def _render(path, cam_data, matrix, size, color="random", light="studio", wire=N
         _set(scene, "camera", cam, saved)
         if light == "lookdev":
             rig = _lookdev_rig(scene, matrix, saved)
+            refused = [m.name for m in bpy.data.materials
+                       if cull and not _set(m, "use_backface_culling",
+                                            not any(fnmatch.fnmatchcase(m.name, g) for g in two_sided), saved,
+                                            quiet=True)]
+            if refused:
+                print("[qa] back faces still drawn for %d material(s) Blender will not change here (%s)"
+                      % (len(refused), ", ".join(refused[:5])))
         else:
+            _set(shading, "show_backface_culling", bool(cull), saved)
             _set(scene.render, "engine", "BLENDER_WORKBENCH", saved)
             _set(shading, "color_type", "OBJECT" if wire else COLORS[color], saved)
             _set(shading, "light", LIGHTS[light], saved)
@@ -1543,6 +1792,9 @@ def _args(argv):
     ap.add_argument("--lightmapper", default="unity", choices=("unity", "progressive", "bakery"), help="the spec's "
                     "lighting.baker: whose footprint --lightmap-texels uses (progressive is unity); bakery also gates "
                     "each mesh's effective texels per metre (default unity)")
+    ap.add_argument("--families", type=json.loads, metavar="JSON", help="the spec's families as JSON: every "
+                    "placement of a tiling family's piece is checked against the world tile grid (U7), a floor: true "
+                    "family's two-number Sizes read as floors (X by Y, relief free), scale_range bounds Free scales")
     ap.add_argument("--texel-map", type=int, metavar="PX", help="the family's map_px: report each mesh's UV0 texel "
                     "density in px/m")
     ap.add_argument("--import-fbx", nargs="+", metavar="FBX", help="import these FBX files first (E2-E4), each "
@@ -1566,6 +1818,11 @@ def _args(argv):
                     "material's own nodes (roughness, metallic and normal maps), a grey world and one key light")
     ap.add_argument("--wire", nargs="?", type=float, const=-1.0, metavar="M", help="wireframe render: light surfaces, "
                     "near-black edges M metres thick (default about 1.5 px)")
+    ap.add_argument("--no-cull", action="store_true", help="draw back faces too (renders cull them by default, as "
+                    "the engine's stock shaders do, so an inside-out single-sided piece shows as missing; a --clip "
+                    "section always draws them)")
+    ap.add_argument("--two-sided", default="", metavar="GLOBS", help="comma-separated material name patterns drawn "
+                    "from both sides under --light lookdev, as their two-sided shader does in the engine (\"M_FOL_*\")")
     ap.add_argument("--lod", type=int, default=0, help="render this LOD; the others are hidden (default 0)")
     ap.add_argument("--show-collision", action="store_true", help="render *_COL shells (hidden by default)")
     ap.add_argument("--hide-object", nargs="+", default=[], metavar="GLOB", help="hide objects whose names match")
@@ -1582,6 +1839,9 @@ def _args(argv):
                     "T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness and _Normal; globs are expanded here")
     ap.add_argument("--map-px", type=int, metavar="PX", help="with --pbr: the family's map_px, the same number as "
                     "--texel-map (a larger map is a PROBLEM)")
+    ap.add_argument("--pbr-tiling", action="store_true", help="with --pbr: judge the maps as tiling (X4): a seam "
+                    "along part of a wrap edge, tile-scale variation that draws a grid")
+    ap.add_argument("--pbr-trim", action="store_true", help="with --pbr: a trim sheet, judged along U only (X4)")
     ap.add_argument("--pbr-targets", metavar="JSON", help="with --pbr: the spec's look.materials as JSON, e.g. "
                     '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "roughness": [0.6, 0.95], "metal": false}}')
     ap.add_argument("--gain", type=float, help="with --image-stats or a render: also save a copy brightened this "
@@ -1617,8 +1877,8 @@ def _args(argv):
     a.tile_seam = _expand(ap, "--tile-seam", a.tile_seam)
     a.image_stats = _expand(ap, "--image-stats", a.image_stats)
     a.pbr = _expand(ap, "--pbr", a.pbr)
-    if (a.map_px or a.pbr_targets) and not a.pbr:
-        ap.error("--map-px and --pbr-targets work with --pbr only")
+    if (a.map_px or a.pbr_targets or a.pbr_tiling or a.pbr_trim) and not a.pbr:
+        ap.error("--map-px, --pbr-targets, --pbr-tiling and --pbr-trim work with --pbr only")
     if a.pbr_targets:
         try:
             a.pbr_targets = json.loads(a.pbr_targets)
@@ -1667,7 +1927,7 @@ def _main():
     if bpy.data.filepath or a.import_fbx:
         rep = measure(a.module, role=a.role or ("fbx" if a.import_fbx else None), lightmap_texels=a.lightmap_texels,
                       lightmap_scale=a.lightmap_scale, sub_module=a.sub_module, texel_map=a.texel_map,
-                      lightmapper=a.lightmapper)
+                      lightmapper=a.lightmapper, families=a.families)
         if folded:
             rep["fbx_folded_materials"] = [{"copy": c, "base": b} for c, b in folded]
         if a.compare_placements:
@@ -1706,7 +1966,7 @@ def _main():
             print("[qa] pixels %s: %s%s" % (os.path.basename(s["image"]), _stats_text(s),
                                             ("; brightened copy " + s["gain_copy"]) if s.get("gain_copy") else ""))
     if a.pbr:
-        rep["pbr"] = pbr(a.pbr, a.map_px, a.pbr_targets)
+        rep["pbr"] = pbr(a.pbr, a.map_px, a.pbr_targets, "x" if a.pbr_trim else a.pbr_tiling)
         for r in rep["pbr"]:
             name = r["material"] or r["key"]
             bc, ms, nm = r.get("base_color") or {}, r.get("metallic_smoothness") or {}, r.get("normal") or {}
@@ -1745,15 +2005,17 @@ def _main():
                     print("[qa] cannot hide %s: %s" % (ob.name, exc))
     try:
         wire = None
+        two_sided = [g.strip() for g in a.two_sided.split(",") if g.strip()]
         if a.wire is not None:
             wire = a.wire if a.wire > 0 else (1.5 / a.px_per_m if a.render else
                                               0.0025 * (Vector(a.view[3:6]) - Vector(a.view[0:3])).length)
         try:
             if a.view:
-                render_view(a.png, a.view[0:3], a.view[3:6], a.view[6], color=a.color, light=a.light, wire=wire)
+                render_view(a.png, a.view[0:3], a.view[3:6], a.view[6], color=a.color, light=a.light, wire=wire,
+                            cull=not a.no_cull, two_sided=two_sided)
             elif a.render:
                 render_ortho(a.png, a.render, a.center, a.extent, a.px_per_m, clip=a.clip, color=a.color,
-                             light=a.light, wire=wire)
+                             light=a.light, wire=wire, cull=not a.no_cull and a.clip is None, two_sided=two_sided)
         except RuntimeError as exc:                  # no EEVEE for --light lookdev
             sys.exit("[qa] %s" % exc)
         if a.view or a.render:

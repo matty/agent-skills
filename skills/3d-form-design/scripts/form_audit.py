@@ -17,7 +17,10 @@ triangulating, and export OBJs with quads kept.
 What it measures (references/form-audit.md has the reasoning and the thresholds):
 - bevel sections: chains of narrow quads (aspect >= 2.5) that turn between two flatter faces, each step under 75 deg.
   Width = the chain's summed width; flat = how far the flanking flat region reaches from the bevel. ratio = width /
-  flat. Tiers group widths within 1.3x of each other.
+  flat. Tiers group widths within 1.3x of each other. kind: "bevel" (judged), "round" (the chain turns 150 deg or
+  more: a profile such as an arch, a bullnose or a hinge knuckle), "marked" (a face of it in rounds=, in Blender the
+  boolean face attribute form_round: a round the design calls for) or "sliver" (a flank under 0.1 mm wide: a mesh
+  defect for the topology audit, nothing to measure against). Only bevels are judged and tiered.
 - parts: loose parts (vertex-connected). Per part: bounding box, volume fill of the box (closed parts only), the share
   of its area facing an axis, and whether its box gaps every other part by more than the contact tolerance.
 - silhouettes: front, side, top and three-quarter projections rasterised to a grid; rectangularity = filled / box,
@@ -44,6 +47,9 @@ BOX_FILL = 0.9
 BOX_AXIS = 0.85
 SIZE_SPREAD = 4.0           # parts differing this much in size should not share one bevel width
 SIL_RECT = 0.95
+ROUND_TURN_DEG = 150.0      # a chain turning this far between its flanks is the part's profile, not an edge bevel
+SLIVER_M = 1e-4             # a flank narrower than this is a degenerate face, not a flat to measure against
+ROUND_ATTR = "form_round"   # Blender boolean face attribute marking designed rounds (audit_object reads it)
 
 
 # ---------------------------------------------------------------- vector helpers
@@ -234,9 +240,10 @@ def _parts(m):
 
 # ---------------------------------------------------------------- bevels
 
-def bevel_sections(verts, faces, _m=None):
-    """Every bevel cross-section: dict(width, length, flat, ratio, turn, faces, flanks, contact). Read the module
-    docstring for what counts as one."""
+def bevel_sections(verts, faces, _m=None, rounds=None):
+    """Every bevel cross-section: dict(width, length, flat, ratio, turn, faces, flanks, contact, kind). Read the module
+    docstring for what counts as one and for kind; rounds: face indices of designed rounds (kind "marked")."""
+    rounds = set(rounds or ())
     m = _m or _Mesh(verts, faces)
     strips = _strips(m)
     region = _flat_regions(m, strips)
@@ -276,10 +283,13 @@ def bevel_sections(verts, faces, _m=None):
                 contact = True
         width = sum(widths)
         flat = min(flats)
+        turn = _angle(m.n[flanks[0][0]], m.n[flanks[1][0]])
+        kind = ("marked" if rounds.intersection(chain) else "sliver" if flat < SLIVER_M
+                else "round" if turn >= ROUND_TURN_DEG else "bevel")
         out.append(dict(width=width, length=sum(lengths) / len(lengths), flat=flat,
                         ratio=(width / flat) if flat > 0 else float("inf"),
-                        turn=_angle(m.n[flanks[0][0]], m.n[flanks[1][0]]), faces=sorted(chain),
-                        flanks=[flanks[0][0], flanks[1][0]], contact=contact))
+                        turn=turn, faces=sorted(chain),
+                        flanks=[flanks[0][0], flanks[1][0]], contact=contact, kind=kind))
     return out
 
 
@@ -445,14 +455,16 @@ def silhouette(verts, faces, view="front", res=96):
 
 # ---------------------------------------------------------------- audit
 
-def audit(verts, faces, silhouettes=True):
-    """The full report for one mesh, verts in metres with Z up. See format_report() and problems()."""
+def audit(verts, faces, silhouettes=True, rounds=None):
+    """The full report for one mesh, verts in metres with Z up. See format_report() and problems(). rounds: face
+    indices of rounds the design calls for (a corner bumper, a moulded lip): reported, never judged as bevels."""
     m = _Mesh(verts, faces)
     if not m.f:
         raise ValueError("no faces")
     strips = _strips(m)
     region = _flat_regions(m, strips)
-    secs = bevel_sections(verts, faces, _m=m)
+    secs = bevel_sections(verts, faces, _m=m, rounds=rounds)
+    bev = [s for s in secs if s["kind"] == "bevel"]
     zmin = min(p[2] for p in m.v)
     parts = [_part_report(m, fs, zmin) for fs in _parts(m)]
     for i, p in enumerate(parts):
@@ -465,8 +477,10 @@ def audit(verts, faces, silhouettes=True):
     r = dict(
         faces=len(m.f), verts=len(m.v),
         bevels=secs,
-        bevel_tiers=tiers([(s["width"], s["length"]) for s in secs]),
-        bevel_length=sum(s["length"] for s in secs),
+        bevel_tiers=tiers([(s["width"], s["length"]) for s in bev]),
+        bevel_length=sum(s["length"] for s in bev),
+        rounds=sum(1 for s in secs if s["kind"] in ("round", "marked")),
+        sliver_sections=sum(1 for s in secs if s["kind"] == "sliver"),
         hard_edge_count=hc, hard_edge_length=hl,
         parts=parts,
         size_tiers=size_tiers([p["size"] for p in parts]),
@@ -482,7 +496,8 @@ def problems(r, ratio_warn=RATIO_WARN, ratio_fail=RATIO_FAIL, expect_sharp=True)
     """[(key, evidence)] for a report from audit(). Keys starting warn_ are judgement calls for the review renders;
     the rest should be fixed unless the reference really looks like that (say so in the report)."""
     out = []
-    secs = r["bevels"]
+    every = r["bevels"]
+    secs = [s for s in every if s.get("kind", "bevel") == "bevel"]
     over = [s for s in secs if s["ratio"] > ratio_fail]
     if over:
         worst = max(over, key=lambda s: s["ratio"])
@@ -492,7 +507,7 @@ def problems(r, ratio_warn=RATIO_WARN, ratio_fail=RATIO_FAIL, expect_sharp=True)
     if wide:
         out.append(("warn_wide_bevels", "%d bevel(s) between %.0f%% and %.0f%% of their flat" %
                     (len(wide), ratio_warn * 100, ratio_fail * 100)))
-    contact = [s for s in secs if s["contact"]]
+    contact = [s for s in every if s["contact"] and s.get("kind", "bevel") != "sliver"]
     if contact:
         out.append(("contact_bevelled", "%d bevel(s) on the bottom contact face: it sits on the floor, nobody sees "
                     "that edge, and it opens a dark gap under the piece" % len(contact)))
@@ -502,6 +517,10 @@ def problems(r, ratio_warn=RATIO_WARN, ratio_fail=RATIO_FAIL, expect_sharp=True)
         out.append(("one_bevel_width", "every bevel is %.1f-%.1f mm on parts from %.2f to %.2f m: small parts read "
                     "soft, big ones razor-edged" % (t["width_min"] * 1000, t["width_max"] * 1000, min(sizes),
                                                     max(sizes))))
+    slivers = [s for s in every if s.get("kind") == "sliver"]
+    if slivers:
+        out.append(("warn_sliver_flanks", "%d bevel(s) end on a face under %.1f mm wide (a Boolean or merge left "
+                    "slivers): fix the mesh (topology audit), then audit again" % (len(slivers), SLIVER_M * 1000)))
     if expect_sharp and secs and r["hard_edge_count"] == 0:
         out.append(("warn_every_edge_bevelled", "no hard edge left: check contact, joint, hidden and cut-sheet edges, "
                     "which stay sharp"))
@@ -528,13 +547,15 @@ def problems(r, ratio_warn=RATIO_WARN, ratio_fail=RATIO_FAIL, expect_sharp=True)
 def format_report(r):
     lines = ["faces %d, parts %d (size tiers %d), axis-facing area %.0f%%, box-like area %.0f%%" %
              (r["faces"], len(r["parts"]), r["size_tiers"], r["axis_share"] * 100, r["box_share"] * 100),
-             "bevels: %d sections, %.2f m; hard edges left: %d, %.2f m" %
-             (len(r["bevels"]), r["bevel_length"], r["hard_edge_count"], r["hard_edge_length"])]
+             "bevels: %d sections, %.2f m; hard edges left: %d, %.2f m; profile rounds %d, sliver flanks %d" %
+             (sum(1 for s in r["bevels"] if s.get("kind", "bevel") == "bevel"), r["bevel_length"],
+              r["hard_edge_count"], r["hard_edge_length"], r.get("rounds", 0), r.get("sliver_sections", 0))]
     for t in r["bevel_tiers"]:
         lines.append("  tier %.1f-%.1f mm: %d sections, %.2f m" %
                      (t["width_min"] * 1000, t["width_max"] * 1000, t["count"], t["length"]))
-    if r["bevels"]:
-        ratios = sorted(s["ratio"] for s in r["bevels"])
+    judged = [s for s in r["bevels"] if s.get("kind", "bevel") == "bevel"]
+    if judged:
+        ratios = sorted(s["ratio"] for s in judged)
         lines.append("  width / flat: median %.2f, max %.2f" % (ratios[len(ratios) // 2], ratios[-1]))
     for v, s in sorted(r.get("silhouettes", {}).items()):
         lines.append("silhouette %-13s rectangularity %.2f, solidity %.2f, aspect %.2f" %
@@ -580,6 +601,23 @@ def mesh_from_object(ob, evaluated=True):
     return verts, faces
 
 
+def round_faces(ob, evaluated=True):
+    """Indices of the faces marked as designed rounds (boolean face attribute form_round), on the same mesh
+    mesh_from_object reads: me.attributes.new("form_round", "BOOLEAN", "FACE"), then set it on the faces. A Bevel
+    modifier's faces inherit the mark from the faces they grow from, so marking a whole part (a corner bumper) marks
+    every round it carries. Needs bpy."""
+    import bpy  # noqa: F401  (only available inside Blender)
+    src = ob.evaluated_get(bpy.context.evaluated_depsgraph_get()) if evaluated else ob
+    me = src.to_mesh()
+    try:
+        a = me.attributes.get(ROUND_ATTR)
+        if a is None or a.domain != "FACE" or a.data_type != "BOOLEAN":
+            return set()
+        return {i for i, d in enumerate(a.data) if d.value}
+    finally:
+        src.to_mesh_clear()
+
+
 def bevel_modifier_notes(ob):
     """Settings on the object's enabled Bevel modifiers that cause the over-chamfered look (Blender only)."""
     notes = []
@@ -607,7 +645,8 @@ def bevel_modifier_notes(ob):
 def audit_object(ob, evaluated=True, silhouettes=True):
     """audit() of a Blender mesh object (modifiers and object scale applied), plus Bevel modifier notes under
     'modifier_notes'. Bevels are found on quads, so enabled Triangulate modifiers are switched off for the reading
-    and restored afterwards; nothing else is changed. An already triangulated mesh reports no bevels."""
+    and restored afterwards; nothing else is changed. An already triangulated mesh reports no bevels. Faces with the
+    boolean face attribute form_round set are designed rounds (kind "marked"), never judged as bevels."""
     import bpy
     tris = [md for md in ob.modifiers if md.type == "TRIANGULATE" and md.show_viewport]
     try:
@@ -615,11 +654,12 @@ def audit_object(ob, evaluated=True, silhouettes=True):
             md.show_viewport = False
         bpy.context.view_layer.update()
         verts, faces = mesh_from_object(ob, evaluated)
+        rounds = round_faces(ob, evaluated)
     finally:
         for md in tris:
             md.show_viewport = True
         bpy.context.view_layer.update()
-    r = audit(verts, faces, silhouettes)
+    r = audit(verts, faces, silhouettes, rounds=rounds)
     r["name"] = ob.name
     r["modifier_notes"] = bevel_modifier_notes(ob)
     return r

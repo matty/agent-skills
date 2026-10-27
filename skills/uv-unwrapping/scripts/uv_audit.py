@@ -12,6 +12,7 @@ plain Python with numpy and no bpy, which is how the repo's tests check it.
     ua.seams_from_hard_edges(objs)                                  # a seam on every hard edge
     ua.apply_stack(ob, keep_mirror=False)                           # just before layout: a Mirror kept live
     ua.layout(objs, map_px=2048, px_per_m=512, bake=True)           # UV0: density, one pack, fit check, +1 U copies
+    ua.tile_project(kit_pieces, tile_m=1.0, material="M_EXT_*")     # tiling: phase 0 at each pivot, joints continue
     ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
     ua.audit_selected(purpose="trim", map_px="2048x1024", px_per_m=512, rows=[(0, 128), (128, 192)],
                       material="M_Trim*")                           # one material of a mixed mesh
@@ -25,7 +26,7 @@ Command line (one line per object; exit code 1 when anything needs a look, 2 for
             --purpose unique|tiling|trim|lightmap --map 1024|2048x1024|165.2 [--layer 0|1|name|active]
             [--material "M_Trim*"] [--pad 16] [--td 512]
             [--baking] [--directional] [--text] [--rows 0-128,128-192] [--lightmap-texels 20 --lightmap-scale 1]
-            [--lightmapper unity|bakery] [--lod 1] [--shared] [--json r.json]
+            [--lightmapper unity|bakery] [--lod 1] [--shared] [--tile-m 1 --steps 1,3] [--json r.json]
 
 Purposes: unique (own texture or atlas: inside 0-1, no partial overlaps, gap map/64), tiling and trim (may run
 outside 0-1 and overlap: distortion, density per island, strip direction and rows), lightmap (inside 0-1, nothing
@@ -49,7 +50,16 @@ except ImportError:          # plain Python: measure() and the helpers work, the
 
 PURPOSES = ("unique", "tiling", "trim", "lightmap")
 # The gate. This skill owns these numbers; rizomuv-uv-pipeline and vrchat-world-qa state the same values.
-LIMITS = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "texel_cv": 0.15}
+LIMITS = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0,
+          "texel_cv": 0.15, "island_angular_p95": 1.25, "island_area_p95": 0.50}
+# The whole-object percentiles hide a small island: a label on 2.5% of a crate stretched 1.45x passed p95 and p99, and
+# one on 0.83% stretched 1.95x passed everything but a max that skips slivers. So every island holding at least this
+# share of the area must meet island_angular_p95 and island_area_p95 on its own: the texel band between islands
+# (0.8-1.25x) held inside one, so a dome cap at 1.16 or a bottle shoulder at area 0.22 passes and those labels fail;
+# the uv_text faces together keep angular_p95. area_max (log2, faces of a texel or more that are not slivers) catches a
+# patch at 2x or 1/2 its island's texel density, which slivers round it had absorbed (measured 5.2.2).
+MAX_MIN_PX2 = 1.0            # angular_max and area_max judge faces covering at least this many square texels
+ISLAND_MIN_SHARE = 0.005
 # Texel density against a target, as a factor: shared materials (tiling, trim) within 10%, unique and atlas textures
 # within 0.8-1.25x of their class; checked on the mean and on every island not marked low-density (a lightmap: the
 # mean only). Evenness inside a piece is texel_cv.
@@ -76,6 +86,10 @@ BAKERY_AREA_FACTOR = 2.0     # Bakery sizes a renderer by the sum of |cross| ove
 BAKERY_INSET_TEXELS = 3      # Bakery's Default atlas packer insets each rect this much (engine notes)
 EFFECTIVE_DENSITY_MIN = 0.5  # Bakery: an issue when the charts get under this share of the planned texels per metre
 UNWRAP_MARGIN = 0.001       # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
+TILE_PHASE_PX = 0.5          # tile_phase: a tiling face further than this many texels from tile_project's UVs (mod
+                             # whole tiles) breaks the pattern at a joint
+TILE_AXIS_TIE = 1e-4         # tile_uv: normal components this close to the largest count as a tie (a 45 deg chamfer),
+                             # broken Z, then X, then Y, so float32 and float64 normals pick the same plane
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
 UV_HALF_ERR_PX = 1.0         # the most a 16-bit (FP16) UV0 may be rounded, in texels of the map: Unity's default
                              # Vertex Compression stores UV0 as FP16 (engine notes), which rounds a UV of v to within
@@ -88,6 +102,16 @@ def half_error_px(v, map_px):
     return 0.0 if v < 2.0 ** -14 else float(map_px) * 2.0 ** (math.floor(math.log2(v)) - 11)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
+STRIP_ATTR = "uv_strip"      # boolean face attribute: tiling faces unwrapped as a strip along a curve (a tower ring, an
+                             # arch soffit, a stair rail), judged by their seams' continuity, not tile_project's phase
+CROSS_GRAIN_ATTR = "uv_cross_grain"   # boolean face attribute: faces cut across the grain (a beam's end and its end
+                             # chamfers, a board's end): their grain rightly runs across the island, not along it
+SEAM_CONTINUES_DEG = 30.0    # a UV seam between faces meeting at under this angle lies inside a continuing
+                             # surface: on a tiling layout it must open by whole tiles (a ring that closes, a strip
+                             # on whole tiles)
+STRIP_FOLD_DEG = 60.0        # a seam between two strip faces lies inside the strip up to this fold: a hexagon's or
+                             # an octagon's facets (60, 45 deg) continue one ring; a stair tread's riser meets its rim
+                             # at 79 deg, a corner
 TEXT_UP_ATTR = "uv_text_up"  # optional face vector: the 3D direction the letters' up points to (default world +Z)
 SEAM_ANGLE = 30.0            # seams_by_angle: an edge whose faces meet at more than this (deg), like Smooth by Angle
 # Modifier types that change topology. Before seams, apply_stack applies the stack from the top down to and including
@@ -302,7 +326,7 @@ def _subset(d, keep):
     out = dict(d)
     out.update(lv=d["lv"][loop_keep], ls=new_ls, lt=new_lt, uv=d["uv"][loop_keep], cn=d["cn"][loop_keep],
                tri=loop_map[d["tri"][tkeep]], tpoly=poly_map[d["tpoly"][tkeep]])
-    for k in ("low", "text", "text_up", "mat_index"):
+    for k in ("low", "text", "text_up", "strip", "cross", "mat_index"):
         if out.get(k) is not None and len(out[k]) == len(lt):
             out[k] = np.asarray(out[k])[keep]
     return out
@@ -362,6 +386,7 @@ def _arrays(ob, layer, evaluated=True, need_uv=True):
                 "tri": tri.reshape(-1, 3), "tpoly": tpoly, "layer": lname,
                 "layers": [l.name for l in me.uv_layers], "low": _low_faces(me, lname),
                 "text": _face_marks(me, TEXT_ATTR, lname), "text_up": _face_vectors(me, TEXT_UP_ATTR, mw[:3, :3]),
+                "strip": _face_marks(me, STRIP_ATTR, lname), "cross": _face_marks(me, CROSS_GRAIN_ATTR, lname),
                 "mat_index": mi, "mat_names": [s.material.name if s.material else "" for s in ob.material_slots]}
     finally:
         if evaluated:
@@ -377,8 +402,9 @@ def _next_loops(d):
     return loop, nxt
 
 
-def _edges(d):
-    """Pairs of polygons across each manifold edge, and whether the UVs and the normals are split there."""
+def _edges(d, corners=False):
+    """Pairs of polygons across each manifold edge, and whether the UVs and the normals are split there. corners:
+    also the four corners (side i at the edge's lower and higher vertex, then side j)."""
     ls, lt, lv = d["ls"], d["lt"], d["lv"]
     loop, nxt = _next_loops(d)
     poly = np.repeat(np.arange(len(ls)), lt)
@@ -399,6 +425,8 @@ def _edges(d):
     uv_split = (np.abs(uv[i_lo] - uv[j_lo]).max(1) > UV_EPS) | (np.abs(uv[i_hi] - uv[j_hi]).max(1) > UV_EPS)
     c = math.cos(math.radians(HARD_EDGE_DEG))
     hard = ((cn[i_lo] * cn[j_lo]).sum(1) < c) | ((cn[i_hi] * cn[j_hi]).sum(1) < c)
+    if corners:
+        return poly[i], poly[j], uv_split, hard, key[i], (i_lo, i_hi, j_lo, j_hi)
     return poly[i], poly[j], uv_split, hard, key[i]
 
 
@@ -568,6 +596,15 @@ def _tile_check(lo, hi):
     return home, off
 
 
+def _all_marked(marks, isl_poly, n_isl):
+    """Per island: every face carries the mark (False everywhere without marks)."""
+    if marks is None or len(marks) != len(isl_poly) or not n_isl:
+        return np.zeros(n_isl, bool)
+    m = np.asarray(marks, bool)
+    return (np.bincount(isl_poly, weights=(~m).astype(float), minlength=n_isl) == 0) & (
+        np.bincount(isl_poly, minlength=n_isl) > 0)
+
+
 def _orientation(d, isl_poly, n_isl, aspect):
     """Per island: elongated (the principal axes of its UV corners differ by ELONGATED or more), and whether its long
     axis runs closer to V than to U. For a directional texture (grain, trim strips) the long side runs along U."""
@@ -661,21 +698,69 @@ def _stacked(n, pa_px, pb_px):
     return n / small > 0.9 and abs(int(pa_px) - int(pb_px)) <= 0.1 * small
 
 
+def _shape_stacks(lo, hi, area, tol):
+    """Per island: the lowest island it lies exactly on (the same box within tol UV units and the same area), so
+    copies stacked three or more deep count as one stack: the raster keeps one island per pixel, and a triangulation
+    that orders each copy's triangles differently leaves each pair sharing only part of their pixels."""
+    alias = np.arange(len(lo))
+    for i in range(len(lo)):
+        if alias[i] != i or not np.isfinite(lo[i]).all():
+            continue
+        same = ((np.abs(lo - lo[i]).max(1) <= tol) & (np.abs(hi - hi[i]).max(1) <= tol)
+                & (np.abs(area - area[i]) <= 1e-3 * max(area[i], 1e-12)))
+        same[:i + 1] = False
+        alias[same & (alias == np.arange(len(lo)))] = i
+    return alias
+
+
+def gate(limits=None):
+    """The audit's limits with `limits` (a dict of some of them) merged over the defaults: LIMITS, island_min_share
+    (ISLAND_MIN_SHARE), tile_phase_px (TILE_PHASE_PX) and seam_continues_deg (SEAM_CONTINUES_DEG). float("inf")
+    switches a check off (island_min_share: inf leaves the per-island check out). A whole-object limit loosened past
+    its per-island twin (angular_p95, area_p95) loosens the twin with it unless the twin is given too. An unknown key
+    or a value that is not a number raises, so a typo cannot pass every piece. Every report records the overrides it
+    ran with."""
+    base = dict(LIMITS, island_min_share=ISLAND_MIN_SHARE, tile_phase_px=TILE_PHASE_PX,
+                seam_continues_deg=SEAM_CONTINUES_DEG)
+    if limits is None:
+        return base
+    if not isinstance(limits, dict):
+        raise TypeError("limits is a dict such as {'angular_p95': 1.2}, not %r" % (limits,))
+    unknown = sorted(set(limits) - set(base))
+    if unknown:
+        raise ValueError("unknown limit(s) %s: use %s" % (unknown, ", ".join(sorted(base))))
+    for k, v in limits.items():
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise TypeError("limits[%r] must be a number, not %r" % (k, v))
+    base.update({k: float(v) for k, v in limits.items()})
+    for whole in ("angular_p95", "area_p95"):
+        if whole in limits and "island_" + whole not in limits:
+            base["island_" + whole] = max(base["island_" + whole], base[whole])
+    return base
+
+
 def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="unique", baking=False, raster=True,
             directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, lod=0,
-            lightmapper="unity"):
+            lightmapper="unity", limits=None):
     """Measure one UV layer given as flat arrays (what _arrays returns: co, lv, ls, lt, uv, cn, tri, tpoly, and
     optionally layer, layers, low, text, text_up). No bpy. map_px None: 1024 for a texture; for a lightmap, the
     footprint of its measured UV2 bounding box at texels_per_m x lightmap_scale x LOD_SCALE^lod (lightmapper
     "bakery": Bakery's footprint, see footprint_px). text=True checks the faces marked as text (d["text"]) and
     raises when none is. Returns a report dict whose "issues" list is empty when nothing needs a look and whose
-    "notes" are worth a look; references/uv-audit.md lists every field."""
+    "notes" are worth a look; references/uv-audit.md lists every field. limits: overrides of the gate (gate())."""
+    lim = gate(limits)
     purpose = _purpose(purpose, texels_per_m=texels_per_m)
     lightmapper = lightmapper_name(lightmapper)
     planned_scale = float(lightmap_scale)                    # Scale In Lightmap as set, for the density gate
     lightmap_scale = planned_scale * lod_factor(lod, lightmapper)
     text = bool(text) and purpose != "lightmap"              # lightmaps carry no text
     npoly = len(d["ls"])
+    bad_uv = ~np.isfinite(np.asarray(d["uv"], float)).all(axis=1) if len(d["uv"]) else np.zeros(0, bool)
+    if bad_uv.any():                                         # NaN or inf (a broken import or script): measured as 0,
+        d = dict(d, uv=np.where(bad_uv[:, None], 0.0, d["uv"]))   # reported, and the other objects still audited
+    bad_co = ~np.isfinite(np.asarray(d["co"], float)).all(axis=1) if len(d["co"]) else np.zeros(0, bool)
+    if bad_co.any():
+        d = dict(d, co=np.where(bad_co[:, None], 0.0, d["co"]))
     tmark = d.get("text")
     tmark = np.asarray(tmark, bool) if tmark is not None and len(tmark) == npoly else np.zeros(npoly, bool)
     if text and not tmark.any():
@@ -701,7 +786,7 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     aspect = (w / s, h / s)
     if pad_px is None:
         pad_px = default_pad((w, h), purpose)
-    pa, pb, uv_split, hard, _key = _edges(d)
+    pa, pb, uv_split, hard, _key, (c_ilo, c_ihi, c_jlo, c_jhi) = _edges(d, corners=True)
     tr = _triangles(d, aspect)
     isl_poly, mirror_stacks, _flipped = _island_ids(d, pa, pb, uv_split, tr["au"])
     n_isl = int(isl_poly.max()) + 1 if npoly else 0
@@ -719,15 +804,22 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     mirrored = neg_area > 0.5 * np.maximum(tot_area, 1e-30)
     fold = good & (neg != mirrored[isl_tri])
     # distortion inside islands
-    isl_ratio = (np.bincount(isl_tri, weights=ratio * wg, minlength=n_isl)
-                 / np.maximum(np.bincount(isl_tri, weights=wg, minlength=n_isl), 1e-30))
-    area_dev = np.abs(np.log2(np.maximum(ratio, 1e-30) / np.maximum(isl_ratio[isl_tri], 1e-30)))
-    shaped = good & (tr["quality"] >= SLIVER_QUALITY)
     # texel density per island, px per metre. Faces marked uv_low_density were lowered on purpose: left out of the
-    # mean, the spread and the per-island band, and reported on their own.
+    # mean, the spread, the per-island band and the evenness inside their island (a grade toward a hidden underside),
+    # and reported on their own.
     low_p = d.get("low")
     low_p = np.asarray(low_p, bool) if low_p is not None and len(low_p) == npoly else np.zeros(npoly, bool)
     low = low_p[d["tpoly"]]
+    wu = wg * ~low
+    has_u = np.bincount(isl_tri, weights=wu, minlength=n_isl) > 0
+    wr = np.where(has_u[isl_tri], wu, wg)                         # an island all marked: its own faces
+    isl_ratio = (np.bincount(isl_tri, weights=ratio * wr, minlength=n_isl)
+                 / np.maximum(np.bincount(isl_tri, weights=wr, minlength=n_isl), 1e-30))
+    area_dev = np.abs(np.log2(np.maximum(ratio, 1e-30) / np.maximum(isl_ratio[isl_tri], 1e-30)))
+    shaped = good & (tr["quality"] >= SLIVER_QUALITY)
+    big = np.abs(au) * s * s >= MAX_MIN_PX2                       # sub-texel faces cannot show a stretch
+    judged = shaped & big if (shaped & big).any() else shaped
+    even_set = good & ~(low & has_u[isl_tri])
     seen = good & ~low
     td_isl = s * np.sqrt(np.maximum(isl_ratio, 0))
     td_mean = s * math.sqrt(float(np.abs(au[seen]).sum()) / max(float(w3[seen].sum()), 1e-30))
@@ -740,6 +832,25 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
         lo_b, hi_b = TEXEL_BAND[purpose]
         f = td_isl / float(px_per_m)
         off_density = int(np.count_nonzero((wi > 0) & ((f < lo_b - 1e-6) | (f > hi_b + 1e-6))))
+    # each island on its own, and the text faces together: the gate's p95 limits per group (ISLAND_MIN_SHARE)
+    tot_w = float(wg.sum())
+    island_rows = []
+    if n_isl and tot_w > 0:
+        order = np.argsort(isl_tri, kind="stable")
+        cuts = np.searchsorted(isl_tri[order], np.arange(n_isl + 1))
+        for i in np.flatnonzero(tot_area >= lim["island_min_share"] * tot_w):
+            m = order[cuts[i]:cuts[i + 1]]
+            m = m[good[m]]
+            a95 = _wpct(ang[m], w3[m], 0.95)
+            me = m[even_set[m]]
+            d95 = _wpct(area_dev[me], w3[me], 0.95) if len(me) and purpose != "lightmap" else 0.0
+            if a95 > lim["island_angular_p95"] or d95 > lim["island_area_p95"]:
+                island_rows.append((int(i), float(tot_area[i]) / tot_w, a95, d95))
+    island_rows.sort(key=lambda r: -max(r[2] / lim["island_angular_p95"], 1.0 + r[3]))
+    tg = good & tmark[d["tpoly"]]
+    text_p95 = _wpct(ang[tg], w3[tg], 0.95) if tg.any() else None
+    even = judged & ~low
+    area_max = float(area_dev[even].max()) if even.any() else 0.0
     # text and decals, on the faces marked uv_text only: per island, where the letters' up (uv_text_up, default world
     # +Z) goes in UV (+V within 45 deg passes), and whether the marked faces are mirrored
     text_isl = np.bincount(isl_poly, weights=tmark.astype(float), minlength=n_isl) > 0
@@ -778,7 +889,7 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     half_err, half_err_home = half_error_px(uv_far, max(w, h)), half_error_px(uv_far_home, max(w, h))
     # strip direction and trim rows; islands holding text faces follow the text rule instead of the grain rule
     elong, along_v = _orientation(d, isl_poly, n_isl, aspect)
-    along_v = along_v & ~text_isl
+    along_v = along_v & ~text_isl & ~_all_marked(d.get("cross"), isl_poly, n_isl)
     rows = parse_rows(rows)
     across_rows = []
     if rows and n_isl:
@@ -791,6 +902,18 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     # triangulated bevel-corner quad at a lightmap's few texels per metre) cannot smear a texel: not counted.
     pn = _poly_normals(d)
     bend = np.degrees(np.arccos(np.clip((pn[pa] * pn[pb]).sum(1), -1.0, 1.0))) if len(pa) else np.zeros(0)
+    # tiling: a seam inside a continuing surface (faces within SEAM_CONTINUES_DEG) must open by whole tiles, or the
+    # pattern jumps along it (a ring that does not close: a 103 mm jump on a brick tower read as a zipper). A seam
+    # between two strip faces is inside the strip up to STRIP_FOLD_DEG (an octagon's facets meet at 45 deg)
+    seam_px = np.zeros(0)
+    if purpose == "tiling" and len(pa):
+        strip = d.get("strip")
+        strip = (np.asarray(strip, bool) if strip is not None and len(strip) == npoly else np.zeros(npoly, bool))
+        in_strip = strip[pa] & strip[pb] & (bend < STRIP_FOLD_DEG) & (lim["seam_continues_deg"] > 0)
+        cont = uv_split & ((bend < lim["seam_continues_deg"]) | in_strip)
+        jump = np.concatenate([d["uv"][c_ilo] - d["uv"][c_jlo], d["uv"][c_ihi] - d["uv"][c_jhi]], axis=1)[cont]
+        jump = np.abs(jump - np.round(jump)) * np.array([w, h, w, h], float)
+        seam_px = jump.max(axis=1) if len(jump) else seam_px
     poly_px2 = np.bincount(d["tpoly"], weights=np.abs(au), minlength=npoly) * s * s
     tiny = poly_px2 < BEND_MIN_PX2
     folded = (bend > LIGHTMAP_HARD_ANGLE) & ~(tiny[pa] | tiny[pb]) if len(pa) else np.zeros(0, bool)
@@ -799,9 +922,14 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
            "map_px": [w, h], "pad_px": pad_px, "faces": npoly, "islands": n_isl,
            "angular_p95": round(_wpct(ang[good], w3[good], 0.95), 3),
            "angular_p99": round(_wpct(ang[good], w3[good], 0.99), 3),
-           "angular_max": round(float(ang[shaped].max()) if shaped.any() else
+           "angular_max": round(float(ang[judged].max()) if judged.any() else
                                 (float(ang[good].max()) if good.any() else float("nan")), 2),
-           "area_p95": round(_wpct(area_dev[good], w3[good], 0.95), 3),
+           "area_p95": round(_wpct(area_dev[even_set], w3[even_set], 0.95), 3),
+           "area_max": round(area_max, 3),
+           "islands_distorted": len(island_rows),
+           "worst_islands": [{"island": i, "area_share": round(sh, 4), "angular_p95": round(a, 3),
+                              "area_p95": round(dv, 3)} for i, sh, a, dv in island_rows[:5]],
+           "text_angular_p95": None if text_p95 is None else round(text_p95, 3),
            "folded_faces": int(len(np.unique(d["tpoly"][fold]))), "mirrored_islands": int(mirrored.sum()),
            "mirror_stacks": int(mirror_stacks),
            "zero_area_uv_faces": int(len(np.unique(d["tpoly"][zero_uv]))),
@@ -818,6 +946,8 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
                                     if lowg.any() else None),
            "hard_edges_not_seams": int(np.count_nonzero(hard & ~uv_split)),
            "chart_bends": chart_bends,
+           "seam_phase_px_max": round(float(seam_px.max()), 2) if len(seam_px) else None,
+           "seams_off_phase": int(np.count_nonzero(seam_px > lim["tile_phase_px"])),
            "elongated_islands": int(elong.sum()), "elongated_along_v": int(along_v.sum()),
            "islands_across_rows": len(across_rows),
            "text_faces": int(tmark.sum()), "text_islands_mirrored": text_mirrored,
@@ -869,10 +999,11 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
         k = _raster_scale(w, h)
         rw, rh = max(1, int(round(w * k))), max(1, int(round(h * k)))
         grid, clash, px, hit = _raster(d, isl_tri, rw, rh, np.flatnonzero(good))
+        shape = _shape_stacks(lo, hi, np.bincount(isl_tri, weights=np.abs(au), minlength=n_isl), 0.05 / max(w, h))
         alias = np.arange(max(n_isl, 1))
         stacked = partial = 0
         for (a, b), n in sorted(clash.items()):
-            if _stacked(n, px[a], px[b]):
+            if shape[a] == shape[b] or _stacked(n, px[a], px[b]):
                 stacked += 1
                 ra, rb = alias[a], alias[b]
                 alias[alias == max(ra, rb)] = min(ra, rb)
@@ -886,21 +1017,49 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
             gap = _min_gap(grid, pad_px * k)
             rep["padding_ok"] = gap is None
             rep["min_gap_px"] = None if gap is None else round(gap / k, 2)
-    rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text)
+    rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text, lim)
+    if limits:
+        rep["limits_overridden"] = dict(limits)
+    if not npoly:
+        rep["issues"].insert(0, "no faces: nothing to audit (an empty or vertex-only mesh)")
+    if bad_uv.any():
+        rep["issues"].insert(0, "%d UV corners are not numbers (NaN or inf): re-unwrap" % int(bad_uv.sum()))
+    if bad_co.any():
+        rep["issues"].insert(0, "%d vertex positions are not numbers (NaN or inf): the mesh is broken, rebuild or "
+                                "re-import it" % int(bad_co.sum()))
     if low_density:
         rep["issues"].append(low_density)
     return rep
 
 
-def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False):
+def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False, lim=LIMITS):
     out = []
     if len(r["layers"]) > MAX_UV_MAPS:
         out.append("%d UV maps (engines keep at most %d)" % (len(r["layers"]), MAX_UV_MAPS))
     for key, msg in (("angular_p95", "angular stretch p95 %.2f"), ("angular_p99", "angular stretch p99 %.2f"),
                      ("angular_max", "a face stretched %.1fx (folded, collapsed or squashed UVs)"),
                      ("area_p95", "uneven density inside islands (area p95 %.2f)")):
-        if r[key] == r[key] and r[key] > LIMITS[key]:
+        if key == "area_p95" and purpose == "lightmap":
+            continue                           # a chart's density may vary: at 20 texels/m nobody sees 20% of it
+        if r[key] == r[key] and r[key] > lim[key]:
             out.append(msg % r[key])
+    if r.get("area_max", 0) > lim["area_max"] and purpose != "lightmap":
+        out.append("a patch at %.1fx or 1/%.1f its island's texel density (area max %.2f): it reads blurred or "
+                   "oversharp against the rest" % (2 ** (r["area_max"] / 2), 2 ** (r["area_max"] / 2), r["area_max"]))
+    if r.get("islands_distorted"):
+        w = r["worst_islands"][0]
+        out.append("%d island(s) stretched on their own, which the whole-object numbers hide (worst: island %d, %.1f%% "
+                   "of the area, angular p95 %.2f, area p95 %.2f)" % (r["islands_distorted"], w["island"],
+                                                                      100 * w["area_share"], w["angular_p95"],
+                                                                      w["area_p95"]))
+    if r.get("text_angular_p95") is not None and r["text_angular_p95"] > lim["angular_p95"]:
+        out.append("text faces stretched (angular p95 %.2f): letters read squashed" % r["text_angular_p95"])
+    if r.get("seams_off_phase"):
+        out.append("%d UV seam edge(s) inside a continuing tiling surface open by up to %.1f px, not whole tiles: the "
+                   "pattern jumps along them (close a ring or strip on whole tiles; workflows, curved walls). An "
+                   "organic surface unwrapped with seams (a bank, a rock face) cannot: judge its seams with "
+                   "texture_seams on the real texture, then audit with limits={'seam_continues_deg': 0}"
+                   % (r["seams_off_phase"], r["seam_phase_px_max"]))
     if r["folded_faces"]:
         out.append("%d folded faces" % r["folded_faces"])
     if r["zero_area_uv_faces"]:
@@ -941,7 +1100,7 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
         out.append("%d long islands run along V: grain or a trim strip should run along U" % r["elongated_along_v"])
     if r.get("islands_across_rows"):
         out.append("%d islands cross a trim row edge" % r["islands_across_rows"])
-    if r["texel_cv"] == r["texel_cv"] and r["texel_cv"] > LIMITS["texel_cv"]:
+    if r["texel_cv"] == r["texel_cv"] and r["texel_cv"] > lim["texel_cv"]:
         out.append("texel density varies between islands (cv %.2f)" % r["texel_cv"])
     if r.get("low_density_px_per_m") and r["texel_px_per_m"] and r["low_density_px_per_m"] > 0.9 * r["texel_px_per_m"]:
         out.append("%d faces marked low-density are not lowered (%.0f px/m vs %.0f)"
@@ -994,10 +1153,17 @@ def measure_shared(named, map_px=1024, pad_px=None, purpose="unique"):
     k = _raster_scale(w, h)
     rw, rh = max(1, int(round(w * k))), max(1, int(round(h * k)))
     grid, clash, px, _hit = _raster(dd, isl_tri, rw, rh, np.arange(len(dd["tri"])))
+    tuv = dd["uv"][dd["tri"]]
+    tlo, thi = np.full((nisl, 2), np.inf), np.full((nisl, 2), -np.inf)
+    np.minimum.at(tlo, isl_tri, tuv.min(1))
+    np.maximum.at(thi, isl_tri, tuv.max(1))
+    e1, e2 = tuv[:, 1] - tuv[:, 0], tuv[:, 2] - tuv[:, 0]
+    tarea = np.bincount(isl_tri, weights=0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]), minlength=nisl)
+    shape = _shape_stacks(tlo, thi, tarea, 0.05 / max(w, h))
     alias = np.arange(max(nisl, 1))
     across = 0
     for (a, b), n in sorted(clash.items()):
-        if _stacked(n, px[a], px[b]):
+        if shape[a] == shape[b] or _stacked(n, px[a], px[b]):
             ra, rb = alias[a], alias[b]
             alias[alias == max(ra, rb)] = min(ra, rb)
         elif owner[a] != owner[b]:
@@ -1015,10 +1181,101 @@ def measure_shared(named, map_px=1024, pad_px=None, purpose="unique"):
     return rep
 
 
+def tile_uv(p, n, tile_m):
+    """tile_project's box projection: UVs for positions p (k, 3) in the piece's own axes (metres from its pivot,
+    scale applied) on a face whose normal in those axes is n. The normal's largest component picks the plane (within
+    TILE_AXIS_TIE of it counts as a tie, broken Z, then X, then Y); U runs to the right seen from the front of the face
+    and V up (Z on walls, +Y on floors and ceilings), one tile per tile_m metres, phase 0 at the pivot. Pieces whose
+    pivots sit on a grid whose step is a whole number of tiles therefore continue the pattern across every joint,
+    whatever their size, and walls whatever their turn about Z; a floor or ceiling turned about Z turns its pattern
+    with it, so tiling floors and ceilings are placed unturned (or turned by the texture's own symmetry)."""
+    p = np.asarray(p, float).reshape(-1, 3)
+    n = np.asarray(n, float)
+    a = np.abs(n)
+    ax = next(k for k in (2, 0, 1) if a[k] >= a.max() - TILE_AXIS_TIE)
+    s = 1.0 if n[ax] >= 0 else -1.0
+    if ax == 0:
+        u, v = s * p[:, 1], p[:, 2]
+    elif ax == 1:
+        u, v = -s * p[:, 0], p[:, 2]
+    else:
+        u, v = s * p[:, 0], p[:, 1]
+    return np.stack([u, v], axis=1) / float(tile_m)
+
+
+def tile_steps_issues(tile_m, steps):
+    """Issues for placement steps (metres: the grid module along walls and floors, the storey height up them) that
+    are not whole numbers of tiles: a piece placed one step along restarts the pattern part-way through a tile."""
+    out = []
+    for step in steps or ():
+        r = float(step) / float(tile_m)
+        if r < 1.0 - 1e-6 or abs(r - round(r)) > 1e-6:
+            out.append("placement step %g m is not a whole number of %g m tiles (%.3g): the pattern jumps at every "
+                       "joint; use a tile that divides the step, or place the family only on multiples of the tile"
+                       % (step, tile_m, r))
+    return out
+
+
+def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX, offset=(0.0, 0.0, 0.0)):
+    """How far a tiling layout sits from tile_project's, per face, in texels after whole tiles are taken off (the
+    pattern only needs to agree mod 1). d: the flat arrays (_arrays); frame: (R, t), the piece's rotation (unit
+    columns) and pivot, to bring world positions into its own axes (None: d's positions already are). A face off by
+    more than limit_px breaks the pattern where it meets a neighbour; one that fits with U negated is reported as
+    mirrored (the pattern reads backwards and its joints show as a mirror line). offset: a phase variant's, as
+    given to tile_project."""
+    w, h = map_size(map_px)
+    co = np.asarray(d["co"], float)
+    if frame is not None:
+        rot, t = frame
+        if np.linalg.det(np.asarray(rot, float)) < 0:
+            return {"tile_m": float(tile_m), "faces": int(len(d["ls"])), "phase_px_max": None, "off_faces": None,
+                    "mirrored_faces": None, "issues": tile_steps_issues(tile_m, steps) + [
+                        "the object is mirrored (negative scale): apply its scale, then tile_project"]}
+        co = (co - np.asarray(t, float)) @ np.asarray(rot, float)
+    normals = _poly_normals(dict(d, co=co))
+    co = co + np.asarray(offset, float)
+    exp = np.empty((len(d["lv"]), 2))
+    for f in range(len(d["ls"])):
+        sl = slice(int(d["ls"][f]), int(d["ls"][f] + d["lt"][f]))
+        exp[sl] = tile_uv(co[d["lv"][sl]], normals[f], tile_m)
+    scale = np.array([w, h], float)
+
+    def off(e):
+        # per face: the first corner's offset mod 1 (the phase), and how far each other corner's offset differs from
+        # it, not mod 1 (a wrong scale or a mirror; on whole-tile corners a mirrored U still lands on whole numbers)
+        if not len(d["ls"]):
+            return np.zeros(0)
+        delta = d["uv"] - e
+        first = delta[np.repeat(d["ls"], d["lt"])]
+        phase = np.abs(first - np.round(first)) * scale
+        spread = np.abs(delta - first) * scale
+        return np.maximum.reduceat(np.maximum(phase, spread).max(axis=1), d["ls"])
+
+    err = off(exp)
+    mir = off(exp * np.array([-1.0, 1.0]))
+    strip = d.get("strip")
+    strip = np.asarray(strip, bool) if strip is not None and len(strip) == len(err) else np.zeros(len(err), bool)
+    err[strip] = 0.0                                   # strips are judged by their seams' continuity (measure)
+    bad = err > limit_px
+    mirrored = bad & (mir <= limit_px)
+    issues = tile_steps_issues(tile_m, steps)
+    if mirrored.any():
+        issues.append("%d tiling faces mirrored against tile_project (U reads backwards): re-project with "
+                      "tile_project" % int(mirrored.sum()))
+    if (bad & ~mirrored).any():
+        issues.append("%d of %d tiling faces off tile_project's scale and phase by up to %.1f px (limit %.1f): the "
+                      "pattern jumps where they meet a neighbour; re-project with tile_project(tile_m=%g)"
+                      % (int((bad & ~mirrored).sum()), len(err), float(err[bad & ~mirrored].max()), limit_px, tile_m))
+    return {"tile_m": float(tile_m), "faces": int(len(err)), "phase_px_max": round(float(err.max()), 3) if len(err)
+            else 0.0, "off_faces": int(bad.sum()), "mirrored_faces": int(mirrored.sum()),
+            "strip_faces": int(strip.sum()), "issues": issues}
+
+
 # ----------------------------------------------------------------------------------------------- audit (bpy)
 def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None, baking=False, lightmap=False,
           directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, material=None, lod=None,
-          evaluated=True, raster=True, lightmapper="unity"):
+          evaluated=True, raster=True, lightmapper="unity", tile_m=None, steps=None, tile_offset=(0.0, 0.0, 0.0),
+          limits=None):
     """Measure one object's UV map on the evaluated mesh in world space; changes nothing. purpose: unique (default),
     tiling, trim or lightmap; lightmap=True or texels_per_m makes it a lightmap audit, and either with another
     purpose raises. layer: index or name; by default 0 (UV0), or 1 for a lightmap; "active" for the active map.
@@ -1031,8 +1288,14 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
     lod: the LOD level of a lightmap audit (texel scale x LOD_SCALE^lod); None reads it from a <Piece>_LOD<n> name.
     lightmapper: whose footprint a lightmap audit uses, "unity" (default; "progressive") or "bakery" (Bakery's
     area-based rect, no LOD factor, and an issue when the charts get under half the planned texels per metre).
-    rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192"."""
+    rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192". tile_m (purpose tiling): also check every face
+    against tile_project's scale and phase (tile_phase: a kit piece's pattern continues across joints), and steps
+    (metres: grid module, storey height) for being whole numbers of tiles; tile_offset: a phase variant's offset.
+    limits: overrides of the gate's numbers for this audit (gate(): a stylised or deliberately graded piece), recorded
+    in the report as limits_overridden."""
     purpose = _purpose(purpose, lightmap, texels_per_m)
+    if tile_m is not None and purpose != "tiling":
+        raise ValueError("tile_m checks a tiling layout: pass purpose='tiling'")
     layer = _resolve_layer(layer, purpose)
     if ob.mode == "EDIT":
         ob.update_from_editmode()
@@ -1049,9 +1312,16 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
                   raster=raster, directional=directional, rows=rows, texels_per_m=texels_per_m,
                   lightmap_scale=lightmap_scale, text=text,
                   lod=(lod if lod is not None else lod_level(ob.name)) if purpose == "lightmap" else 0,
-                  lightmapper=lightmapper)
+                  lightmapper=lightmapper, limits=limits)
     if material:
         rep["material"] = material
+    if tile_m is not None:
+        m = np.array(ob.matrix_world)
+        rot = m[:3, :3] / np.maximum(np.linalg.norm(m[:3, :3], axis=0), 1e-12)
+        tp = tile_phase(d, tile_m, map_px or 1024, frame=(rot, m[:3, 3]), steps=steps, offset=tile_offset,
+                        limit_px=gate(limits)["tile_phase_px"])
+        rep["tile_phase"] = {k: v for k, v in tp.items() if k != "issues"}
+        rep["issues"] = list(rep.get("issues", [])) + tp["issues"]
     return rep
 
 
@@ -1385,6 +1655,22 @@ def _unhide(o, prev):
     o.data.update()
 
 
+def _finite_uvs(objects, layer, what):
+    """Raise a ValueError naming the object when a UV corner of the layer is NaN or inf: Blender's packer stops with
+    a cryptic error on them, and its lightmap pack crashed Blender 5.2.2 (measured)."""
+    for ob in objects:
+        if ob.type == "MESH" and ob.mode == "EDIT":
+            ob.update_from_editmode()                       # the UVs live in the edit mesh until synced
+        lay = _layer(ob.data, layer) if ob.type == "MESH" else None
+        if lay is None or not len(ob.data.loops) or len(lay.data) != len(ob.data.loops):
+            continue
+        uv = _uv_get(lay, len(ob.data.loops))
+        bad = int((~np.isfinite(uv).all(axis=1)).sum())
+        if bad:
+            raise ValueError("%s: %d UV corners of %s are not numbers (NaN or inf): unwrap them again before %s"
+                             % (ob.name, bad, lay.name, what))
+
+
 def pack(objects, map_px=1024, pad_px=None, layer=0, scale=True, rotate=False, rotate_method="CARDINAL",
          together=False, shape="CONCAVE", keep_stacks=False, material=None):
     """Pack each object's UV map (UV0 unless layer says otherwise) into the 0-1 tile with pad_px pixels between
@@ -1403,6 +1689,7 @@ def pack(objects, map_px=1024, pad_px=None, layer=0, scale=True, rotate=False, r
     if pad_px is None:
         pad_px = size / 64.0
     objects = [o for o in objects if o.type == "MESH"]
+    _finite_uvs(objects, layer, "packing")
     was_edit = bpy.context.mode == "EDIT_MESH"
     if material and bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")                 # mesh data reads empty in Edit Mode
@@ -1465,6 +1752,7 @@ def pack_lightmap(objects, texels_per_m, scale=1.0, layer=1, rotate=True, lod=No
     on: lightmaps have no direction. Returns {object name: the size it packed for, px}."""
     out = {}
     lightmapper = lightmapper_name(lightmapper)
+    _finite_uvs([o for o in objects if o.type == "MESH"], layer, "the lightmap pack")
     for ob in [o for o in objects if o.type == "MESH"]:
         sc = scale.get(ob.name, 1.0) if isinstance(scale, dict) else scale
         size = lightmap_footprint(ob, texels_per_m, sc, coverage=1.0, lod=lod, lightmapper=lightmapper)
@@ -1532,6 +1820,7 @@ def turn_islands(objects, map_px=1024, layer=0, material=None):
             isl = _islands(len(d["ls"]), pa, pb, ~uv_split)
             n = int(isl.max()) + 1 if len(isl) else 0
             _elong, along_v = _orientation(d, isl, n, tuple(aspect))
+            along_v = along_v & ~_all_marked(d.get("cross"), isl, n)       # end grain stays across
             isl_loop = np.repeat(isl, d["lt"])
             p = d["uv"] * aspect
             cnt = np.maximum(np.bincount(isl_loop, minlength=n), 1)
@@ -1548,6 +1837,99 @@ def turn_islands(objects, map_px=1024, layer=0, material=None):
     finally:
         if was_edit:
             bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
+def _square_quad(co, uv):
+    """A quad's four UVs replaced by a rectangle of its 3D side lengths: the same centre, area per square metre and
+    winding, its first side turned to the nearest of U or V."""
+    a = float(np.linalg.norm(co[1] - co[0]))
+    b = float(np.linalg.norm(co[3] - co[0]))
+    area3 = float(np.linalg.norm(np.cross(co[1] - co[0], co[3] - co[0]))) or 1e-12
+    e = uv[1] - uv[0]
+    signed = 0.5 * float(np.sum(uv[:, 0] * np.roll(uv[:, 1], -1) - np.roll(uv[:, 0], -1) * uv[:, 1]))
+    k = math.sqrt(abs(signed) / area3) or 1.0
+    ang = round(math.atan2(e[1], e[0]) / (math.pi / 2)) * (math.pi / 2)
+    du = np.array([math.cos(ang), math.sin(ang)]) * a * k
+    dv = np.array([-math.sin(ang), math.cos(ang)]) * b * k * (1.0 if signed >= 0 else -1.0)
+    c = uv.mean(axis=0)
+    return np.array([c - du / 2 - dv / 2, c + du / 2 - dv / 2, c + du / 2 + dv / 2, c - du / 2 + dv / 2])
+
+
+def straighten(objects, layer=0, material=None):
+    """Step 6 for strips: every all-quad UV island (UV0 unless layer says otherwise) straightened with Follow Active
+    Quads, mode LENGTH: its most rectangular quad squared to its 3D side lengths at the island's own density and turned
+    to the nearest of U or V, then the island follows it. Islands holding a triangle or an n-gon cannot follow and are
+    left as they are (counted under "skipped"). material: only islands whose faces all match it. Run it after the
+    unwrap and before the layout; audit after. Restores the mode, selection and active UV map. Returns {object name:
+    {"straightened", "skipped"}}."""
+    import bmesh
+    objects = [o for o in objects if o.type == "MESH"]
+    out = {}
+    if not objects:
+        return out
+    prev = (bpy.context.view_layer.objects.active, list(bpy.context.selected_objects), bpy.context.mode)
+    sync = bpy.context.scene.tool_settings.use_uv_select_sync
+    try:
+        bpy.context.scene.tool_settings.use_uv_select_sync = True
+        for ob in objects:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            old_active = ob.data.uv_layers.active_index
+            lay = _set_active_layer(ob, layer)
+            d = _arrays(ob, lay.name, evaluated=False)
+            npoly = len(d["ls"])
+            pa, pb, uv_split, _hard, _key = _edges(d)
+            isl = _islands(npoly, pa, pb, ~uv_split)
+            keep = _material_faces(d, material) if material else np.ones(npoly, bool)
+            co = d["co"]                                              # world space, as the audit measures
+            todo, skipped = [], 0
+            for i in range(int(isl.max()) + 1 if npoly else 0):
+                faces = np.flatnonzero(isl == i)
+                if not keep[faces].all():
+                    continue
+                if (d["lt"][faces] != 4).any() or len(faces) < 2:
+                    skipped += int((d["lt"][faces] != 4).any())
+                    continue
+                best, score = None, -1.0
+                for f in faces:
+                    q = co[d["lv"][d["ls"][f]:d["ls"][f] + 4]]
+                    sides = [q[(k + 1) % 4] - q[k] for k in range(4)]
+                    cosmax = max(abs(float(np.dot(sides[k], sides[(k + 1) % 4])))
+                                 / max(float(np.linalg.norm(sides[k]) * np.linalg.norm(sides[(k + 1) % 4])), 1e-12)
+                                 for k in range(4))
+                    s = (1.0 - cosmax) + 1e-6 * float(np.linalg.norm(np.cross(sides[0], sides[3])))
+                    if s > score:
+                        best, score = int(f), s
+                sl = slice(int(d["ls"][best]), int(d["ls"][best]) + 4)
+                quad = _square_quad(co[d["lv"][sl]], d["uv"][sl])
+                for li, uv in zip(range(sl.start, sl.stop), quad):
+                    lay.data[li].uv = (float(uv[0]), float(uv[1]))
+                todo.append((best, faces))
+            ob.data.update()
+            if todo:
+                for o in bpy.context.selected_objects:
+                    o.select_set(False)
+                ob.select_set(True)
+                bpy.context.view_layer.objects.active = ob
+                bpy.ops.object.mode_set(mode="EDIT")
+                bpy.ops.mesh.select_mode(type="FACE")
+                for best, faces in todo:
+                    bm = bmesh.from_edit_mesh(ob.data)
+                    bm.faces.ensure_lookup_table()
+                    for f in bm.faces:
+                        f.select_set(False)
+                    for f in faces:
+                        bm.faces[int(f)].select_set(True)
+                    bm.faces.active = bm.faces[best]
+                    bmesh.update_edit_mesh(ob.data)
+                    bpy.ops.uv.follow_active_quads(mode="LENGTH")
+                bpy.ops.object.mode_set(mode="OBJECT")
+            ob.data.uv_layers.active_index = old_active
+            out[ob.name] = {"straightened": len(todo), "skipped": skipped}
+    finally:
+        bpy.context.scene.tool_settings.use_uv_select_sync = sync
+        _restore(prev)
     return out
 
 
@@ -1634,10 +2016,11 @@ def stack_faces(ob, src_faces, dst_faces, layer=0):
     return len(dst_faces)
 
 
-def _scale_density(d, target, aspect, per_island):
+def _scale_density(d, target, aspect, per_island, low_factor=None):
     """New UVs for flat arrays d: every island at target UV units per metre (per_island) or the whole object scaled
     by one factor. Islands whose faces are all marked low-density take the object's factor, keeping their size
-    relative to the rest. Returns (uv, area-weighted mean factor)."""
+    relative to the rest, or with low_factor each its own at low_factor x target. Returns (uv, area-weighted mean
+    factor)."""
     npoly = len(d["ls"])
     pa, pb, uv_split, _hard, _key = _edges(d)
     isl = _islands(npoly, pa, pb, ~uv_split)
@@ -1651,11 +2034,14 @@ def _scale_density(d, target, aspect, per_island):
     marked = (np.bincount(isl, weights=(~low).astype(float), minlength=n) == 0) & (np.bincount(isl, minlength=n) > 0)
     unm = ~marked & (au > 0)
     big = (target / math.sqrt(au[unm].sum() / max(a3[unm].sum(), 1e-30))) if unm.any() else 1.0
+    own = np.where(au > 0, target / np.sqrt(np.maximum(au, 1e-30) / np.maximum(a3, 1e-30)), 1.0)
     if per_island:
-        f = np.where(au > 0, target / np.sqrt(np.maximum(au, 1e-30) / np.maximum(a3, 1e-30)), 1.0)
+        f = own.copy()
         f[marked] = big
     else:
         f = np.full(n, big)
+    if low_factor:
+        f[marked] = own[marked] * float(low_factor)
     isl_loop = np.repeat(isl, d["lt"])
     uv = d["uv"].copy()
     corners = np.maximum(np.bincount(isl_loop, minlength=n), 1)
@@ -1665,10 +2051,11 @@ def _scale_density(d, target, aspect, per_island):
 
 
 def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_after=True, pad_px=None,
-                      keep_stacks=False, rotate=False, material=None):
+                      keep_stacks=False, rotate=False, material=None, low_factor=None):
     """Scale UV islands (UV0 unless layer says otherwise) so the surface gets px_per_m texels per metre on a map_px
     texture, measured in world space on the evaluated mesh. per_island=True also evens islands out (like Average
-    Islands Scale); islands whose faces are all marked uv_low_density keep their size relative to the rest.
+    Islands Scale); islands whose faces are all marked uv_low_density keep their size relative to the rest (or,
+    with low_factor, 0.5 for half, go to that share of px_per_m each).
     pack_after=True then packs with scale=False and keep_stacks / rotate as given. material: only the faces whose
     material name matches (a name or a pattern; the others keep their UVs), with pack_after=False: on a mesh that
     mixes trim and tiling, scale the trim strips alone. layout() is the safer call: it also separates non-stacked
@@ -1700,11 +2087,12 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
                 if not keep.any():
                     out[ob.name] = None                                # no face with that material: untouched
                     continue
-                sub, out[ob.name] = _scale_density(_subset(d, keep), px_per_m / s, (w / s, h / s), per_island)
+                sub, out[ob.name] = _scale_density(_subset(d, keep), px_per_m / s, (w / s, h / s), per_island,
+                                                   low_factor)
                 uv = d["uv"].copy()
                 uv[np.repeat(keep, d["lt"])] = sub                     # the other faces' UVs are left as they were
             else:
-                uv, out[ob.name] = _scale_density(d, px_per_m / s, (w / s, h / s), per_island)
+                uv, out[ob.name] = _scale_density(d, px_per_m / s, (w / s, h / s), per_island, low_factor)
             lay.uv.foreach_set("vector", uv.ravel())
             ob.data.update()
         finally:
@@ -1855,6 +2243,59 @@ def reunwrap_in_place(objects, layer=0, map_px=1024, units_per_m=None, material=
     return out
 
 
+def tile_project(objects, tile_m, layer=0, material=None, offset=(0.0, 0.0, 0.0)):
+    """Tiling UVs for kit pieces that continue across joints: a box projection from each piece's own axes, one tile
+    per tile_m metres (map_px / px_per_m), phase 0 at its pivot, U to the right seen from the front of each face and
+    V up (tile_uv). Replaces Cube Projection for kits: bpy.ops.uv.cube_project centres the projection on the
+    selection's bounds (Blender 5.2.2: a 1 m wall started at U 0.375 and a 2 m wall at 0.25 with cube_size 4), so
+    pieces of different sizes start out of phase. Positions are the mesh's own with the object's scale applied (apply
+    scale first; a pivot off the grid shifts the pattern; a negative scale is refused). material: only faces whose
+    material matches (a name or pattern), the rest keep their UVs. offset (metres, the piece's axes): a phase variant,
+    projected as if the piece stood that far along (k x module for the copy placed k modules into a longer tile).
+    Each face's plane comes from its own positions (Newell, float64), as tile_phase reads it. Writes the mesh data, so
+    apply the stack first (apply_stack). Returns {object name: faces written}."""
+    objects = [o for o in objects if o.type == "MESH"]
+    neg = [o.name for o in objects if min(o.scale) < 0]
+    if neg:
+        raise ValueError("tile_project: %s mirrored by a negative scale: apply the scale first (the projection reads "
+                         "each piece's own axes)" % ", ".join(neg))
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for ob in objects:
+        me = ob.data
+        if layer == 0 and not me.uv_layers:
+            me.uv_layers.new(name="UVMap")
+        prev = me.uv_layers.active_index
+        lay = _set_active_layer(ob, layer)
+        try:
+            keep = _keep_faces(ob, material)
+            sc = np.array(ob.scale, float)
+            co = np.empty(len(me.vertices) * 3)
+            me.vertices.foreach_get("co", co)
+            co = co.reshape(-1, 3) * sc + np.asarray(offset, float)
+            uv = _uv_get(lay, len(me.loops))
+            n = 0
+            for p in me.polygons:
+                if keep is not None and not keep[p.index]:
+                    continue
+                corners = list(range(p.loop_start, p.loop_start + p.loop_total))
+                vs = [me.loops[i].vertex_index for i in corners]
+                q = co[vs]
+                normal = np.cross(q, np.roll(q, -1, axis=0)).sum(axis=0)          # Newell, as tile_phase
+                uv[corners] = tile_uv(q, normal, tile_m)
+                n += 1
+            lay.uv.foreach_set("vector", uv.ravel())
+            me.update()
+            out[ob.name] = n
+        finally:
+            me.uv_layers.active_index = prev
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
 def _island_boxes(ob, lay, keep=None):
     """Islands of the mesh's own layer: id per corner, bounding boxes, unsigned and signed UV areas, UVs. keep: per
     polygon, only those faces (the corners and UVs returned are theirs; write back with _write_uv)."""
@@ -1979,17 +2420,50 @@ def _bake_offsets(o, lay, faces=None):
     return moved, halves
 
 
+def _bring_home(group, layer, keeps):
+    """Move each object's (kept) UVs by whole tiles so their lowest corner lies in the 0-1 tile."""
+    for o in group:
+        lay = _layer(o.data, layer)
+        keep = keeps.get(o.name)
+        uv = _uv_get(lay, len(o.data.loops))
+        if keep is not None:
+            uv = uv[np.repeat(keep, [p.loop_total for p in o.data.polygons])]
+        if len(uv):
+            t0 = np.floor(uv.min(0) + UV_EPS)
+            if t0.any():
+                _write_uv(o, lay, uv - t0, keep)
+
+
+def _group_margin(group, layer, keeps, size):
+    """The smallest distance in pixels from any packed island of the group to the edge of its own tile (whole-tile
+    offsets taken off, as layout brings them home); -inf when an island spills over a tile edge."""
+    worst = math.inf
+    for o in group:
+        uv = _uv_get(_layer(o.data, layer), len(o.data.loops))
+        keep = keeps.get(o.name)
+        if keep is not None:
+            uv = uv[np.repeat(keep, [p.loop_total for p in o.data.polygons])]
+        if not len(uv):
+            continue
+        uv = uv - np.floor(uv.min(0) + UV_EPS)
+        worst = min(worst, float(min(uv.min(), 1.0 - uv.max())) * size)
+    return worst if worst != math.inf else 0.0
+
+
 def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=True, rotate_method="CARDINAL",
-           bake=False, together=False, material=None, max_island_m=None):
+           bake=False, together=False, material=None, max_island_m=None, low_factor=None):
     """Step 8 of the order of work, its parts in their only safe order, on a UV map (UV0 unless layer says
     otherwise) already unwrapped, straightened, oriented and stacked (identical parts placed exactly on one copy,
     faces lowered on purpose marked):
-      1. density: every island to px_per_m, marked islands kept relative to the rest (px_per_m=None: sizes as they
-         are, and the pack scales everything to fill the tile);
+      1. density: every island to px_per_m, marked islands kept relative to the rest or at low_factor x px_per_m
+         (px_per_m=None: sizes as they are, and the pack scales everything to fill the tile);
       2. stacks found by shape (copies already moved by whole tiles count) and every stack moved clear of the
          others, so the pack merges true stacks only;
       3. one pack: stacks kept, sizes kept when px_per_m is set, rotation off when directional (else rotate_method);
-      4. fit check: fits=False when any island ends outside 0-1 (never a silent spill);
+         packed again (from home, unturned, then with the CONVEX and AABB island shapes) when an island lands closer
+         to the tile edge than half the gap, keeping the attempt furthest inside;
+      4. fit check: fits=False when any island ends outside 0-1 or nearer its edge than half the gap (never a silent
+         spill);
       5. bake=True: all but one copy of each stack, and the flipped half of each island folded onto itself (a Mirror
          modifier applied with Merge on), moved exactly +1 in U.
     material: only the faces whose material name matches (a name or a pattern) take part in every step; the others
@@ -2006,6 +2480,7 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
     was_edit = bpy.context.mode == "EDIT_MESH"
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
+    _finite_uvs(objects, layer, "the layout")
     keeps = {o.name: _keep_faces(o, material) for o in objects}
     if material:
         objects = [o for o in objects if keeps[o.name].any()]
@@ -2014,7 +2489,7 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
     try:
         if px_per_m and objects:
             for name, f in set_texel_density(objects, px_per_m, size, layer=layer, pack_after=False,
-                                             material=material).items():
+                                             material=material, low_factor=low_factor).items():
                 out[name]["factor"] = f
         groups = [objects] if together else [[o] for o in objects]
         for group in groups:
@@ -2041,8 +2516,28 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
                     shift[g] = -t[g] + step * np.array([slot % cols, slot // cols], float)
                     slot += 1
                 _write_uv(o, lay, uv + shift[isl_loop], keeps[o.name])
-            pack(group, map_px=size, pad_px=pad_px, layer=layer, scale=not px_per_m, rotate=not directional,
-                 rotate_method=rotate_method, keep_stacks=True, together=together, material=material)
+            edge = (default_pad(size) if pad_px is None else float(pad_px)) / 2.0
+            best = None
+            # the default first, from the cells above; then again from where it landed, brought home; then without
+            # rotation (Blender 5.2.2 packed a lamp's ring turned 90 deg 2 px from the edge, unturned 8 px); then the
+            # other shapes
+            tries = [("CONCAVE", not directional), ("CONCAVE", not directional), ("CONCAVE", False),
+                     ("CONVEX", not directional), ("AABB", not directional)]
+            for attempt, (shape, rot) in enumerate(t for i, t in enumerate(tries) if t not in tries[1:i]):
+                if attempt:
+                    _bring_home(group, layer, keeps)
+                pack(group, map_px=size, pad_px=pad_px, layer=layer, scale=not px_per_m, rotate=rot,
+                     rotate_method=rotate_method, keep_stacks=True, together=together, material=material,
+                     shape=shape)
+                m = _group_margin(group, layer, keeps, size)
+                if best is None or m > best[0]:
+                    best = (m, {o.name: _uv_get(_layer(o.data, layer), len(o.data.loops)).copy() for o in group})
+                if m >= edge - EDGE_SLACK_PX:
+                    break
+            for o in group:                                  # the attempt that sat furthest inside the tile
+                lay = _layer(o.data, layer)
+                lay.uv.foreach_set("vector", best[1][o.name].ravel())
+                o.data.update()
         for o in objects:
             lay = _layer(o.data, layer)
             keep = keeps[o.name]
@@ -2055,6 +2550,13 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
                     uv = uv - t0
                     _write_uv(o, lay, uv, keep)
             out[o.name]["fits"] = bool(not len(uv) or (uv.min() >= -UV_EPS and uv.max() <= 1 + UV_EPS))
+            edge = (default_pad(size) if pad_px is None else float(pad_px)) / 2.0
+            margin = float(min(uv.min(), 1.0 - uv.max())) * size if len(uv) else None
+            out[o.name]["margin_px"] = None if margin is None else round(margin, 2)
+            if margin is not None and out[o.name]["fits"] and margin < edge - EDGE_SLACK_PX:
+                out[o.name]["fits"] = False             # inside the tile, but closer to its edge than the audit allows
+                out[o.name]["fit_problem"] = ("%.2f px from the tile edge (< %g): lower px_per_m about 1%% or raise "
+                                              "pad_px, and lay out again" % (margin, edge))
             _isl_loop, lo, hi, area, _signed, _uv = _island_boxes(o, lay, keep)
             stacks, _t = _stack_groups(lo, hi, area)
             moved, halves = _bake_offsets(o, lay, keep) if bake else (0, 0)
@@ -2108,6 +2610,15 @@ def _run(argv):
                     "default: read from each object's <Piece>_LOD<n> name, else 0")
     ap.add_argument("--lightmapper", default="unity", help="whose footprint a lightmap audit uses: unity (default; "
                     "progressive is the same) or bakery")
+    ap.add_argument("--tile-m", type=float, default=None, help="tiling: the tile's size in metres (map / px per m): "
+                    "every face checked against tile_project's scale and phase, so kit pieces continue at joints")
+    ap.add_argument("--steps", default=None, help="with --tile-m: placement steps in metres, e.g. 1,3 (grid module, "
+                    "storey height): each must be a whole number of tiles")
+    ap.add_argument("--tile-offset", default=None, help="with --tile-m: a phase variant's offset in metres, x,y,z "
+                    "(as given to tile_project)")
+    ap.add_argument("--limits", type=json.loads, default=None, help="overrides of the gate as JSON, e.g. "
+                    "'{\"angular_p95\": 1.2, \"island_min_share\": 0.02}' (uv-audit.md, gate()); recorded in "
+                    "each report")
     ap.add_argument("--json", default=None, help="write the full reports here")
     ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
                     "check overlaps and gaps between them")
@@ -2128,7 +2639,10 @@ def _run(argv):
     reps = audit_objects(obs, report_path=a.json, layer=layer, map_px=map_px, pad_px=a.pad, px_per_m=a.td,
                          purpose=purpose, baking=a.baking, directional=a.directional, rows=a.rows,
                          texels_per_m=a.lightmap_texels, lightmap_scale=a.lightmap_scale, text=a.text, lod=a.lod,
-                         material=a.material, lightmapper=lightmapper_name(a.lightmapper))
+                         material=a.material, lightmapper=lightmapper_name(a.lightmapper), tile_m=a.tile_m,
+                         steps=[float(x) for x in a.steps.split(",")] if a.steps else None,
+                         tile_offset=tuple(float(x) for x in a.tile_offset.split(",")) if a.tile_offset
+                         else (0.0, 0.0, 0.0), limits=a.limits)
     bad = any(r["issues"] for r in reps)
     if a.shared:
         sh = audit_shared(obs, layer=layer, map_px=map_px or 1024, pad_px=a.pad, purpose=purpose,

@@ -37,7 +37,8 @@ family (or M_TRIM_) prefix. Missing linked libraries are reported.
 
 From the command line (one line per piece; --json writes the full report; exit 1 on problems, 2 without --module):
     blender -b --factory-startup --python-exit-code 1 KIT_Arch_Exterior.blend --python kit_library.py --
-        --audit --module 0.5 [--json report.json]
+        --audit --module 0.5 [--json report.json] [--materials M_EXT_,M_STR_,M_TRIM_]   (allowed material prefixes:
+        default each piece's own family and M_TRIM_)
 Repair links after files moved (any order: it repeats passes; saves each file that relinked cleanly, then reopens all
 of them; exit 1 if anything is still missing). --renamed is for a renamed file whose collections kept their names
 (a KIT file); a renamed assembly needs the rename procedure in SKILL.md instead:
@@ -447,9 +448,14 @@ def _plain(value):
 
 def _custom(owner):
     """An ID's or modifier's own custom properties, without the property groups add-ons register on the type (Cycles
-    and the like appear there once the UI touches them, which is not an edit)."""
+    and the like appear there once the UI touches them, which is not an edit). Blender 5.x modifiers hold none (their
+    items() raises; a Geometry Nodes modifier's inputs are read by _rna): {}."""
     registered = owner.bl_rna.properties
-    return _plain({k: v for k, v in owner.items() if k not in registered})
+    try:
+        items = owner.items()
+    except TypeError:
+        return {}
+    return _plain({k: v for k, v in items if k not in registered})
 
 
 def _rna(struct):
@@ -470,6 +476,11 @@ def _rna(struct):
         out[ident] = _plain(v)
     if hasattr(struct, "items"):
         out["[custom]"] = _custom(struct)
+    gn = getattr(struct, "properties", None) if isinstance(struct, bpy.types.Modifier) else None
+    inputs = getattr(gn, "inputs", None)
+    if inputs is not None:                             # Blender 5.x Geometry Nodes inputs, one struct per socket
+        out["[inputs]"] = {p.identifier: _rna(getattr(inputs, p.identifier)) for p in inputs.bl_rna.properties
+                           if p.type == "POINTER" and p.identifier != "rna_type"}
     return out
 
 
@@ -1016,7 +1027,8 @@ def _main():
             sys.exit(2)
         return
     module = float(argv[argv.index("--module") + 1])
-    rep = audit_kit(module)
+    mats = argv[argv.index("--materials") + 1].split(",") if "--materials" in argv else None
+    rep = audit_kit(module, materials=tuple(m.strip() for m in mats if m.strip()) if mats else None)
     for r in rep["pieces"]:
         print("%-32s %s" % (r["piece"], "ok" if not r["issues"] else "; ".join(r["issues"])))
     probs = problems(rep)

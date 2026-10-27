@@ -162,6 +162,38 @@ def test_snapshot_round_trip_and_diff():
     assert ns["changes_since"](str(TMP / "none.json")) is None
 
 
+
+def test_snapshot_reads_pieces_with_modifiers():
+    """Blender 5.x modifiers hold no custom properties (items() raises), and the skills keep live stacks on pieces
+    (Bevel, Triangulate, Weighted Normal; Geometry Nodes): the snapshot, changes_since and checkout must read them,
+    a changed Bevel width and a changed Geometry Nodes input both show, and checkout runs."""
+    ns = build_master()
+    ob = bpy.data.objects["INT_Wall_2x3_A"]
+    bev = ob.modifiers.new("Bevel", "BEVEL")
+    for kind in ("TRIANGULATE", "WEIGHTED_NORMAL", "MIRROR", "ARRAY", "SOLIDIFY"):
+        ob.modifiers.new(kind.title(), kind).show_viewport = False
+    gn = ob.modifiers.new("GN", "NODES")
+    ng = bpy.data.node_groups.new("g", "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Size", in_out="INPUT", socket_type="NodeSocketFloat")
+    links = ng.nodes.new("NodeGroupInput"), ng.nodes.new("NodeGroupOutput")
+    ng.links.new(links[0].outputs[0], links[1].inputs[0])
+    gn.node_group = ng
+    ns["save_snapshot"](str(SNAP))
+    assert ns["changes_since"](str(SNAP)) == [], ns["describe"](ns["changes_since"](str(SNAP)))
+    bev.width = 0.05
+    lines = ns["describe"](ns["changes_since"](str(SNAP)))
+    assert lines == ["object INT_Wall_2x3_A changed: modifiers"], lines
+    ns["save_snapshot"](str(SNAP))
+    socket = next(p.identifier for p in gn.properties.inputs.bl_rna.properties if p.type == "POINTER"
+                  and p.identifier != "rna_type" and getattr(gn.properties.inputs, p.identifier).type == "VALUE")
+    getattr(gn.properties.inputs, socket).value = 2.0                 # a Geometry Nodes input alone
+    lines = ns["describe"](ns["changes_since"](str(SNAP)))
+    assert lines == ["object INT_Wall_2x3_A changed: modifiers"], lines
+    ns["checkout"](str(WORK), ["INT_Wall_2x3_A"])
+    assert WORK.exists()
+
 def test_checkout_integrate_replaces_in_place():
     ns = build_master()
     ns["checkout"](str(WORK), ["INT_Wall_2x3_A"])
@@ -258,7 +290,7 @@ def test_command_line_changes_and_integrate():
 
 CASES = [test_new_master_organises, test_audit_flags_misplaced_piece_and_visible_kit,
          test_audit_reads_pieces_in_the_excluded_kit_as_they_export, test_audit_reports_instance_offset_and_min_corner,
-         test_snapshot_round_trip_and_diff,
+         test_snapshot_round_trip_and_diff, test_snapshot_reads_pieces_with_modifiers,
          test_checkout_integrate_replaces_in_place, test_integrate_work_materials_replace,
          test_integrate_refuses_after_master_changed, test_integrate_adds_a_new_piece,
          test_command_line_changes_and_integrate]

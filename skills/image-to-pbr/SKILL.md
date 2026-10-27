@@ -16,6 +16,8 @@ it can, the presets supply what it cannot, and every guess is measured in the re
 | Does it tile? | The script measures each wrap edge (seam ratio, left-right and top-bottom); never trust a file name saying "seamless" | Measured 2026-10-25: a "seamless" rug image tiled left-right (ratio 1.19) but not top-bottom (2.8); its 541.5 px vertical repeat did not divide its 1254 px height |
 | Is it a repeating pattern? | `--make-tileable` finds the repeat along each failing axis and crops to whole repeats | A whole-period crop keeps every motif intact; a cross-fade ghosts them |
 | Lighting baked in? | Broad gradients, a hot spot, a shadow side | Delighting removes broad gradients only; hard cast shadows stay in the base colour: pick another image |
+| Shot straight on? | Grout lines, planks or weave run straight and parallel, equal spacing from edge to edge | Perspective or lens distortion becomes stretching once tiled (*practice*): take the photo square to the surface, or rectify it before converting |
+| Physical size | A ruler or an object of known size in the frame, or the scan's own scale | Record the size the source covers in metres: the tile's period along each axis is `tile_px` / `px` (both in the source record) x the source's metres along that axis, and the UV tiling and every grid-step check need it (section 5) |
 | Resolution | The largest power of two that fits, up to 2048 | Upscaling adds no detail; the report notes it |
 | Licence and origin | Record where it came from: stock licence, scan source, or the generator and its terms | The script writes a source record (section 4); the licence text is yours to add |
 
@@ -79,7 +81,7 @@ What it does, in order (detail in `references/method.md`):
 2. Resample to a square power of two with a wrap-aware, antialiased filter. A non-square tile is recorded as
    `tile_aspect`: set the material's tiling or UV scale to it, or the pattern is squashed.
 3. Base colour: divide out broad lighting in linear light, then bring luma into the dielectric 30-240 sRGB range,
-   keeping chroma.
+   keeping chroma. Both act on luma only: a colour patch at tile scale survives (section 4, step 3).
 4. Height from relative (log) luminance contrast in three bands, so a dark dye and a light dye give the same relief.
 5. Normal (tangent space, OpenGL Y+, 16-bit; DeepBump's or from the height), scaled so the 90th-percentile slope
    hits the preset's tilt.
@@ -93,17 +95,20 @@ What it does, in order (detail in `references/method.md`):
 2. Look at `preview_tile3x3.png` for seams, ghosting and repetition, and `preview_lit.png` for relief that reads the
    wrong way round (light motifs raised as ridges on a flat-pile rug is a wrong height map: lower the mid band).
 3. If `pbr-texturing` is installed, load it and run its PBR checker and look-dev render on the maps: values against
-   measured materials, the normal map's Y convention from the pixels, and the material under a studio HDRI.
+   measured materials, the normal map's Y convention from the pixels, and the material under a studio HDRI. A tiling
+   result also passes its tile-scale variation check (`pbr_check.py --tiling`, chroma included): a PROBLEM there
+   blocks, and that skill's tile flattener on the whole map set fixes it.
 4. Fine normal detail under low roughness sparkles in VR: keep `--tilt-deg` modest on smooth materials.
 
 ## 5. Provenance
 
 `T_<FAMILY>_<Name>_source.json` records the source path, its SHA-256, its size, the tile actually used and the PNG
-chunks it carried, including whether it holds a C2PA manifest (content credentials, the `caBX` chunk). Keep the
-source image and this record beside the maps, add the licence or the generator's terms, and pass both on with the
-material. This skill does not remove, forge or evade provenance: no stripping of C2PA manifests for their own sake,
-no attempts to defeat invisible watermarks such as SynthID. If a user asks for that, say so and carry on with the
-conversion.
+chunks it carried, including whether it holds a C2PA manifest (content credentials, the `caBX` chunk). The script
+does not know the physical size: add it by hand (`source_m` and `tile_m`, each as width and height, from section 1).
+Keep the source image and this record beside the maps, add the licence or the generator's terms, and pass both on
+with the material. This skill does not remove, forge or evade provenance: no stripping of C2PA manifests for their
+own sake, no attempts to defeat invisible watermarks such as SynthID. If a user asks for that, say so and carry on
+with the conversion.
 
 ## Scripts
 

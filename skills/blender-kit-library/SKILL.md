@@ -147,12 +147,12 @@ in the name). Split files: `references/split-files.md`, "Renaming".
 | Piece transform in the KIT file | Origin at world origin, rotation and scale applied, `collection.instance_offset = (0, 0, 0)` |
 | Placement rotation | Multiples of 90 deg about Z for grid pieces, so they stay on the grid |
 | Dimensions | A `2x3` wall at a 1 m module is exactly 2 m wide (X) and 3 m high (Z). Model walls running along X, so their thickness is in +Y. Thickness is not a grid dimension: keep it under one module and constant per family, and record it |
+| Tiling textures across joints | Every copy of a piece restarts its tiling pattern at its pivot, so a tiling material's tile (`map_px / texel_density` m) divides the module and the storey height (a 1 m or 0.5 m tile on a 1 m grid, never 4 m), and its UVs come from each piece's own axes with phase 0 at the pivot (`uv-unwrapping`'s `tile_project`, never Cube Projection); otherwise the brick or plank pattern jumps at every joint |
 
-With a bottom-left pivot, placing by hand lands on grid intersections when snapping is set to Snap To **Grid** (or
-Increment with Absolute Increment Snap) and the viewport grid scale equals the module. Plain Increment snapping only
-moves in grid steps from where the piece started, so an off-grid piece stays off-grid
-(https://docs.blender.org/manual/en/latest/editors/3dview/controls/snapping.html, checked 2026-10-17). Rotations are
-predictable too: a 90 deg turn pivots about the corner.
+With a bottom-left pivot, placing by hand lands on grid intersections when snapping is Snap To **Grid** (or Increment
+with Absolute Increment Snap) and the viewport grid scale equals the module; plain Increment only moves in grid steps
+from where the piece started, so an off-grid piece stays off-grid (checked 2026-10-17:
+https://docs.blender.org/manual/en/latest/editors/3dview/controls/snapping.html). A 90 deg turn pivots about the corner.
 
 ## One writer per file
 
@@ -191,7 +191,7 @@ at the wrong one, correct pieces fail and pieces built at the wrong size pass.
 | Name | Piece collections match the pattern; collections that hold objects but have no kit name are listed |
 | Transforms | Every object in a piece at identity (origin at the pivot, rotation and scale applied); `instance_offset` zero |
 | Footprint | Grid pieces: minimum corner at the origin, extents in whole modules matching the `Size` token (axes under one module skipped) |
-| Materials | Named `M_<FAMILY>_<Name>`, matching `^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$` (a `.001` duplicate fails), and only the piece's family or `M_TRIM_*` (another set: `audit_kit(module, materials=("M_EXT_", ...))`) |
+| Materials | Named `M_<FAMILY>_<Name>`, matching `^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$` (a `.001` duplicate fails), and only the piece's family or `M_TRIM_*` (another set: `audit_kit(module, materials=("M_EXT_", ...))`, CLI `--materials M_EXT_,M_STR_,M_TRIM_`) |
 | Stray meshes | Mesh objects outside any piece collection (`REF` aside) |
 | Layout | Single MASTER: every piece inside `KIT`, every assembly inside `ASM`, both excluded from the view layer, a `MASTER` collection |
 | Libraries | Linked libraries whose file is missing, and linked data missing from a file that exists (renamed in it) |

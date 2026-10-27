@@ -198,7 +198,7 @@ When a lightmap is full Bakery starts another, so a spill shows as an extra ligh
 
 ## Texel density
 
-| Surface | Texels per metre |
+| Surface | Texels per metre (*practice*, no published source) |
 |---|---|
 | Large outdoor terrain, skybox-lit ground | 2-5 |
 | Facades and exteriors seen from a distance | 6-10 |
@@ -209,6 +209,11 @@ When a lightmap is full Bakery starts another, so a spill shows as an extra ligh
 Set the scene value at the low end and promote renderers with Scale In Lightmap. Doubling Lightmap Resolution
 quadruples the texel count. Pick the resolution before the UV2 is packed: it sets every piece's footprint and so its
 gap.
+
+A large terrain is one lightmapped renderer when it passes the capacity check: 150 x 150 m of flat ground at 5
+texels/m is a 750 px box, about 0.54 of a 1024 map (*derived*; hills add area). One that does not is split into
+chunks, with the chunk edges under hedges, paths, fences or walls, where the step between two lightmaps is covered;
+the chunks are one run (lightmap-uvs.md, Runs, joints and overlays): one density, one Scale In Lightmap.
 
 ## Lightmap memory
 

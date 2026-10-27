@@ -10,7 +10,10 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/topology_audit.py", encod
     ns["audit_stack"](obj, flat_tol=0.5, before=snap)        # ... and after: fails if the normals moved
     ns["audit_many"]([o for o in bpy.data.objects if o.name.startswith("SK_")])
     ns["joint_match"](obj_a, obj_b, lambda co: abs(co.x) < 1e-4)   # do two pieces share their joint vertices?
+    ns["joint_normals"](obj_a, obj_b, lambda co: abs(co.x) < 1e-4) # ... and does the shading carry on across it?
     ns["determinism_hash"](obj)                               # compare across two builds: vertices and faces
+    ns["high_low_gap"](low, [high])                          # how far high and low part (relief, silhouette), metres
+    ns["bake_skew"](low)                                     # how slanted the bake's rays leave the low's faces
 
 audit_stack and normals_snapshot switch Triangulate modifiers off or on for a reading and restore them; nothing else
 is changed.
@@ -111,7 +114,20 @@ def flat_floor(ob, evaluated=True):
     return max(2.1 * max(amounts), 0.005) if amounts else 0.05
 
 
-def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.001, evaluated=True,
+def _planar(mesh, p, tol_deg=0.5):
+    """True when face p's corners lie in one plane: every fan triangle's normal within tol_deg of the face's."""
+    vs = [mesh.vertices[i].co for i in p.vertices]
+    n = p.normal
+    if n.length < 0.5:
+        return True
+    for i in range(1, len(vs) - 1):
+        tn = (vs[i] - vs[0]).cross(vs[i + 1] - vs[0])
+        if tn.length > 1e-12 and tn.normalized().dot(n) < math.cos(math.radians(tol_deg)):
+            return False
+    return True
+
+
+def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=None, evaluated=True,
           min_flat_width=None, flat_list_deg=0.5, join_tris=False):
     """Counts for one mesh object, in object space, with its modifiers applied (evaluated=True: the modifier stack's
     result; an exporter that triangulates again is not seen; False audits the mesh data alone).
@@ -127,8 +143,12 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
     index of the nearest face of the object's own mesh data (the evaluated mesh's faces are renumbered by the
     modifiers), listed once with its worst evaluated face (the two triangles of a quad, the two halves of a Mirror);
     "centre" is that evaluated face's centre in object space. flat_worst_face is the worst one's "face", or -1.
-    custom_normals and cn_quads: whether the evaluated mesh carries custom normals, and on how many faces of 4+
-    corners (an exporter that triangulates changes those). flat_shaded_faces counts faces not shaded smooth.
+    custom_normals, cn_quads and cn_quads_bent: whether the evaluated mesh carries custom normals, on how many faces
+    of 4+ corners, and how many of those are not planar (an exporter that triangulates one may split it the other
+    way; a planar quad keeps its corner normals, measured 0.0 deg on cards with transferred normals). flat_shaded_faces
+    counts faces not shaded smooth. short_edge (metres): edges shorter count as short_edges; by default (reported as
+    short_edge_m) 1 mm, or 1% of the piece's smallest side over 1 mm when that is less (a 5 mm screw's 0.5 mm head
+    rim, the 0.48 mm corners of a 30 cm gear's 1.5 mm chamfers).
     join_tris=True joins triangle pairs back into quads before counting (an applied Triangulate, _join_pairs)."""
     import bmesh
     import bpy
@@ -145,6 +165,12 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
         worst, at, over = _flatness(mesh, min_flat_width, flat_list_deg)
         custom = bool(mesh.has_custom_normals)
         cn_quads = sum(1 for p in mesh.polygons if p.loop_total >= 4) if custom else 0
+        cn_bent = sum(1 for p in mesh.polygons if p.loop_total >= 4 and not _planar(mesh, p)) if custom else 0
+        if short_edge is None:
+            dims = sorted(max(v.co[k] for v in mesh.vertices) - min(v.co[k] for v in mesh.vertices)
+                          for k in range(3)) if len(mesh.vertices) else [0.0]
+            sides = [x for x in dims if x > 0.001]
+            short_edge = min(0.001, 0.01 * sides[0]) if sides else 0.001
         flat_shaded = sum(1 for p in mesh.polygons if not p.use_smooth)
         worst_centre = mesh.polygons[at].center.copy() if at >= 0 else None
     finally:
@@ -210,7 +236,8 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=0.00
         loose_verts=sum(1 for v in bm.verts if not v.link_faces),
         flat_faces_off_deg=round(worst, 2), flat_worst_face=mapped[-1] if at >= 0 else -1,
         flat_faces=_one_per_face(mapped, over), flat_min_width=round(min_flat_width, 4),
-        custom_normals=custom, cn_quads=cn_quads, flat_shaded_faces=flat_shaded,
+        custom_normals=custom, cn_quads=cn_quads, cn_quads_bent=cn_bent, flat_shaded_faces=flat_shaded,
+        short_edge_m=round(short_edge, 6),
     )
     bm.free()
     return r
@@ -412,8 +439,10 @@ def audit_stack(ob, allow_open=False, flat_tol=None, normals_tol=0.5, before=Non
         off = on
     merged = dict(on, **{k: off[k] for k in STACK_OFF_KEYS})
     found = problems(merged, allow_open, flat_tol)
-    if on["cn_quads"]:
-        found.append("custom_normals_on_quads")
+    live_hs = any(m.show_viewport and (m.type == 'WEIGHTED_NORMAL' or (m.type == 'BEVEL' and m.harden_normals))
+                  for m in ob.modifiers)
+    if on["cn_quads"] if live_hs else on["cn_quads_bent"]:   # a live hard-surface stack keeps its Triangulate live;
+        found.append("custom_normals_on_quads")              # normals in the data (cards) only matter on bent quads
     if change is not None and change > normals_tol:
         found.append("triangulate_moves_normals")
     if late:
@@ -466,6 +495,51 @@ def joint_match(a, b, select, digits=5, matrix_a=None, matrix_b=None):
     return pa - pb, pb - pa, pa & pb
 
 
+def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None):
+    """Does the shading carry on across a joint? At each joint position the two pieces share (as joint_match finds
+    them, in one frame through matrix_a / matrix_b), each corner normal of either evaluated mesh is matched to the
+    nearest corner normal of the other piece there (its front against the neighbour's front, its top against the top).
+    Faces lying wholly in the joint (every corner selected: the end caps pressed together) are left out, so a crease
+    of any angle counts (a piece smoothed across its folds against a hard-shaded one reads 54.7 deg). The worst match,
+    both ways, is reported. A smooth curved piece ending against a straight one leans its end vertices by half a facet
+    angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true surface
+    normal put it right. Returns {"positions": shared positions compared, "max_deg", "worst": [(deg, position),
+    ...]}."""
+    import bpy
+    dg = bpy.context.evaluated_depsgraph_get()
+
+    def corners(ob, m):
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        try:
+            rot = (m.to_3x3() if m is not None else None)
+            out = {}
+            for p in me.polygons:
+                pos = [m @ me.vertices[i].co if m is not None else me.vertices[i].co.copy() for i in p.vertices]
+                inside = [bool(select(co)) for co in pos]
+                if all(inside):
+                    continue                                   # an end cap lying in the joint
+                for li, co, sel in zip(p.loop_indices, pos, inside):
+                    if not sel:
+                        continue
+                    n = me.corner_normals[li].vector.copy()
+                    if rot is not None:
+                        n = (rot.inverted().transposed() @ n).normalized()
+                    out.setdefault(tuple(round(c, digits) for c in co), []).append(n)
+            return out
+        finally:
+            ev.to_mesh_clear()
+    ca, cb = corners(a, matrix_a), corners(b, matrix_b)
+    shared = set(ca) & set(cb)
+    per = {key: 0.0 for key in shared}
+    for x, y in ((ca, cb), (cb, ca)):
+        for key in shared:
+            for n in x[key]:
+                per[key] = max(per[key], min(math.degrees(n.angle(m, 0.0)) for m in y[key]))
+    worst = sorted(((round(d, 3), list(key)) for key, d in per.items()), key=lambda w: -w[0])
+    return {"positions": len(worst), "max_deg": worst[0][0] if worst else 0.0, "worst": worst[:5]}
+
+
 def determinism_hash(ob, digits=5):
     """A short hash of the mesh data's vertex positions and faces (each face as its corner positions in winding order,
     starting from the smallest): equal across two builds means the generator made the same mesh, topology included.
@@ -478,3 +552,206 @@ def determinism_hash(ob, digits=5):
         faces.append(tuple(corners[k:] + corners[:k]))
     key = repr((sorted(pos), sorted(faces))).encode()
     return hashlib.md5(key).hexdigest()[:12]
+
+
+# ---- high and low poly ---------------------------------------------------------------------------------------------
+
+def _world_mesh(ob, dg, with_poly=False):
+    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space,
+    and with_poly each triangle's polygon index. A mirrored object (negative scale) has its triangles' winding
+    reversed so they still face outward."""
+    import numpy as np
+    ev = ob.evaluated_get(dg)
+    me = ev.to_mesh()
+    try:
+        mw = np.array(ev.matrix_world)
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3) @ mw[:3, :3].T + mw[:3, 3]
+        vn = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("normal", vn)
+        vn = vn.reshape(-1, 3) @ np.linalg.inv(mw[:3, :3])
+        vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
+        me.calc_loop_triangles()
+        tri = np.empty(len(me.loop_triangles) * 3, np.int64)
+        me.loop_triangles.foreach_get("vertices", tri)
+        tri = tri.reshape(-1, 3)
+        if np.linalg.det(mw[:3, :3]) < 0:
+            tri = tri[:, ::-1].copy()
+        area = 0.5 * np.linalg.norm(np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]]), axis=1)
+        if with_poly:
+            tpoly = np.empty(len(me.loop_triangles), np.int64)
+            me.loop_triangles.foreach_get("polygon_index", tpoly)
+            return co, tri, area, vn, tpoly
+        return co, tri, area, vn
+    finally:
+        ev.to_mesh_clear()
+
+
+def _surface_samples(co, tri, area, n, seed=0):
+    """n points spread over the triangles by area (none when the surface has no area)."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    if n <= 0 or area.sum() <= 0:
+        return np.zeros((0, 3))
+    pick = rng.choice(len(tri), size=n, p=area / area.sum())
+    a, b = rng.random(n), rng.random(n)
+    flip = a + b > 1
+    a[flip], b[flip] = 1 - a[flip], 1 - b[flip]
+    t = tri[pick]
+    return co[t[:, 0]] + a[:, None] * (co[t[:, 1]] - co[t[:, 0]]) + b[:, None] * (co[t[:, 2]] - co[t[:, 0]])
+
+
+def _signed_outside(points, trees):
+    """Per point: its signed distance outside the nearest surface among trees (positive: on the side its normal
+    points to)."""
+    import numpy as np
+    from mathutils import Vector
+    out = np.empty(len(points))
+    for i, p in enumerate(points):
+        best = None
+        for t in trees:
+            loc, nrm, _idx, dist = t.find_nearest(Vector(p))
+            if loc is not None and (best is None or dist < best[0]):
+                best = (dist, loc, nrm)
+        out[i] = 0.0 if best is None else float(np.dot(np.asarray(p) - np.asarray(best[1]), np.asarray(best[2])))
+    return out
+
+
+def high_low_gap(low, highs, depsgraph=None, samples=20000, seed=0):
+    """How far a low poly and its high polys part, in metres, both evaluated in world space (closed meshes with
+    outward normals): high_outside, how far the high stands outside the low (the relief the bake turns into a normal
+    map, and how far the cage must reach); low_outside, how far the low stands outside every high (a silhouette the
+    high does not have). The highs are one surface, sampled by area (`samples` points each side): splitting a high
+    into two objects or adding rivets changes nothing. Percentiles (p99, p999) come from the area samples, max from
+    those and every vertex. Where the low stands outside the high, a point whose surroundings on the low (3 x its
+    distance away, at least 2 mm) meet the high again lies over a recess of the high (a groove, a panel line, a dent:
+    relief the bake carries), the rest is a bulge of the low. Judge them at the nearest viewing distance d with
+    detail_scale.py: low_outside_max (bulges only) above min_width_m(d) (2 px) is a silhouette the player sees that
+    the texture cannot explain (a 4 cm bump on 0.6% of a low read p99 0); high_outside_p99 and recess_max above
+    stereo_relief_m(d) are relief that shows depth and belongs in the low's geometry (a crate's 1.5 mm V grooves are
+    recesses, not bulges). low_outside_raw_max is the largest before that split. Raises ValueError for a low or high
+    with no faces. Read-only."""
+    import bpy
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    dg = depsgraph or bpy.context.evaluated_depsgraph_get()
+    lo = _world_mesh(low, dg)
+    hi = [_world_mesh(h, dg) for h in highs]
+    empty = [ob.name for ob, m in zip([low] + list(highs), [lo] + hi) if not len(m[1])]
+    if empty or not hi:
+        raise ValueError("high_low_gap needs faces on the low and on at least one high: %s"
+                         % (", ".join(empty) or "no highs given"))
+    offs = np.cumsum([0] + [len(h[0]) for h in hi])
+    hco = np.vstack([h[0] for h in hi])
+    htri = np.vstack([h[1] + o for h, o in zip(hi, offs)])
+    harea = np.concatenate([h[2] for h in hi])
+    tree = lambda co, tri: BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in tri])
+    low_tree, high_tree = tree(lo[0], lo[1]), tree(hco, htri)
+    hs = np.maximum(_signed_outside(_surface_samples(hco, htri, harea, samples, seed), [low_tree]), 0.0)
+    lpts = _surface_samples(lo[0], lo[1], lo[2], samples, seed)
+    ls = np.maximum(_signed_outside(lpts, [high_tree]), 0.0)
+    hv = np.maximum(_signed_outside(hco, [low_tree]), 0.0)
+    lv = np.maximum(_signed_outside(lo[0], [high_tree]), 0.0)
+    bulge, recess = _split_recesses(np.vstack([lpts, lo[0]]), np.concatenate([ls, lv]), low_tree, high_tree)
+    r = lambda v: round(float(v), 5)
+    pct = lambda v, q: r(np.percentile(v, q)) if len(v) else 0.0
+    return {"high_outside_max": r(max(hs.max(initial=0.0), hv.max(initial=0.0))),
+            "high_outside_p99": pct(hs, 99), "high_outside_p999": pct(hs, 99.9),
+            "low_outside_max": r(bulge), "recess_max": r(recess),
+            "low_outside_raw_max": r(max(ls.max(initial=0.0), lv.max(initial=0.0))),
+            "low_outside_p99": pct(ls, 99), "low_outside_p999": pct(ls, 99.9),
+            "points": [int(len(hs) + len(hv)), int(len(ls) + len(lv))]}
+
+
+def _split_recesses(points, outside, low_tree, high_tree, cap=4000, floor=1e-4):
+    """(largest bulge, largest recess) among the low points standing outside the high, worst first: around a point
+    at distance d, eight points 3 d away (at least 2 mm) on the low's surface; if any of them lies within d / 4 of the
+    high, the high comes back up there and the point sits over a recess. The first bulge found is the largest; at
+    most `cap` points are classified."""
+    import math
+    import numpy as np
+    from mathutils import Vector
+    order = np.argsort(-outside)
+    recess = 0.0
+    for n, i in enumerate(order):
+        d = float(outside[i])
+        if d <= floor or n >= cap:
+            return (d if n >= cap else 0.0), recess
+        p = Vector(points[i])
+        loc, nrm, _f, _dist = low_tree.find_nearest(p)
+        if loc is None:
+            return d, recess
+        t1 = nrm.orthogonal().normalized()
+        t2 = nrm.cross(t1)
+        rad = max(3.0 * d, 0.002)
+        back = False
+        for k in range(8):
+            a = 2.0 * math.pi * k / 8
+            q = low_tree.find_nearest(loc + rad * (math.cos(a) * t1 + math.sin(a) * t2))[0]
+            h = high_tree.find_nearest(q) if q is not None else (None,)
+            if h[0] is not None and float((q - h[0]).dot(h[1])) < 0.25 * d:
+                back = True
+                break
+        if not back:
+            return d, recess
+        recess = max(recess, d)
+    return 0.0, recess
+
+
+def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None, relief_m=None):
+    """Where a bake's rays leave a low poly at a slant. A cage built from averaged normals (Blender's Selected to
+    Active with a cage, and bake_maps.py) casts each ray along the vertex normals interpolated across the triangle, so
+    at each of 15 barycentric points per triangle this takes the angle between that interpolated normal and the
+    surface it lands on: the high's normal at the nearest high point when highs are given (what skews detail: a
+    cylinder low built to the chord rule sends radial rays onto a round high and reads 0), else the low face's own
+    normal. Detail projected along a slanted ray lands shifted ("skewed") by about relief x tan(angle): 15 deg moves
+    10 mm of relief 2.7 mm. faces: the low's polygon indices to judge (the faces a player sees; default all).
+    Returns the share of the judged area over limit_deg, the area-weighted p95 angle and the worst faces' centres;
+    with relief_m (the baked relief, high_low_gap's high_outside_p99) also shift_m, relief x tan(p95): how far the
+    detail lands off, to hold against detail_scale's min_width_m(d) (a 0.7 mm bottle relief at 26 deg moves 0.34 mm).
+    Read-only."""
+    import bpy
+    import numpy as np
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+    dg = depsgraph or bpy.context.evaluated_depsgraph_get()
+    co, tri, area, vn, tpoly = _world_mesh(low, dg, with_poly=True)
+    if faces is not None:
+        keep = np.isin(tpoly, np.asarray(list(faces), np.int64))
+        tri, area = tri[keep], area[keep]
+    if not len(tri):
+        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": [], "against": "none",
+                "shift_m": 0.0 if relief_m is not None else None}
+    fn = np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
+    bary = np.array([(i / 4.0, j / 4.0, 1.0 - (i + j) / 4.0) for i in range(5) for j in range(5 - i)])
+    n = np.einsum("pk,tkc->tpc", bary, vn[tri])                     # (triangles, 15 points, 3)
+    n /= np.maximum(np.linalg.norm(n, axis=2, keepdims=True), 1e-12)
+    if highs:
+        hs = [_world_mesh(h, dg) for h in highs]
+        offs = np.cumsum([0] + [len(h[0]) for h in hs])
+        tree = BVHTree.FromPolygons([tuple(c) for c in np.vstack([h[0] for h in hs])],
+                                    [tuple(int(i) for i in t) for t in np.vstack([h[1] + o for h, o in zip(hs, offs)])])
+        pts = np.einsum("pk,tkc->tpc", bary, co[tri])
+        ref = np.empty_like(n)
+        for ti in range(len(tri)):
+            for pi in range(len(bary)):
+                hit = tree.find_nearest(Vector(pts[ti, pi]))
+                ref[ti, pi] = tuple(hit[1]) if hit[0] is not None else fn[ti]
+    else:
+        ref = np.repeat(fn[:, None, :], len(bary), axis=1)
+    ang = np.degrees(np.arccos(np.clip((n * ref).sum(axis=2), -1.0, 1.0)))
+    w = np.repeat(area[:, None] / len(bary), len(bary), axis=1)
+    flat, wf = ang.ravel(), w.ravel()
+    order = np.argsort(flat)
+    cum = np.cumsum(wf[order])
+    p95 = float(flat[order][min(len(order) - 1, np.searchsorted(cum, 0.95 * cum[-1]))])
+    mean_t = ang.mean(axis=1)
+    worst = np.argsort(-mean_t)[:5]
+    centre = co[tri].mean(axis=1)
+    return {"over_share": round(float(wf[flat > limit_deg].sum() / max(wf.sum(), 1e-12)), 4), "p95_deg": round(p95, 2),
+            "limit_deg": limit_deg, "against": "high" if highs else "low faces",
+            "shift_m": round(float(relief_m) * math.tan(math.radians(p95)), 6) if relief_m is not None else None,
+            "worst": [(round(float(mean_t[i]), 1), [round(float(x), 3) for x in centre[i]])
+                      for i in worst if mean_t[i] > limit_deg]}

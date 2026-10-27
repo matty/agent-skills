@@ -204,6 +204,77 @@ def off_tile_island_is_reported():
           "spill not reported: %s" % r["issues"])
 
 
+def edge_margin_is_reported():
+    """Hero prop F7: an island that fits the tile but sits closer to its edge than half the gap is not a fit (the audit
+    of the same layout fails it); a smaller density that leaves the gap fits."""
+    for ppm, fits in ((508, False), (448, True)):
+        ob = make("EDGE%d" % ppm, [quad(0, 0, 1, 1)], [sq(0.1, 0.1, 0.5)])
+        res = ua.layout([ob], map_px=512, px_per_m=ppm)[ob.name]          # default gap 8 px: 4 px to the edge
+        check(res["fits"] is fits, "%d px/m: fits %s, expected %s: %s" % (ppm, res["fits"], fits, res))
+        check(fits or "tile edge" in res.get("fit_problem", ""), "no fit_problem: %s" % res)
+        check(res["margin_px"] is not None and (res["margin_px"] >= 4 - 1e-3) is fits, "margin_px %s" % res)
+
+
+def straighten_strips():
+    """Hero prop F20: a tube's quad strip unwrapped ANGLE_BASED comes out bent; straighten() squares its best quad and
+    makes the island follow it, so every UV edge runs along U or V at its 3D length (angular stretch 1); an island
+    holding a triangle is left alone and counted."""
+    n, rings = 16, 4                                        # an open tube, 16 x 3 quads, 1 m across and high
+    verts = [(0.5 * math.cos(2 * math.pi * i / n), 0.5 * math.sin(2 * math.pi * i / n), z / (rings - 1))
+             for z in range(rings) for i in range(n)]
+    faces = [(z * n + i, z * n + (i + 1) % n, (z + 1) * n + (i + 1) % n, (z + 1) * n + i)
+             for z in range(rings - 1) for i in range(n)]
+    me = bpy.data.meshes.new("TUBE")
+    me.from_pydata(verts, [], faces)
+    me.update()
+    me.uv_layers.new(name="UVMap")
+    ob = bpy.data.objects.new("TUBE", me)
+    bpy.context.scene.collection.objects.link(ob)
+    for e in me.edges:                                      # one vertical seam, at x = 0.5
+        a, b = (me.vertices[i].co for i in e.vertices)
+        e.use_seam = abs(a.x - b.x) < 1e-6 and abs(a.y - b.y) < 1e-6 and a.x > 0.49
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    ob.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    lay = me.uv_layers.active                               # as a dry run found it: tilted 5 deg and uneven
+    uv = np.array([d.uv[:] for d in lay.data])
+    c, a = uv.mean(axis=0), math.radians(5.0)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    key = [(me.loops[i].vertex_index, round(uv[i, 0], 5), round(uv[i, 1], 5)) for i in range(len(uv))]
+    jitter = {k: np.random.default_rng(len(key) + j).normal(0.0, 0.002, 2) for j, k in enumerate(sorted(set(key)))}
+    uv = (uv - c) @ rot.T + c + np.array([jitter[k] for k in key])     # per UV vertex: the island stays whole
+    for d, v in zip(lay.data, uv):
+        d.uv = v
+    me.update()
+
+    def worst_edge_deg():
+        lay = me.uv_layers.active
+        worst = 0.0
+        for p in me.polygons:
+            uv = [lay.data[li].uv for li in p.loop_indices]
+            for k in range(len(uv)):
+                dx, dy = uv[(k + 1) % len(uv)].x - uv[k].x, uv[(k + 1) % len(uv)].y - uv[k].y
+                a = math.degrees(math.atan2(abs(dy), abs(dx)))
+                worst = max(worst, min(a, 90.0 - a))
+        return worst
+    before = worst_edge_deg()
+    res = ua.straighten([ob])[ob.name]
+    after = worst_edge_deg()
+    check(res == {"straightened": 1, "skipped": 0} and before > 1.0 and after < 0.05,
+          "straighten: %s, worst edge %.2f -> %.3f deg off U/V" % (res, before, after))
+    r = ua.audit(ob, layer=0, map_px=1024)
+    check(r["angular_p95"] < 1.01, "straightened strip stretched: %s" % r["angular_p95"])
+    check(bpy.context.mode == "OBJECT", "mode not restored: %s" % bpy.context.mode)
+    bpy.ops.mesh.primitive_cone_add(vertices=8)
+    cone = bpy.context.active_object
+    check(ua.straighten([cone])[cone.name]["skipped"] >= 1, "an island with triangles must be skipped")
+
+
 def active_layer_restored():
     q3 = [quad(2 * i, 0, 2 * i + 1, 1) for i in range(3)]
     ob = make("LAYERS", q3, [sq(0.05, 0.05, 0.1), sq(0.3, 0.05, 0.2), sq(0.6, 0.05, 0.3)], layers=("UVMap", "UV2"))
@@ -1513,6 +1584,129 @@ def layout_cuts_long_islands():
     print("INFO layout_cuts_long_islands: %.0f px/m whole, %.0f px/m cut" % (cov_whole, r["texel_px_per_m"]))
 
 
+def wall_box(name, length, height=3.0, thick=0.3, loc=(0, 0, 0), rot_z=0.0):
+    """A grid wall piece: pivot at the bottom-left corner, extending into +X, +Y and +Z, front facing -Y."""
+    me = bpy.data.meshes.new(name)
+    v = [(x, y, z) for z in (0, height) for y in (0, thick) for x in (0, length)]
+    f = [(0, 1, 5, 4), (3, 2, 6, 7), (2, 0, 4, 6), (1, 3, 7, 5), (4, 5, 7, 6), (2, 3, 1, 0)]
+    me.from_pydata(v, [], f)
+    me.update()
+    me.uv_layers.new(name="UVMap")
+    ob = bpy.data.objects.new(name, me)
+    ob.location, ob.rotation_euler = loc, (0, 0, rot_z)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.update()
+    return ob
+
+
+def world_uv_at(ob, world_pt, normal_world, tol=1e-5):
+    """UVs of the corners at world_pt on faces facing normal_world."""
+    mw = ob.matrix_world
+    out = []
+    for p in ob.data.polygons:
+        n = (mw.to_3x3() @ p.normal).normalized()
+        if n.dot(normal_world) < 0.99:
+            continue
+        for li in range(p.loop_start, p.loop_start + p.loop_total):
+            co = mw @ ob.data.vertices[ob.data.loops[li].vertex_index].co
+            if (co - world_pt).length < tol:
+                out.append(tuple(ob.data.uv_layers[0].data[li].uv))
+    return out
+
+
+def tiling_kit_continues_across_joints():
+    """A 1 m and a 2 m wall side by side and a pair turned 90 deg, a 1 m tile on a 1 m grid with 3 m storeys. Cube
+    Projection (cube_size 1) centres on each piece's bounds, so the 2 m wall starts half a tile off and tile_phase
+    flags it; tile_project puts phase 0 at every pivot and the UVs agree at every shared joint vertex."""
+    from mathutils import Vector
+    a = wall_box("WALL_1m", 1.0)
+    b = wall_box("WALL_2m", 2.0, loc=(1, 0, 0))
+    c = wall_box("WALL_1m_turned", 1.0, loc=(10, 0, 0), rot_z=math.pi / 2)
+    d = wall_box("WALL_2m_turned", 2.0, loc=(10, 1, 0), rot_z=math.pi / 2)
+    for ob in (a, b, c, d):
+        for o in bpy.context.scene.objects:
+            o.select_set(o is ob)
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.cube_project(cube_size=1.0, correct_aspect=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    left_b = [u for u, _ in world_uv_at(b, Vector((1, 0, 0)), Vector((0, -1, 0)))]
+    check(bool(left_b) and abs(abs(left_b[0] - math.floor(left_b[0])) - 0.5) < 1e-4,
+          "Cube Projection: the 2 m wall's left edge should sit half a tile off, got %s" % left_b)
+    r = ua.audit(b, purpose="tiling", map_px=512, px_per_m=512, tile_m=1.0, steps=[1.0, 3.0])
+    check(r["tile_phase"]["off_faces"] > 0 and any("tile_project" in i for i in r["issues"]),
+          "tile_phase should flag the cube-projected 2 m wall: %s" % r["issues"])
+    written = ua.tile_project([a, b, c, d], 1.0)
+    check(written == {"WALL_1m": 6, "WALL_2m": 6, "WALL_1m_turned": 6, "WALL_2m_turned": 6}, written)
+    for ob in (a, b, c, d):
+        r = ua.audit(ob, purpose="tiling", map_px=512, px_per_m=512, tile_m=1.0, steps=[1.0, 3.0])
+        check(r["issues"] == [] and r["tile_phase"]["phase_px_max"] < 1e-3, "%s: %s" % (ob.name, r["issues"]))
+    # every shared joint vertex reads the same UVs (mod whole tiles) on both pieces' fronts
+    for (p, q, pt, n) in ((a, b, (1, 0, z), (0, -1, 0)) for z in (0, 3)):
+        ua_, ub_ = world_uv_at(p, Vector(pt), Vector(n)), world_uv_at(q, Vector(pt), Vector(n))
+        check(ua_ and ub_, "no joint corner at %s" % (pt,))
+        du = np.subtract(ua_[0], ub_[0])
+        check(np.abs(du - np.round(du)).max() < 1e-5, "joint at %s: %s vs %s" % (pt, ua_, ub_))
+    for z in (0, 3):                                             # the turned pair meet at world (10, 1, z), facing +X
+        ua_, ub_ = world_uv_at(c, Vector((10, 1, z)), Vector((1, 0, 0))), world_uv_at(d, Vector((10, 1, z)),
+                                                                                       Vector((1, 0, 0)))
+        du = np.subtract(ua_[0], ub_[0])
+        check(np.abs(du - np.round(du)).max() < 1e-5, "turned joint at z %s: %s vs %s" % (z, ua_, ub_))
+    bad = ua.tile_steps_issues(4.0, [1.0, 3.0])
+    check(len(bad) == 2, bad)
+    # a floor tile turned 90 deg turns its pattern: the joint with an unturned neighbour jumps (the documented limit)
+    def floor(name, loc, rot_z):
+        me = bpy.data.meshes.new(name)
+        me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
+        me.update()
+        me.uv_layers.new(name="UVMap")
+        ob = bpy.data.objects.new(name, me)
+        ob.location, ob.rotation_euler = loc, (0, 0, rot_z)
+        bpy.context.scene.collection.objects.link(ob)
+        return ob
+    fa, fb = floor("FLOOR_A", (30, 0, 0), 0.0), floor("FLOOR_B_turned", (32, 0, 0), math.pi / 2)
+    bpy.context.view_layer.update()
+    ua.tile_project([fa, fb], 1.0)
+    # the corners of a 1 m tile are whole tiles on both sides; the joint edge's midpoint (the mean of its two corners'
+    # UVs on each side, where the UVs interpolate linearly) shows the jump
+    mid = lambda ob: np.mean([world_uv_at(ob, Vector((31, y, 0)), Vector((0, 0, 1)))[0] for y in (0, 1)], axis=0)
+    dv = np.subtract(mid(fa), mid(fb))
+    check(np.abs(dv - np.round(dv)).max() > 0.2,
+          "a floor turned 90 deg should jump at its joint: %s against %s" % (mid(fa), mid(fb)))
+    neg = wall_box("NEG_mirrored_wall", 1.0, loc=(40, 0, 0))
+    neg.scale = (-1, 1, 1)
+    try:
+        ua.tile_project([neg], 1.0)
+        raise AssertionError("tile_project must refuse a negative scale")
+    except ValueError as e:
+        check("negative scale" in str(e), e)
+    # a 2 m tile on the 1 m grid: phase variants P0 at x 20 and P1 at x 21 continue; a second P0 at x 21 does not
+    p0, p1 = wall_box("VAR_P0", 1.0, loc=(20, 0, 0)), wall_box("VAR_P1", 1.0, loc=(21, 0, 0))
+    q0 = wall_box("VAR_P0_wrong", 1.0, loc=(21, 0, 0))
+    ua.tile_project([p0, q0], 2.0)
+    ua.tile_project([p1], 2.0, offset=(1.0, 0, 0))
+    check(ua.audit(p1, purpose="tiling", map_px=1024, px_per_m=512, tile_m=2.0, tile_offset=(1.0, 0, 0))["issues"]
+          == [], "the P1 variant audited with its offset")
+    for z in (0, 3):
+        u0 = world_uv_at(p0, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        u1 = world_uv_at(p1, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        uq = world_uv_at(q0, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        du, dq = np.subtract(u0, u1), np.subtract(u0, uq)
+        check(np.abs(du - np.round(du)).max() < 1e-5, "variants at z %s: %s vs %s" % (z, u0, u1))
+        check(abs(dq[0] - round(dq[0])) > 0.4, "a plain copy at 21 m should jump half a tile: %s vs %s" % (u0, uq))
+    # the command line takes --tile-m and --steps
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "kit.blend")
+        bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+        code = ua._main(["--objects", "WALL_*", "--purpose", "tiling", "--map", "512", "--td", "512",
+                         "--tile-m", "1", "--steps", "1,3"])
+        check(code == 0, "command line on tile_project's walls: exit %s" % code)
+        code = ua._main(["--objects", "WALL_*", "--purpose", "tiling", "--map", "512", "--td", "512",
+                         "--tile-m", "1", "--steps", "1,3,0.3"])
+        check(code == 1, "a 0.3 m step is not a whole number of 1 m tiles: exit %s" % code)
+
+
 def tiling_islands_moved_home():
     """home_tiling moves tiling islands by whole repeats only: each lands with its lowest corner in the first repeat,
     the texture it samples is unchanged (UV mod period), sizes are kept. The tiling audit flags UVs that FP16 would
@@ -1636,7 +1830,7 @@ def reunwrap_keeps_placement():
     check(abs(abs(signed(ob, n)) / a0 - 1) < 1e-3, "units_per_m=None did not keep the UV area")
 
 
-CASES = [reunwrap_keeps_placement, tiling_islands_moved_home, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
+CASES = [tiling_kit_continues_across_joints, reunwrap_keeps_placement, tiling_islands_moved_home, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
          stack_added_triangulate, seams_by_angle_matches_select_sharp, text_up_attribute_in_world_space,
          trim_sheet_2048x1024, material_filter_and_command_line, stack_faces_names_the_causes,
          lightmap_lods_at_their_own_footprint, hard_edges_route_a_boolean, modular_wall_mixed_materials,
@@ -1646,7 +1840,7 @@ CASES = [reunwrap_keeps_placement, tiling_islands_moved_home, pack_one_material,
          text_check_follows_align_rotation,
          lightmap_uv2_seams_not_smart_project, lightmap_flags_on_the_command_line, bevel_stack_order_of_work,
          stack_faces_checks_corner_order,
-         layout_atlas_together, off_tile_island_is_reported, crate_grain_by_axis_across, merged_mirror_halves_bake,
+         layout_atlas_together, off_tile_island_is_reported, edge_margin_is_reported, straighten_strips, crate_grain_by_axis_across, merged_mirror_halves_bake,
          unwrap_margin_keeps_seams, lightmap_charts_cut_at_corners, uv0_is_the_default_layer,
          trim_strip_band_and_rows, stacking_tools, lightmap_pack_and_measured_footprint, lightmap_pack_for_bakery,
          active_layer_restored,

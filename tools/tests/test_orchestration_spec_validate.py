@@ -48,7 +48,9 @@ def study_spec():
         placements.append({"ref": "STR_Ceiling_2x2_A", "pos": [x, y, 3], "rot": 0})
     placements += [{"ref": "PROP_Desk_Free_A", "pos": [3, 4.35, 0], "rot": 0},
                    {"ref": "PROP_LightSwitch_Free_A", "pos": [3.25, 1.2, 1.2], "rot": 180}]
-    family = {"texturing": "tiling", "texel_density": 512, "map_px": 1024}
+    # a 1 m tile (512 px at 512 px/m) divides the 1 m module and the 3 m storey; the dry run's 2 m tile would jump at
+    # every other joint (the tile_phase rule)
+    family = {"texturing": "tiling", "texel_density": 512, "map_px": 512}
     return {
         "version": 1,
         "world": {"name": "Study", "platforms": ["pc", "quest"], "scale": "small", "allow_generated_assets": False,
@@ -137,6 +139,7 @@ class SpecChecks(unittest.TestCase):
     def test_family_map_px_is_checked_against_the_pc_maximum_only(self):
         spec = study_spec()
         spec["world"]["platforms"] = ["pc", "quest", "ios"]
+        spec["families"]["INT"]["texturing"] = "atlas"                    # a tiling 4 m tile fails the tile rule
         spec["families"]["INT"]["map_px"] = 2048                          # mobile gets 1024 from import overrides
         self.assertEqual(run(spec)[0].errors, 0)
         spec["families"]["INT"]["map_px"] = 4096
@@ -162,6 +165,149 @@ class SpecChecks(unittest.TestCase):
         spec["families"]["INT"]["thickness"] = 0.3                        # under one module: a thin axis
         warnings = messages(run(spec)[0], "WARN")
         self.assertFalse(any("thickness" in m for m in warnings), warnings)
+
+    def test_tiling_tile_divides_the_grid_steps(self):
+        spec = study_spec()
+        spec["families"]["INT"]["map_px"] = 1024                          # a 2 m tile on a 1 m grid, 3 m storeys
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        notes = messages(res, "NOTE")                                      # placed on multiples of 2 m, it works
+        self.assertTrue(any("family INT: its 2 m tile is 2 grid modules" in m and "3 m storey apart do not" in m
+                            and "map_px 512 or 256 or 128" in m for m in notes), notes)
+        self.assertTrue(any("INT_Wall_2x3_A at [3, 1, 0] sits 512.0 px along it" in m
+                            for m in messages(res, "ERROR")))             # the study's walls are not
+        spec["families"]["INT"]["map_px"] = 256                           # 0.5 m divides both
+        self.assertEqual(run(spec)[0].errors, 0)
+        spec["families"]["INT"]["map_px"] = 768                           # 1.5 m: neither divides nor is whole modules
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("family INT: its 1.5 m tile" in m and "does not divide grid.module 1 m" in m
+                            for m in errors), errors)
+        spec["families"]["INT"]["map_px"] = 512
+        spec["grid"]["storey_height"] = 3.5                               # a 1 m tile no longer divides the storey
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        self.assertTrue(any("family INT: its 1 m tile does not divide the 3.5 m storey" in m
+                            for m in messages(res, "NOTE")), messages(res, "NOTE"))
+        spec["grid"]["storey_height"] = 2.8
+        spec["families"]["INT"]["map_px"] = 768                           # no power-of-two tile divides 2.8 m
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("family INT" in m and "no power-of-two map" in m for m in errors), errors)
+        spec["families"]["INT"]["map_px"] = 1024
+        spec["grid"]["storey_height"] = 4.0
+        spec["families"]["INT"]["tile_phase"] = "variants"                # a 2 m tile: 2 variants on a 1 m grid
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        self.assertTrue(any("2 phase variants" in m for m in messages(res, "NOTE")), messages(res, "NOTE"))
+        spec["grid"]["storey_height"] = 3.0                               # 3 m is not a whole number of 2 m tiles
+        self.assertTrue(any("stacked a storey apart meet off phase" in m for m in messages(run(spec)[0], "NOTE")))
+        spec["families"]["INT"]["map_px"] = 768
+        self.assertTrue(any("tile_phase variants needs" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["families"]["INT"]["map_px"] = 1024
+        spec["families"]["INT"]["tile_phase"] = "world_uv"
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")))
+        self.assertTrue(any("world-space UV shader" in m for m in messages(res, "NOTE")))
+        spec["families"]["INT"]["tile_phase"] = "free"
+        self.assertTrue(any("tile_phase must be one of" in m for m in messages(run(spec)[0], "ERROR")))
+
+    def test_tiling_placements_continue_the_world_pattern(self):
+        """Each tiling piece is projected with phase 0 at its pivot, so the validator checks every placement against
+        the world tile grid: a floor turned 90 deg (unless the family's turn_symmetry allows it), a wall 3 cm up, and
+        a phase variant facing +Y in the slot x mod tile picks (it is the pivot's distance along its own +X)."""
+        spec = study_spec()
+        zone = spec["zones"][0]["placements"]
+        zone.append({"ref": "STR_Floor_2x2_A", "pos": [1, 3, -0.1], "rot": 90})
+        zone.append({"ref": "INT_Wall_2x3_A", "pos": [3, 3, 0.03], "rot": 0})
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("STR_Floor_2x2_A turned 90" in m for m in errors), errors)
+        self.assertTrue(any("INT_Wall_2x3_A at [3, 3, 0.03] touch with their courses 15.4 px apart" in m
+                            for m in errors), errors)
+        spec["families"]["STR"]["turn_symmetry"] = 90
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertFalse(any("turned" in m for m in errors), errors)
+        spec["families"]["STR"]["turn_symmetry"] = 45
+        self.assertTrue(any("turn_symmetry must be" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["grid"]["storey_height"] = 4.0
+        spec["families"]["INT"].update(map_px=2048, tile_phase="variants")       # a 4 m tile on a 1 m grid
+        spec["pieces"] += [{"name": "INT_Bay_1x3_P%d" % k, "desc": "bay", "collision": "box"} for k in range(4)]
+        # facing +Y (rot 180): the old rule k = x mod 4 picks P3 at x = 3 and P2 at x = 2; along its own +X the
+        # pivot is at s = -x, so k = (-x) mod 4: P1 and P2
+        spec["zones"][0]["placements"] = [{"ref": "INT_Bay_1x3_P3", "pos": [3, 5, 0], "rot": 180},
+                                          {"ref": "INT_Bay_1x3_P1", "pos": [2, 5, 0], "rot": 180}]
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 2, errors)
+        spec["zones"][0]["placements"] = [{"ref": "INT_Bay_1x3_P1", "pos": [3, 5, 0], "rot": 180},     # -3 mod 4
+                                          {"ref": "INT_Bay_1x3_P2", "pos": [2, 5, 0], "rot": 180},
+                                          {"ref": "INT_Bay_1x3_P1", "pos": [5, 3, 0], "rot": 90}]      # s = y: P3
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("INT_Bay_1x3_P1 at [5, 3, 0]", errors[0])
+
+    def test_tile_phase_flexibility(self):
+        """Arch sweep: a raised zone's walls start their courses at its own floor (judged only against walls they
+        touch); a kerb (thin, under a module wide) turns like a wall, not a floor; a floor: true family's floors are
+        judged as floors; a floor's phase variant k = kx + n x ky; scale and mirror on placements."""
+        spec = study_spec()
+        spec["zones"].append({"id": "stage", "name": "Stage", "kind": "interior", "bounds": [10, 0, 16, 6],
+                              "floor_z": 0.15, "placements": [
+                                  {"ref": "INT_Wall_2x3_A", "pos": [11, 1, 0.15], "rot": 0},
+                                  {"ref": "INT_Wall_2x3_A", "pos": [13, 1, 0.15], "rot": 0},
+                                  {"ref": "INT_Wall_2x3_A", "pos": [15, 1], "rot": 90}]})
+        res = run(spec)[0]
+        self.assertFalse(any("stage" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        spec["zones"][1]["placements"].append({"ref": "INT_Wall_2x3_A", "pos": [11, 1, 3.15], "rot": 0})
+        self.assertFalse(any("courses" in m for m in messages(run(spec)[0], "ERROR")))     # 3 m up: whole tiles
+        spec["zones"][1]["placements"][-1]["pos"] = [9, 1, 0.65]              # beside the first, half a tile up
+        self.assertTrue(any("touch with their courses 256.0 px apart" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["pieces"].append({"name": "STR_Kerb_1_A", "desc": "kerb", "collision": "box", "size": [1, 0.3, 0.15]})
+        spec["zones"][0]["placements"].append({"ref": "STR_Kerb_1_A", "pos": [2, 2, 0], "rot": 90})
+        self.assertFalse(any("turned" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["families"]["PLK"] = dict(spec["families"]["STR"], materials=["M_PLK_Oak"], floor=True)
+        spec["pieces"].append({"name": "PLK_Floor_2x2_A", "desc": "planks", "collision": "box"})
+        spec["zones"][0]["placements"].append({"ref": "PLK_Floor_2x2_A", "pos": [1, 1, 0], "rot": 90})
+        self.assertTrue(any("PLK_Floor_2x2_A turned 90" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["families"]["PLK"]["floor"] = "yes"
+        self.assertTrue(any("floor must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["families"]["STR"].update(map_px=1024, tile_phase="variants")              # a 2 m tile: n = 2
+        spec["pieces"] += [{"name": "STR_Tile_1x1_P%d" % k, "desc": "tile", "collision": "box"} for k in range(4)]
+        spec["zones"][0]["placements"] = [{"ref": "STR_Tile_1x1_P0", "pos": [2, 2, 0]},
+                                          {"ref": "STR_Tile_1x1_P1", "pos": [3, 2, 0]},
+                                          {"ref": "STR_Tile_1x1_P2", "pos": [2, 3, 0]},     # ky = 1
+                                          {"ref": "STR_Tile_1x1_P3", "pos": [3, 3, 0]}]
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(errors, [])
+        spec["zones"][0]["placements"][2]["ref"] = "STR_Tile_1x1_P0"
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 1, errors)
+        spec = study_spec()
+        pl = spec["zones"][0]["placements"]
+        pl.append({"ref": "PROP_Desk_Free_A", "pos": [2, 2, 0], "scale": 1.2, "mirror": True})
+        self.assertEqual(run(spec)[0].errors, 0)
+        pl[-1]["scale"] = 1.4
+        self.assertTrue(any("scale 1.4" in m for m in messages(run(spec)[0], "ERROR")))
+        pl[-1].update(scale=1.0, mirror="yes")
+        self.assertTrue(any("mirror must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
+        pl.append({"ref": "INT_Wall_2x3_A", "pos": [3, 1, 0], "mirror": True})
+        self.assertTrue(any("placed mirrored" in m for m in messages(run(spec)[0], "ERROR")))
+
+    def test_scale_range_lets_a_family_vary_its_free_pieces(self):
+        spec = study_spec()
+        spec["families"]["PROP"]["scale_range"] = [0.7, 1.3]                       # foliage-style variation
+        self.assertEqual(run(spec)[0].errors, 0)
+        for bad in ([1.1, 1.3], [0.7], "wide", [0, 1.2]):
+            spec["families"]["PROP"]["scale_range"] = bad
+            self.assertTrue(any("scale_range must be" in m for m in messages(run(spec)[0], "ERROR")), bad)
+
+    def test_bake_is_a_flag(self):
+        spec = study_spec()
+        spec["pieces"][0]["bake"] = True
+        self.assertEqual(run(spec)[0].errors, 0)
+        spec["pieces"][0]["bake"] = "yes"
+        self.assertTrue(any("bake must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
 
     def test_world_name_is_required(self):
         spec = study_spec()

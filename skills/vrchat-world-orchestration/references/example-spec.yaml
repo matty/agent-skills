@@ -33,7 +33,9 @@ families:                           # every family's pieces live in blender/MAST
     materials: [M_EXT_Brick, M_EXT_Stone]
     texturing: tiling               # tiling | trim | atlas | unique
     texel_density: 512              # px per metre on UV0: T512, facades seen from 1.5-3 m and further
-    map_px: 2048                    # a 4 m tile on PC; the Android and iOS overrides take 1024 (pc_lead)
+    map_px: 512                     # a 1 m tile: it divides the 1 m module and the 3 m storey, so instanced walls
+                                    # continue the brick across every joint (tile_phase: grid, the default); the
+                                    # breakup comes from variants, the detail map, decals and the lightmap
     thickness: 0.3                  # wall thickness in metres (walls run along X, thickness in +Y)
     detail_map: true                # shop fronts players walk right up to: a fine detail albedo and normal
   TRIM:

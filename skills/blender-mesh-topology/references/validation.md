@@ -19,7 +19,9 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
   a pole). With the Triangulate applied it judges them with triangle pairs joined back into quads. Everything else is
   the mesh as it exports.
 - `custom_normals_on_quads`: custom normals on faces of 4+ corners as it exports (the Triangulate switched off,
-  missing, or set above Minimum Vertices 4): the exporter's triangulation will change them.
+  missing, or set above Minimum Vertices 4): the exporter's triangulation will change them. Without a live
+  Weighted Normal or Harden Normals Bevel (cards with transferred normals, applied or live) only quads that are not
+  planar count: a planar quad keeps its corner normals.
 - `triangulate_moves_normals`: the corner normals change when the Triangulates below the last enabled Weighted Normal
   (every one on route A) are toggled, so Keep Normals (`keep_custom_normals`) is off; comparing a re-imported FBX with
   Blender does not show it. `triangulate_below_weighted_normal`: route B's Weighted Normal has no Triangulate above it
@@ -40,16 +42,23 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
 | Key | Fails when | Notes |
 | --- | --- | --- |
 | `ngons` | any | Fine while modelling flat faces; triangulate them on purpose before UVs (`hard-surface.md`) |
-| `open_edges` | any, unless `problems(r, allow_open=True)` | Pieces meant to be open (a single wall face) pass with allow_open |
+| `open_edges` | any, unless `problems(r, allow_open=True)` | Pieces meant to be open (a single wall face) pass with allow_open. Nothing here can tell which way an open piece should face: a plate wound inside out passes every key and vanishes in the engine (measured, 5.2.2), so look at it in `review_render`, which culls back faces as the engine does |
 | `overfull_edges` | any | An edge with 3+ faces: a fold, or two layers fused |
 | `flipped_edges` | any | An edge whose two faces both run along it the same way: a face wound against its neighbours (a reduction band built with its runs the wrong way round, `grid-layout.md`). Engines cull back faces, so it shows as a hole |
 | `inverted_islands` | any | A closed island whose faces all point inwards: negative signed volume, summed in float64 about the island's own centre; under 1e-6 of its bounding box counts as undetermined, not inverted (summed in float32 about the origin, 2 cm tubes 5 m out read inverted, 2026-10-24) |
-| `short_edges`, `degenerate_faces` | any | Edges under 1 mm, faces under 1e-8 m2 |
+| `short_edges`, `degenerate_faces` | any | Edges under 1 mm, or under 1% of the piece's smallest side over 1 mm when that is less (`short_edge_m`; a 5 mm screw's 0.5 mm rim and a 30 cm gear's 0.48 mm chamfer corners are fine; `audit(short_edge=)` sets it), faces under 1e-8 m2 |
 | `bad_quads` | any | A corner under 3 deg, a quad folded over 25 deg (edges of 2 cm or more), or a bow-tie |
 | `slivers` | any | A face with a corner under 2 deg, flat-shaded or not; on a stack-triangulated piece, judged by `audit_stack` on the untriangulated mesh |
 | `loose_verts` | any | |
 | `flat_faces_off_deg` | above `flat_tol`, when given | The worst angle between a corner normal and its own face, over faces wider than `flat_floor(obj)`: 2.1 x the largest live Bevel amount (at least 5 mm), or 5 cm without a live Bevel (`min_flat_width` overrides it; `flat_min_width` reports the one used). A one-segment chamfer is at most 2 x its amount wide and its corners are 45 deg off its own face by design, so it is left out, while a trim's narrow faces are judged (a 70 mm architrave with route B folds marked sharp: 7.80 deg, measured). About 0 on hard-surface pieces whose big faces read flat. Smooth curved parts are over it by design (a 16-segment column: 11.25 deg on route A, 15.04 on route B, measured), so on a piece with curved parts read `flat_faces`: each face over the tolerance once, as `{face, deg, centre}`, `face` being the index of the nearest face of the mesh data (the triangles of a quad and the halves of a Mirror fold into one entry) and `centre` the centre of its worst evaluated face in object space; judge only the faces on flat parts. `flat_worst_face` is the worst one's mesh-data index |
 | `poles`, `fan_centres`, `tri_faces_pct`, `islands` | never (reported) | Poles are interior vertices with valence other than 4, triangles included; fan centres have 8+ edges or 2+ triangles meeting at them. A clean reduction band can have more poles than the fans it replaces (its poles are deliberate: two valence-3 and one valence-6 per 3 to 1 group), so judge a rebuild by fan centres and triangle share as well: a zipper-fanned pipe elbow read 6 poles, 14 fan centres and 8.3% triangles, its 3 to 1 rebuild 22 poles, 0 fan centres, 0% (measured). Look where poles are, and compare counts between layouts of the same surface, never with a mesh triangulated in its stack |
+
+`joint_normals(a, b, select, matrix_a=None, matrix_b=None)` takes the same arguments and compares the shading normals
+there, paired face to face, faces lying wholly in the joint (end caps) left out: a curved piece ending against a
+straight one shows half its facet angle (fix: custom normals on the joint vertices, `form-and-detail.md` section 4);
+a piece shaded smooth across its folds against a hard-shaded one shows 54.7 deg. It is for joints meant to shade on
+smoothly; at a crease built on purpose (a mitred pipe joint reads its 90 deg, a corner piece its fold) compare
+`max_deg` with the angle you built rather than with 0.
 
 `joint_match(a, b, select, matrix_a=None, matrix_b=None)` compares the vertices two pieces have on a joint, in one
 frame: kit pieces pivot at the origin, so pass `matrix_b=Matrix.Translation((2, 0, 0))` to set a 2 m wall's
