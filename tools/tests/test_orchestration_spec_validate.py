@@ -199,6 +199,40 @@ class SpecChecks(unittest.TestCase):
         spec["families"]["INT"]["tile_phase"] = "free"
         self.assertTrue(any("tile_phase must be one of" in m for m in messages(run(spec)[0], "ERROR")))
 
+    def test_tiling_placements_continue_the_world_pattern(self):
+        """Each tiling piece is projected with phase 0 at its pivot, so the validator checks every placement against
+        the world tile grid: a floor turned 90 deg (unless the family's turn_symmetry allows it), a wall 3 cm up, and
+        a phase variant facing +Y in the slot x mod tile picks (it is the pivot's distance along its own +X)."""
+        spec = study_spec()
+        zone = spec["zones"][0]["placements"]
+        zone.append({"ref": "STR_Floor_2x2_A", "pos": [1, 3, -0.1], "rot": 90})
+        zone.append({"ref": "INT_Wall_2x3_A", "pos": [3, 3, 0.03], "rot": 0})
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("STR_Floor_2x2_A turned 90" in m for m in errors), errors)
+        self.assertTrue(any("INT_Wall_2x3_A at [3, 3, 0.03] sits 0.0 px along it and 15.4 px up" in m
+                            for m in errors), errors)
+        spec["families"]["STR"]["turn_symmetry"] = 90
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertFalse(any("turned" in m for m in errors), errors)
+        spec["families"]["STR"]["turn_symmetry"] = 45
+        self.assertTrue(any("turn_symmetry must be" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["grid"]["storey_height"] = 4.0
+        spec["families"]["INT"].update(map_px=2048, tile_phase="variants")       # a 4 m tile on a 1 m grid
+        spec["pieces"] += [{"name": "INT_Bay_1x3_P%d" % k, "desc": "bay", "collision": "box"} for k in range(4)]
+        # facing +Y (rot 180): the old rule k = x mod 4 picks P3 at x = 3 and P2 at x = 2; along its own +X the
+        # pivot is at s = -x, so k = (-x) mod 4: P1 and P2
+        spec["zones"][0]["placements"] = [{"ref": "INT_Bay_1x3_P3", "pos": [3, 5, 0], "rot": 180},
+                                          {"ref": "INT_Bay_1x3_P1", "pos": [2, 5, 0], "rot": 180}]
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 2, errors)
+        spec["zones"][0]["placements"] = [{"ref": "INT_Bay_1x3_P1", "pos": [3, 5, 0], "rot": 180},     # -3 mod 4
+                                          {"ref": "INT_Bay_1x3_P2", "pos": [2, 5, 0], "rot": 180},
+                                          {"ref": "INT_Bay_1x3_P1", "pos": [5, 3, 0], "rot": 90}]      # s = y: P3
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("INT_Bay_1x3_P1 at [5, 3, 0]", errors[0])
+
     def test_bake_is_a_flag(self):
         spec = study_spec()
         spec["pieces"][0]["bake"] = True

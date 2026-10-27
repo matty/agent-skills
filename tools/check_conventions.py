@@ -68,6 +68,7 @@ CANON = {
     # UV distortion gate shared by uv-unwrapping's audit and the RizomUV grader, and the texel-density bands
     "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0},
     "uv_island_min_share": 0.005,
+    "tile_phase_texels": 0.5,
     "texel_band": {"unique": (0.8, 1.25), "tiling": (0.9, 1.1), "trim": (0.9, 1.1)},
     "sliver_quality": 0.02,     # triangle quality below which both UV graders skip a triangle as a sliver
     "mobile_limit_text": "104,857,600",      # VRChat's 100 MB mobile world limit in bytes (its MB is 2^20)
@@ -531,6 +532,22 @@ def check_task_checks():
         fail(TASK_BRIEFS, 'no "**Stage <n>, T-...**" briefs found to compare with QA\'s rows')
 
 
+def check_tile_phase():
+    """The half-texel tolerance a tiling face or placement may sit off the tile grid: uv_audit (each face), the spec
+    validator and qa_measure (each placement); and the phase-variant suffix the two placement checks read."""
+    for rel, name in (("uv-unwrapping/scripts/uv_audit.py", "TILE_PHASE_PX"),
+                      ("vrchat-world-orchestration/scripts/spec_validate.py", "TILE_PHASE_TEXELS"),
+                      ("vrchat-world-qa/scripts/qa_measure.py", "TILE_PHASE_TEXELS")):
+        got = module_constant(rel, name)
+        if got != CANON["tile_phase_texels"]:
+            fail(rel, "%s is %r, canon %r" % (name, got, CANON["tile_phase_texels"]))
+    pat = r'PHASE_VARIANT_RE = re\.compile\((r"[^"]*")\)'
+    a = re.search(pat, read("vrchat-world-orchestration/scripts/spec_validate.py"))
+    b = re.search(pat, read("vrchat-world-qa/scripts/qa_measure.py"))
+    if not (a and b and a.group(1) == b.group(1)):
+        fail("vrchat-world-qa/scripts/qa_measure.py", "PHASE_VARIANT_RE differs from spec_validate's (or is missing)")
+
+
 def check_uv_gate():
     """uv-unwrapping's LIMITS and RizomUV's GATE carry the same distortion gate; uv_audit's TEXEL_BAND the bands."""
     for rel, name, rename in (("uv-unwrapping/scripts/uv_audit.py", "LIMITS", {}),
@@ -712,6 +729,7 @@ def main():
              % (CANON["lod_lightmap_cost"], CANON["lod_lightmap_scale"]))
     check_constants()
     check_uv_gate()
+    check_tile_phase()
     check_qa_ids()
     check_task_checks()
     check_blender_commands()

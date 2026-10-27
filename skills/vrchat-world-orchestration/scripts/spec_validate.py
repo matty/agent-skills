@@ -294,7 +294,8 @@ KNOWN_KEYS = {
     "tools": ("blender", "blender_mcp", "unity_project", "substance_designer", "substance_painter", "rizomuv",
               "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
-    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase"),
+    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase",
+               "turn_symmetry"),
     "budgets": BUDGET_KEYS + ("download_mb", "piece_tris", "lightmap"),
     "lightmap": ("max_px", "count", "texels_per_m", "min_footprint_px"),
     "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size", "ref",
@@ -668,6 +669,23 @@ def check_grid(grid, f):
 
 
 TILE_PHASES = ("grid", "variants", "world_uv")
+TURN_SYMMETRIES = (90, 180, 360)  # a tiling floor's pattern turns with it; a texture that looks the same turned 90 or
+                                  # 180 deg allows those turns (turn_symmetry), 360 none
+TILE_PHASE_TEXELS = 0.5           # a tiling placement further than this off the world tile grid jumps at its joints
+PHASE_VARIANT_RE = re.compile(r"_P(\d)$")
+
+
+def placement_phase(pos, rot, tile, module, k=0, horizontal=False, symmetry=360):
+    """Metres off the world tile grid for one placement of a tiling family's piece (tile_project puts phase 0 at its
+    pivot): a wall along its own +X, (s - k x module) mod tile with s the pivot's distance along that axis (k its
+    phase variant), and up, z mod tile; a floor or ceiling, x and y mod tile and its turn modulo the texture's own
+    symmetry. (u, v, turn deg)."""
+    off = lambda v: min(v % tile, tile - v % tile)
+    if horizontal:
+        r = rot % symmetry
+        return off(pos[0]), off(pos[1]), min(r, symmetry - r)
+    a = math.radians(rot)
+    return off(math.cos(a) * pos[0] + math.sin(a) * pos[1] - k * module), off(pos[2]), 0.0
 
 
 def whole_steps(step, tile):
@@ -714,6 +732,8 @@ def check_tile_phase(code, fam, module, storey, f):
     else:
         f.note("family %s: tile_phase world_uv needs a world-space UV shader on every platform; measure it on the "
                "mobile device" % code)
+    if "turn_symmetry" in fam and fam["turn_symmetry"] not in TURN_SYMMETRIES:
+        f.error("family %s turn_symmetry must be 90, 180 or 360 (the turns its texture looks the same under)" % code)
 
 
 def check_families(families, module, sub_module, f, storey=None):
@@ -910,8 +930,9 @@ def check_assemblies(spec, pieces, f):
     return asms
 
 
-def check_placement(zid, pl, b, pieces, asms, grid, used, f):
-    """One placement: a known ref, a position inside the zone, and grid pieces on the grid in 90-degree turns."""
+def check_placement(zid, pl, b, pieces, asms, grid, used, f, families=None, floor_z=0):
+    """One placement: a known ref, a position inside the zone, grid pieces on the grid in 90-degree turns, and a
+    tiling family's grid pieces on the world tile grid (check_tile_placement)."""
     module, sub_module, sub_ok = grid
     ref = pl.get("ref")
     check_keys(pl, "placement", "zone %s placement of %s" % (zid, ref), f)
@@ -944,6 +965,40 @@ def check_placement(zid, pl, b, pieces, asms, grid, used, f):
         hint = " (TRIM pieces go on grid.sub_module, which the spec does not set)" if trim and not sub_module else ""
         f.error("zone %s: grid piece %s at %s is off the %s m %s%s"
                 % (zid, ref, pos[:2], step, "sub-module" if step != module else "grid", hint))
+    elif rot is not None and not off_right_angle(rot):
+        check_tile_placement(zid, ref, pos, rot, pieces, module, families, floor_z, f)
+
+
+def check_tile_placement(zid, ref, pos, rot, pieces, module, families, floor_z, f):
+    """A tiling family's grid piece (tile_phase grid or variants) continues the world pattern: its pivot on whole
+    tiles along its own +X (a phase variant _P<k> k modules on) and up, and a floor or ceiling unturned (or turned by
+    the family's turn_symmetry). Each piece is projected with phase 0 at its pivot, so anything else jumps at its
+    joints (QA U7 checks the same in MASTER)."""
+    m = NAME_RE.match(ref)
+    fam = families.get(m.group(1)) if m and isinstance(families, dict) else None
+    if not (isinstance(fam, dict) and fam.get("texturing") == "tiling"
+            and fam.get("tile_phase", "grid") in ("grid", "variants")):
+        return
+    td, mp = fam.get("texel_density"), fam.get("map_px")
+    if not (number(td) and td > 0 and number(mp) and mp > 0):
+        return
+    tile = float(mp) / float(td)
+    var = PHASE_VARIANT_RE.search(ref) if fam.get("tile_phase") == "variants" else None
+    ext = piece_size(ref, pieces.get(ref) if isinstance(pieces, dict) else None, module, families)
+    horizontal = bool(ext) and ext[2] < min(ext[0], ext[1]) and ext[2] < module
+    sym = fam.get("turn_symmetry", 360)
+    z = pos[2] if len(pos) == 3 else floor_z
+    u, v, turn = placement_phase((pos[0], pos[1], z), rot, tile, module, int(var.group(1)) if var else 0, horizontal,
+                                 sym if sym in TURN_SYMMETRIES else 360)
+    if max(u, v) * td > TILE_PHASE_TEXELS:
+        f.error("zone %s: %s at %s sits %.1f px %s and %.1f px %s off its family's %g m tile grid, so its pattern "
+                "jumps at its joints%s" % (zid, ref, list(pos), u * td, "along X" if horizontal else "along it",
+                                          v * td, "along Y" if horizontal else "up", tile,
+                                          " (a phase variant's k is the pivot's distance along its own +X, mod the "
+                                          "tile, in modules)" if var else ""))
+    if turn > 1e-6:
+        f.error("zone %s: %s turned %g deg: a tiling floor or ceiling turns its pattern with it; place it unturned, "
+                "or set the family's turn_symmetry when its texture looks the same turned" % (zid, ref, rot))
 
 
 def check_room(zid, r, b, f):
@@ -1006,7 +1061,7 @@ def check_mirror(zid, mi, b, mirror_ids, f):
         f.error("%s: size must be [width, height] in metres" % where)
 
 
-def check_zones(spec, pieces, asms, grid, used, f):
+def check_zones(spec, pieces, asms, grid, used, f, families=None):
     """Zones with their placements, rooms, openings and mirrors; returns the zone ids."""
     zone_ids, mirror_ids = set(), set()
     for z in entries(spec, "zones", f, "zones"):
@@ -1037,7 +1092,7 @@ def check_zones(spec, pieces, asms, grid, used, f):
                 continue
             for i, pl in enumerate(entries(z, "placements", f, "zone %s placements" % zid)):
                 with Guard(f, "zone %s placement %d" % (zid, i + 1)):
-                    check_placement(zid, pl, b, pieces, asms, grid, used, f)
+                    check_placement(zid, pl, b, pieces, asms, grid, used, f, families, zone_floor(z))
             for r in entries(z, "rooms", f, "zone %s rooms" % zid):
                 with Guard(f, "room %s/%s" % (zid, r.get("id"))):
                     check_room(zid, r, b, f)
@@ -1319,7 +1374,7 @@ def check_spec(spec, f, root=None):
         used.update(p for p, _ in uses_counts(a))
     with Guard(f, "budgets"):
         check_budgets(budgets, platforms, families, f)
-    zone_ids = check_zones(spec, pieces, asms, grid, used, f)
+    zone_ids = check_zones(spec, pieces, asms, grid, used, f, families)
     check_elevations(spec, pieces, families, module, zone_ids, used, f)
 
     for name in pieces:
