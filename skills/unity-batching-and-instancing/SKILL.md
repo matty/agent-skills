@@ -106,7 +106,9 @@ calls into 1 and make static batching possible.
 culled as one group, never one by one, so a thousand of them behind a wall still cost their vertex work. Unity 2022.3's
 documentation recommends `Graphics.RenderMeshInstanced` in its place; Udon has only `VRCGraphics.DrawMeshInstanced`:
 references/udon-drawmeshinstanced.md, with a working UdonSharp script in `scripts/InstancedField.cs` and a matching
-shader in `scripts/InstancedUnlit.shader`.
+shader in `scripts/InstancedUnlit.shader`. They scatter on a flat plane, vary only yaw and tint, and draw unlit and
+opaque: grass on a terrain needs heights sampled at edit time, scale jitter and a lit cutout instancing shader (same
+reference, What the example does not do).
 
 ## Decision checklist for a new prop set
 
