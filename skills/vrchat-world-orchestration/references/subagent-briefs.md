@@ -39,7 +39,7 @@ Anything else is out of bounds, including files you think need fixing. Report th
 - Blender CLI: <path>. Run headless: blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py
   (the exit code then shows an uncaught exception), the script in your scratch folder, and set
   bpy.context.preferences.filepaths.save_version = 0 before saving (no .blend1 backup).
-- <single layout, a task that writes MASTER: "The user may edit MASTER too. Before changing it, run
+- <a task that writes MASTER: "The user may edit MASTER too. Before changing it, run
   kit_library.py's changes_since on blender/MASTER.snapshot.json and keep everything the user changed; if your task
   must change the same thing, stop and return blocked with the diff lines. Edit live through the Blender MCP when it
   has MASTER open (never headless then), or check the pieces out to blender/work/<task id>/KIT_<FAMILY>.blend, work
@@ -114,7 +114,7 @@ place of the per-task lines, one row per task: id, checks, brief, report, writab
 one verdict block per task, as a YAML list, go in `world/reports/qa/stage-<n>/verdict.yaml`, `<n>` being the tasks'
 `stage` (`T-PLAN-01`: stage 2).
 
-## Filled example: stage 5, one family in the single MASTER
+## Filled example: stage 5, one family in MASTER
 
 ```markdown
 # T-MOD-EXT: Model the exterior kit
@@ -314,8 +314,7 @@ Manager keeps the world's blueprint ID across target switches in this one projec
 build task ends by switching the build target back to Windows. Load: `vrchat-world-sdk-setup`. Checks: O5.
 
 **Any stage after 4, T-RENAME-EXT-DOOR-2X3-A (integrator).** Goal: the piece renamed, and its FBX and Unity asset
-once they exist: its collection renamed in MASTER, which every instance follows (`split`: `stages.md`, "Split
-layout"). Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
+once they exist: its collection renamed in MASTER, which every instance follows. Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
 dependencies"; its `stage` is the ledger's stage when it is added. Load: `blender-kit-library`,
 `blender-unity-placement-sync`. Writes: the stage-table row, with `world/placements/`. Checks: B2-B3, M9 (every
 earlier placement keeps its id, position and rotation), and N4-N5 after stage 10.

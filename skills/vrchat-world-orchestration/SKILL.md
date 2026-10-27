@@ -29,11 +29,10 @@ the build lives in files, so any session can resume it.
    MCP) when it drives that editor. Tasks whose `writes` overlap never run at once; the validator enforces it on the
    ledger, and `references/stages.md` ("Where each stage writes") has the paths. A `.blend` the live Blender has open
    is written only through the MCP, never headless. A QA pass that drives an editor holds it like a task.
-4. **One MASTER, instanced, never copied.** `blender/MASTER.blend` holds pieces (`KIT/KIT_<FAMILY>`), assemblies
-   (`ASM`) and the layout (`MASTER`) as collections, placed as collection instances (`intake.blend_layout: single`).
-   Tasks edit it in the live Blender when the Blender MCP is connected (`tools.blender_mcp`), else headless; long
-   work runs on a work file checked out of it. Separate KIT and ASM files only when the user asks for them
-   (`references/stages.md`, "Split layout"; `blender-kit-library`).
+4. **One Blender file, instanced, never copied.** `blender/MASTER.blend` holds every piece (`KIT/KIT_<FAMILY>`),
+   assembly (`ASM`) and the layout (`MASTER`) as collections, placed as collection instances; nothing is linked from
+   other `.blend` files. Tasks edit it in the live Blender when the Blender MCP is connected (`tools.blender_mcp`),
+   else headless; long work runs on a work file checked out of it and integrated back (`blender-kit-library`).
 5. **The user's edits survive.** Every task that writes MASTER reads what changed since the last agent save first
    (`changes_since`), keeps it, and ends with save and snapshot (`blender-kit-library`, "Editing alongside the
    user"); one that would have to change what the user changed stops and asks (`flags.user_actions`).
@@ -58,8 +57,7 @@ found and these decisions, each with its default:
 What you detect, for the user to confirm: the Blender CLI path and whether the Blender MCP answers (without it kit
 work runs headless, which does not block the build), the Unity project path, installed packages and build modules,
 Substance Designer and Painter (else the Blender fallback; Painter is user-assisted unless a bridge answers),
-RizomUV. The Blender file layout is not a question: `single`, unless the user asks for separate KIT and ASM files
-(record `split` and their words in `intake.blend_layout_by`).
+RizomUV.
 
 Also ask for the brief if it is thin: the place, mood, scale (zones, rough size), reference images, must-have
 interactions, how worn the place is, and two or three images of finished work at the quality they want (the spec's
@@ -158,7 +156,7 @@ installs or declines it.
 | Stage | Load | If it is not installed |
 |---|---|---|
 | 2-3 | `vrchat-lighting-and-baking` when the brief has a light players switch (`zones[].lighting_states`) | A baked copy per state (`references/world-spec.md`, "Lightmap check") |
-| 4, 5, 8, 9 | `blender-kit-library` (kit files), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md`, the export settings in `references/stages.md` (stage 9) |
+| 4, 5, 8, 9 | `blender-kit-library` (the kit in MASTER), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md`, the export settings in `references/stages.md` (stage 9) |
 | 5 | `blender-mesh-topology` (finishing each piece's form to its detail list, and clean topology) | The stage 5 minimum checks (`references/stages.md`) in the brief |
 | 6 | `uv-unwrapping`; `rizomuv-uv-pipeline` if RizomUV is installed | Smart UV Project with Margin Method Fraction, UV2 gaps sized per modelled mesh, a manual texel-density pass (`references/stages.md`, stage 6) |
 | 7 | `pbr-texturing` (values, bakes, Designer, Painter, wear, trim sheets); the Substance MCP when it answers | `references/texturing.md`: Blender procedural materials and bakes, the channel plan |
@@ -172,7 +170,7 @@ installs or declines it.
 
 1. Read `world/ledger.yaml`, then `world/spec.yaml`. Run `spec_validate.py` with `--ledger`.
 2. Check the live editors first: a dead task may have left Unity (unsaved scene, Play mode) or the live Blender
-   (an unsaved `.blend`) dirty, and the user may have edited MASTER since (`changes_since`: theirs to keep). Do not save
+   (unsaved MASTER) dirty, and the user may have edited MASTER since (`changes_since`: theirs to keep). Do not save
    or discard on a guess: tell the user what you found and ask.
 3. Then go through the tasks by status:
 
@@ -195,7 +193,7 @@ change (`T-RENAME-<PIECE>`, or one in a resized piece's latest stage), never a r
 
 | File | Holds |
 |---|---|
-| `references/stages.md`, `references/subagent-briefs.md`, `references/ledger.md` | Per stage: inputs, outputs, task ids, the write table, the split layout, QA checks, parallelism; builder and QA brief templates; ledger fields, the task lifecycle, what the master does at each moment |
+| `references/stages.md`, `references/subagent-briefs.md`, `references/ledger.md` | Per stage: inputs, outputs, task ids, the write table, QA checks, parallelism; builder and QA brief templates; ledger fields, the task lifecycle, what the master does at each moment |
 | `references/world-spec.md`, `references/example-spec.yaml` | Spec schema, the look, the quality tier, the lightmap check, kit rules (files, names, pivots), changing the spec; a complete spec that validates |
 | `references/mechanics.md`, `references/mockups.md`, `references/texturing.md` | Spawning subagents in Claude Code and Codex, the project layout, running the scripts; stage 1 and stage 7 |
 | `scripts/spec_validate.py`, `scripts/spec_to_svg.py` (Python + PyYAML) | Validates the spec and the task graph (`--footprints` for lightmap planning, `--draft` for drafted tasks, `--mermaid` for `tasks.mmd`); regenerates `world/diagrams/` |

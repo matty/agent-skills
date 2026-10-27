@@ -70,7 +70,8 @@ that writes MASTER takes its turn, so the planner chains them through `deps` (fa
 them, then the assemblies, then the MASTER task of the stage); the validator rejects two that could run at once. A
 task that runs long or headless tools (modelling, UVs, texturing, export) checks its family's pieces out to
 `blender/work/<task id>/KIT_<FAMILY>.blend`, works there, and integrates them back (`blender-kit-library`, "Work
-files"). The `split` layout writes separate files instead: "Split layout" below.
+files"). Nothing writes `blender/kits/` or `blender/asm/`: the pipeline has no separate KIT or ASM files, and the
+validator rejects a task that writes there.
 
 | Stage | Writes |
 |---|---|
@@ -157,10 +158,10 @@ agent keeps its own scripts and scratch renders in the scratch folder its brief 
 
 - In: approved spec.
 - Do: complete `pieces` (every piece an elevation, room or assembly needs, plus corners, ends and trims), fix
-  `families` (KIT file, 1-3 materials, texturing approach, texel density, map size, wall thickness), and
-  `assemblies` (each with `file`, `uses` counts and `size`). Mark sockets (doorways, window openings) in piece `desc`.
+  `families` (1-3 materials, texturing approach, texel density, map size, wall thickness), and
+  `assemblies` (each with `uses` counts and `size`). Mark sockets (doorways, window openings) in piece `desc`.
   Validate, regenerate the diagrams, and when families or assemblies changed, update `draft-tasks.yaml` (one task per
-  KIT file and per assembly); the master checks it with `--draft` (a re-drafted task replaces its ledger copy) and
+  family and per assembly); the master checks it with `--draft` (a re-drafted task replaces its ledger copy) and
   swaps the changed tasks into the ledger. This planned completion, adding pieces or tightening budgets, does not
   re-open the spec gate; removing or renaming an approved piece, zone or elevation does (`world-spec.md`), so the
   report lists every rename and removal in `issues`, checked against `world/spec.approved.yaml`.
@@ -411,12 +412,12 @@ deeper checklist was unavailable.
 |---|---|
 | Every task | Every output the brief lists exists; nothing outside its `writes` changed (file times against the dispatch time); names follow `world-spec.md`; the result matches the spec and its diagrams; the report's claims match what was measured |
 | 1 | One image per requested view (a hero per zone, key interiors, swatches), each with its prompt file, consistent in style |
-| 2-3 | `spec_validate.py` reports no errors, with `--draft` on the drafted tasks; the diagrams regenerate identically; budgets no looser than the platform targets; doors at least 1 x 2.1 m, ceilings at least 2.6 m; every family has a KIT file, 1-3 materials and a texturing approach; pieces are whole modules, with corners and ends or a reason |
-| 4 | `kit_library.py --audit` reports no problems on MASTER, layout checks included (`split`: on each KIT file); assemblies and the layout hold only instances (and `REF` aids); a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
-| 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; every feature in each piece's `detail` list there at its size, judged against its `ref` images from eye height at the nearest walkable distance; MASTER reloads with every link found |
+| 2-3 | `spec_validate.py` reports no errors, with `--draft` on the drafted tasks; the diagrams regenerate identically; budgets no looser than the platform targets; doors at least 1 x 2.1 m, ceilings at least 2.6 m; every family has 1-3 materials and a texturing approach; pieces are whole modules, with corners and ends or a reason |
+| 4 | `kit_library.py --audit` reports no problems on MASTER, layout checks included; assemblies and the layout hold only instances (and `REF` aids); a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
+| 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; every feature in each piece's `detail` list there at its size, judged against its `ref` images from eye height at the nearest walkable distance; nothing in MASTER is linked from another file |
 | 6 | UV0 texel density within 10% of the family's (tiling and trim); no folded or badly stretched faces; a UV2 on every kit render mesh (not `_COL`), inside 0-1, no overlaps; on lightmapped ones, gaps of at least 2 texels at the mesh's real lightmap square (stage 6 above) and 1 texel to the tile edge |
 | 7 | 1-3 materials per family, named `M_<FAMILY>_<Name>`; maps no larger than `map_px`; metallic in R and smoothness in A, normal maps OpenGL; dielectric base colours within 30-240 sRGB luma, raw metal 160 or more, metallic 0 or 1 except blends; colour, value and roughness against the mockups or `look` in a render that shows roughness (EEVEE or Cycles, not Workbench); tiling maps seamless in a 3 x 3 repeat; source files kept |
-| 8 | No greybox left (every linked piece `textured` or later); grid pieces on the grid in 90-degree turns; no z-fighting at joints seen from walkable areas |
+| 8 | No greybox left (every placed piece `textured` or later); grid pieces on the grid in 90-degree turns; no z-fighting at joints seen from walkable areas |
 | 9 | One FBX per piece in `export/fbx/<FAMILY>/`; a re-import has scale 1, rotation 0 and the piece's size; triangle counts equal the audit's; two UV channels on every render mesh |
 | 10 | One folder, FBX and prefab variant per piece; shared family materials, no extracted copies; Read/Write and Generate Lightmap UVs off, model roots at rotation 0; placement sync committed with no conflicts; VRChat layers and collision matrix set up, one scene descriptor, spawns on floors; Android and iOS overrides at 1024 or below |
 | 11 | The bake reports no UV overlaps; lightmap count and size within budget; no seams or light leaks at joints; avatars lit everywhere (probes); every lightmapped renderer keeps at least 2 texels of UV2 gap at the square Unity gave it; each spec view, rendered in Unity, reads like the mockups or `look.references` and `look.lighting_mood` |
@@ -427,19 +428,6 @@ deeper checklist was unavailable.
 
 | Can run together | Must wait |
 |---|---|
-| Mockup tasks for different zones; `T-TEX-TRIM-LAYOUT` beside any task (it writes only its `layout.md`) | Every task that writes MASTER (stages 4-9: kit, assembly, texturing, export and layout tasks), or drives the live Blender (`@blender-live`): one at a time. Only the `split` layout runs kit tasks of different KIT files together ("Split layout") |
+| Mockup tasks for different zones; `T-TEX-TRIM-LAYOUT` beside any task (it writes only its `layout.md`) | Every task that writes MASTER (stages 4-9: kit, assembly, texturing, export and layout tasks), or drives the live Blender (`@blender-live`): one at a time |
 | QA of one task while other tasks build, unless the QA drives a live editor: then it holds `@unity` or `@blender-live` like a task until it returns | ASM tasks wait for the kits they use; MASTER waits for ASMs; UVs of a trim family wait for its trim layout |
 | Planning an Udon system (behaviour, sync, events) for its brief while other tasks build | Anything that drives the Unity editor (`@unity`) or writes into the open project's `Assets/` (a script dropped there recompiles the editor under another task): one at a time; lighting bake waits for final geometry and placements |
-
-## Split layout
-
-Only when the user asked for separate KIT and ASM files (`intake.blend_layout: split`, their words in
-`intake.blend_layout_by`). Everything above holds, with these differences (`world-spec.md`, "Files"):
-
-| | `split` |
-|---|---|
-| Files | One `blender/kits/KIT_<FamilyName>.blend` per family (`small` scale: one `KIT_World.blend` may hold every family), one `blender/asm/ASM_<Name>_<Variant>.blend` per assembly, and `blender/MASTER.blend` with the layout only. ASM and MASTER files link pieces by relative paths, never append; library overrides only when unavoidable, recorded in `flags.overrides` |
-| Writes | In place of MASTER in the write table: kit tasks (stages 4-7 and 9) write their KIT file (one task per file). `T-GREY-ASM-<NAME>` and `T-ASM-<NAME>`: their ASM file. `T-GREY-MASTER`, `T-MOD-MASTER`, `T-DRESS-<ZONE>`: `blender/MASTER.blend`. Placement sync's apply step: MASTER or the scope's ASM file. `T-RENAME-<PIECE>`: its KIT file and every ASM file and MASTER that place it. Each adds `@blender-live` while the live Blender has that file open |
-| Parallelism | Kit tasks for different KIT files run together, headless, one process each; ASM and MASTER tasks still take turns |
-| Steps | Assemblies and the layout link pieces (`link_piece`), and any session that links a KIT file runs `reload_libraries` after it changes; `T-MOD-MASTER` reloads MASTER first, every link resolving. A rename renames the collection in the KIT file, links the renamed collection in each ASM and MASTER file and re-points the existing instances (`ob.instance_collection = <renamed collection>`) |
-| QA | Stage 4: B1 on each KIT file, B2-B3 on each ASM file with links by relative paths |

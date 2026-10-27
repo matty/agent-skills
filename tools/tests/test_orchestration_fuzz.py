@@ -31,7 +31,7 @@ SVG = load_svg()
 def fuzz_spec():
     """The study spec plus what it lacks: an assembly, a mirror, lighting states and a second zone with a room."""
     spec = study_spec()
-    spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun_A.blend", "size": [4, 0.2, 3],
+    spec["assemblies"] = [{"name": "ASM_WallRun_A", "size": [4, 0.2, 3],
                            "uses": {"INT_Wall_2x3_A": 2}}]
     spec["zones"][0]["lighting_states"] = 2
     spec["budgets"]["lightmap"]["count"] = 2                     # two states double the fill

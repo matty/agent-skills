@@ -48,7 +48,7 @@ def study_spec():
         placements.append({"ref": "STR_Ceiling_2x2_A", "pos": [x, y, 3], "rot": 0})
     placements += [{"ref": "PROP_Desk_Free_A", "pos": [3, 4.35, 0], "rot": 0},
                    {"ref": "PROP_LightSwitch_Free_A", "pos": [3.25, 1.2, 1.2], "rot": 180}]
-    family = {"file": "blender/kits/KIT_World.blend", "texturing": "tiling", "texel_density": 512, "map_px": 1024}
+    family = {"texturing": "tiling", "texel_density": 512, "map_px": 1024}
     return {
         "version": 1,
         "world": {"name": "Study", "platforms": ["pc", "quest"], "scale": "small", "allow_generated_assets": False,
@@ -177,7 +177,7 @@ class SpecChecks(unittest.TestCase):
 
     def test_unplaced_assembly_and_elevation_only_pieces_are_warned(self):
         spec = study_spec()
-        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun_A.blend",
+        spec["assemblies"] = [{"name": "ASM_WallRun_A",
                                "size": [4, 0.2, 3], "uses": {"INT_Wall_2x3_A": 2}}]
         warnings = messages(run(spec)[0], "WARN")
         self.assertTrue(any("ASM_WallRun_A is never placed" in m for m in warnings), warnings)
@@ -217,7 +217,7 @@ class SpecChecks(unittest.TestCase):
         direct["zones"][0]["placements"] = [{"ref": "INT_Wall_2x3_A", "pos": [x, 1, 0], "rot": 0}
                                             for x in (0, 2)] * 4
         grouped = study_spec()
-        grouped["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun_A.blend",
+        grouped["assemblies"] = [{"name": "ASM_WallRun_A",
                                   "size": [8, 0.2, 3], "uses": {"INT_Wall_2x3_A": 4}}]
         grouped["zones"][0]["placements"] = [{"ref": "ASM_WallRun_A", "pos": [0, y, 0], "rot": 0} for y in (1, 3)]
         _, ctx_direct = run(direct)
@@ -230,57 +230,40 @@ class SpecChecks(unittest.TestCase):
 
     def test_uses_as_a_list_counts_each_entry_once(self):
         spec = study_spec()
-        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun_A.blend",
+        spec["assemblies"] = [{"name": "ASM_WallRun_A",
                                "size": [4, 0.2, 3], "uses": ["INT_Wall_2x3_A", "INT_Wall_2x3_A"]}]
         spec["zones"][0]["placements"] = [{"ref": "ASM_WallRun_A", "pos": [1, 1, 0], "rot": 0}]
         f, ctx = run(spec)
         self.assertEqual(ctx["counts"].get("INT_Wall_2x3_A"), 2)
         self.assertTrue(any("uses is a list" in m for m in messages(f, "NOTE")), f.items)
 
-    def test_assembly_file_is_named_after_the_assembly(self):
+    def test_a_file_outside_master_is_an_error(self):
         spec = study_spec()
-        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun.blend",
+        spec["families"]["INT"]["file"] = "blender/MASTER.blend"           # left over from older specs: harmless
+        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/asm/ASM_WallRun_A.blend",
                                "size": [4, 0.2, 3], "uses": {"INT_Wall_2x3_A": 2}}]
-        f, _ = run(spec)
-        self.assertTrue(any("one assembly per ASM file" in m for m in messages(f, "ERROR")), f.items)
-
-    def single_spec(self):
-        spec = study_spec()
-        for fam in spec["families"].values():
-            fam["file"] = "blender/MASTER.blend"
-        spec["assemblies"] = [{"name": "ASM_WallRun_A", "file": "blender/MASTER.blend", "size": [4, 0.2, 3],
-                               "uses": {"INT_Wall_2x3_A": 2}}]
         spec["zones"][0]["placements"].append({"ref": "ASM_WallRun_A", "pos": [1, 5, 0], "rot": 0})
-        return spec
+        f, _ = run(spec)
+        self.assertTrue(any("family INT: file is no longer needed" in m for m in messages(f, "NOTE")), f.items)
+        self.assertFalse(any("unknown key" in m and "file" in m for m in messages(f, "WARN")), f.items)
+        errors = messages(f, "ERROR")
+        self.assertEqual([m for m in errors if "file" in m],
+                         ["assembly ASM_WallRun_A: file 'blender/asm/ASM_WallRun_A.blend': this pipeline keeps every "
+                          "piece and assembly in blender/MASTER.blend, never in a separate KIT or ASM file; remove "
+                          "file"], f.items)
 
-    def test_single_layout_puts_everything_in_master(self):
-        f, ctx = run(self.single_spec())
-        self.assertEqual(ctx.get("layout"), "single")
-        self.assertFalse([m for m in messages(f, "ERROR") if "MASTER" in m or "assembly" in m], f.items)
-        self.assertEqual(run(study_spec())[1].get("layout"), "split")
-
-    def test_mixed_layout_is_an_error(self):
-        spec = self.single_spec()
-        spec["families"]["PROP"]["file"] = "blender/kits/KIT_Props.blend"
-        f, ctx = run(spec)
-        self.assertIsNone(ctx.get("layout"))
-        self.assertTrue(any("mix blender/MASTER.blend" in m for m in messages(f, "ERROR")), f.items)
-
-    def test_layout_against_the_ledger(self):
+    def test_no_split_layout_in_the_ledger(self):
         f = SV.Findings()
-        SV.check_layout({"intake": {}, "tasks": []}, "single", f)
-        self.assertTrue(any("blend_layout is not set" in m for m in messages(f, "WARN")), f.items)
-        f = SV.Findings()
-        SV.check_layout({"intake": {"blend_layout": "split"}, "tasks": []}, "single", f)
-        self.assertTrue(any("records the split layout" in m for m in messages(f, "ERROR")), f.items)
-        f = SV.Findings()
-        SV.check_layout({"intake": {"blend_layout": "single"},
-                         "tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/kits/KIT_World.blend"]}]}, "single", f)
-        self.assertTrue(any("T-GREY-WORLD writes blender/kits" in m for m in messages(f, "WARN")), f.items)
-        f = SV.Findings()
-        SV.check_layout({"intake": {"blend_layout": "single"},
-                         "tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/MASTER.blend"]}]}, "single", f)
+        SV.check_layout({"intake": {}, "tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/MASTER.blend"]}]}, f)
+        SV.check_layout({"intake": {"blend_layout": "single"}, "tasks": []}, f)
         self.assertEqual(f.items, [])
+        f = SV.Findings()
+        SV.check_layout({"intake": {"blend_layout": "split"}, "tasks": []}, f)
+        self.assertTrue(any("blend_layout is 'split'" in m for m in messages(f, "ERROR")), f.items)
+        f = SV.Findings()
+        SV.check_layout({"tasks": [{"id": "T-GREY-WORLD", "writes": ["blender/kits/KIT_World.blend"]},
+                                   {"id": "T-GREY-ASM-A", "writes": ["blender/asm/ASM_A_A.blend"]}]}, f)
+        self.assertEqual(len([m for m in messages(f, "ERROR") if "live in blender/MASTER.blend" in m]), 2, f.items)
 
     def test_lightmapped_free_piece_without_size_is_warned(self):
         spec = study_spec()
@@ -452,7 +435,7 @@ class SpecChecks(unittest.TestCase):
 
     def test_trim_pieces_go_on_the_sub_module(self):
         spec = study_spec()
-        spec["families"]["TRIM"] = {"file": "blender/kits/KIT_World.blend", "materials": ["M_TRIM_Sheet01"],
+        spec["families"]["TRIM"] = {"materials": ["M_TRIM_Sheet01"],
                                     "texturing": "trim", "texel_density": 512, "map_px": 1024}
         spec["budgets"]["piece_tris"]["TRIM"] = 100
         spec["pieces"].append({"name": "TRIM_Skirting_2_A", "desc": "skirting", "collision": "none"})
@@ -466,7 +449,7 @@ class SpecChecks(unittest.TestCase):
 
     def test_family_thickness_and_the_trim_sub_module(self):
         spec = study_spec()
-        spec["families"]["TRIM"] = {"file": "blender/kits/KIT_World.blend", "materials": ["M_TRIM_Sheet01"],
+        spec["families"]["TRIM"] = {"materials": ["M_TRIM_Sheet01"],
                                     "texturing": "trim", "texel_density": 512, "map_px": 1024}
         spec["budgets"]["piece_tris"]["TRIM"] = 100
         spec["grid"]["sub_module"] = 0.25                                 # INT is 0.2 m thick: not a multiple
@@ -651,7 +634,7 @@ class SpecChecks(unittest.TestCase):
                             for m in messages(run(spec)[0], "ERROR")))
         spec = study_spec()
         del spec["grid"]["sub_module"]
-        spec["families"]["TRIM"] = {"file": "blender/kits/KIT_World.blend", "materials": ["M_TRIM_Sheet01"],
+        spec["families"]["TRIM"] = {"materials": ["M_TRIM_Sheet01"],
                                     "texturing": "trim", "texel_density": 512, "map_px": 1024}
         spec["budgets"]["piece_tris"]["TRIM"] = 100
         spec["pieces"].append({"name": "TRIM_Skirting_2_A", "desc": "skirting", "collision": "none"})
@@ -928,9 +911,9 @@ class CommandLine(unittest.TestCase):
                                             "tasks": [{"id": "T-PLAN-01", "stage": 2, "role": "planner",
                                                        "status": "done", "writes": ["world/spec.yaml"]}]})
         grey = {"id": "T-GREY-WORLD", "stage": 4, "role": "kit-modeller", "status": "todo", "deps": ["gate:spec"],
-                "writes": ["blender/kits/KIT_World.blend"]}
+                "writes": ["blender/MASTER.blend"]}
         master = {"id": "T-GREY-MASTER", "stage": 4, "role": "integrator", "status": "todo", "deps": ["gate:spec"],
-                  "writes": ["blender/MASTER.blend", "blender/kits/KIT_World.blend"]}
+                  "writes": ["blender/MASTER.blend"]}
         draft = self.write("draft.json", [grey, master])
         res = run_cli(self.spec, "--ledger", ledger, "--draft", draft)
         self.assertNotIn("Traceback", res.stderr)
