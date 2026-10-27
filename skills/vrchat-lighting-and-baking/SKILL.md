@@ -26,7 +26,7 @@ Unity packs each renderer's UV2 chart box into the lightmap at a texel scale, it
 stay at 2 texels or more at that scale, and the boxes must fit the maps. The 2026-10-16 dry run's first bake failed
 on both (8 px @ 512 gaps came to 1.76 texels; one 512 map could not give 16 pieces the 128 px their gaps needed).
 
-1. Lightmap Resolution (texels per metre) low: 2-10 outdoors (2-5 terrain, 6-10 facades), 10-20 for interiors. Raise
+1. Lightmap Resolution low (*practice*): 2-10 texels/m outdoors (2-5 terrain, 6-10 facades), 10-20 interiors. Raise
    Scale In Lightmap only on surfaces that show detail. Pick it before the UV2 is packed: it sets every gap.
 2. Footprint, texels per UV unit: texels/m x sqrt(area in m2 / b) x Scale In Lightmap, b = the UV2 charts' bounding
    box's share of the tile (plan 0.85, check the measured b). **Bakery**: (L - 6) / that box's short side, L =
@@ -44,11 +44,14 @@ on both (8 px @ 512 gaps came to 1.76 texels; one 512 map could not give 16 piec
    cost, unless their Receive Global Illumination is Light Probes (no atlas space; the lighting changes at the LOD
    switch). Max Lightmap Size is 1024 whenever the world ships to Quest or iOS (one bake serves every platform),
    2048 only in a PC-only world. Bakery: L^2 x the box's aspect, each LOD at its own area (twice Progressive's).
+6. Runs and overlays (references/lightmap-uvs.md): the pieces of one continuous surface (a wall run, a floor) keep
+   effective density within about 10% of each other (*practice*): Scale In Lightmap per run, never per piece, one LOD
+   treatment per run, UV2 chart borders on each piece's own edges, joints closed with their hidden faces deleted
+   (leaks: the reference). A decal or sign on a lightmapped surface is lightmapped at any size (Cast Shadows Off) or joins its mesh.
 
 `scripts/lightmap_budget.py` runs steps 2-5 for pieces (KIND prop, grid, lightmap or probe; LODs) and prints the
 texels/m windows that fit them all; `--lightmapper bakery` for Bakery. Maths and sources: references/lightmap-budget.md.
-UV2 itself: author it in Blender (how to unwrap it is the `uv-unwrapping` skill), or Unity's Generate Lightmap UVs
-with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
+UV2: author it in Blender (`uv-unwrapping`), or Generate Lightmap UVs, Margin Method Calculate, for one-off props.
 
 ## 2. Bake
 
@@ -59,8 +62,7 @@ with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
   Windows); Ambient Occlusion on; Directional Mode per the decision table; Auto Generate **off**: bake explicitly. The
   final bake's samples, bounces and denoiser, lighting design and PC post-processing: references/final-look.md.
 - Light probes and reflection probes placed first (sections below), so one bake covers all three.
-- Bake a copy of the scene while iterating, so a bad bake can be thrown away. Scripted bakes through Unity MCP:
-  references/lightmap-budget.md.
+- Iterate on a scene copy, so a bad bake can be thrown away; scripted bakes (Unity MCP): references/lightmap-budget.md.
 - Bakery (paid; Windows with an NVIDIA GPU, Kepler or newer: https://geom.io/bakery/wiki/index.php?title=Manual):
   faster GPU bakes, better denoising, per-light settings, lightmapped specular and the probe modes VRChat creators
   use. Progressive GPU suits small worlds and AMD machines.
@@ -74,7 +76,7 @@ with Margin Method Calculate for one-off props (references/lightmap-uvs.md).
       >= 2 texels; effective density >= 0.5 x texels/m at 64 px or more (else raise Scale In Lightmap and repack,
       Bakery's recipe in the reference). The snippet in references/lightmap-budget.md prints all three and overlaps.
 - [ ] A grey Standard capsule moved through every reachable area renders lit, never black (probe coverage).
-- [ ] Joints and corners: no seams, splotches or light leaks.
+- [ ] Joints and corners: no seams, steps, splotches or light leaks; each run's effective density within about 10%.
 
 ## Avatars and other dynamic objects
 
@@ -185,9 +187,7 @@ A mirror renders the scene again, per eye in VR (Auto resolution goes up to 2048
 
 1. Is it baked, or showing a stale or auto bake? Lighting > Baked Lightmaps.
 2. Black or flat avatars -> probe coverage (and Light Volume coverage, where used).
-3. Splotches, bleeding, seams -> UV2 overlap, or gaps under 2 texels at the footprint (references/lightmap-uvs.md).
-   A seam exactly where two kit pieces meet: Stitch Seams works only inside one renderer and is off by default;
-   the (untested) route is in references/lightmap-uvs.md.
+3. Splotches, bleeding, seams -> UV2 overlap, gaps under 2 texels (references/lightmap-uvs.md); joints, decals: step 6.
 4. Blown out or washed out -> light intensities, an extra ambient source, or the skybox contributing more than meant.
 5. Shadows missing on Quest -> Quest shows baked shadows only: the light must be Baked, the casters Contribute GI,
    and the Quest material must read the lightmap (Standard Lite and Lightmapped do).

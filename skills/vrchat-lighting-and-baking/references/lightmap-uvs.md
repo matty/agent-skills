@@ -16,6 +16,37 @@ how big each mesh's rectangle in the lightmap is, and so how wide its gaps must 
 4. **Split charts at hard angles.** A chart continued around a 90 deg corner smears the shadow terminator.
 5. **Even texel density inside a mesh**; weight whole renderers with Scale In Lightmap instead.
 
+## Runs, joints and overlays
+
+Unity cannot stitch lightmaps across renderers ("Seam stitching only works on single GameObjects"), so the pieces of
+one continuous surface (a wall run, a floor, a ceiling, a terrain's chunks) must bake alike on both sides of every
+joint. Plan it with the UV2, before the bake:
+
+| Rule | Why |
+|---|---|
+| Effective density within about 10% across a run (*practice*), read per renderer from the post-bake snippet in lightmap-budget.md | The same light at another texel size blurs and steps differently: a shadow edge or a gradient breaks at the joint |
+| Scale In Lightmap set per run, never per piece | One promoted piece is a density step at both of its joints |
+| UV2 chart borders on each piece's own edges: a face that runs edge to edge is one chart | The joint is the one seam a run cannot avoid; a chart border inside a face adds another |
+| One LOD treatment per run: walls without LODs, or one LOD Group over the whole run so every piece switches together | LOD1 bakes at 0.5x LOD0's texel scale (lightmap-budget.md, LODs) and a probe-lit LOD lights differently: a LOD1 beside a LOD0 neighbour is a lighting step |
+| Joints closed: pieces meet exactly on the grid with no gap, and faces hidden in a joint (a wall's bottom against its slab) deleted; where light still leaks, overlap the pieces by at least one texel at the run's density (*practice*; one texel = 1 / texels per metre: 10 cm at 10 texels/m) only where the spec's extents allow it (a kit piece keeps its greybox extents), else Backface Tolerance (below) | Rays escape through a gap or a joint that only touches: light leaks along it, or dark bleeds in |
+
+Leaks or dark lines left at seated joints: **Backface Tolerance**, on a Lightmap Parameters asset (Project window >
+Create > Lightmap Parameters; assigned to the scene in the Lighting window's Lightmapping Settings, or per Mesh
+Renderer under Lightmapping). A texel whose rays hit too many back faces (one inside a seated wall) is invalid, and
+Unity "clones valid values from surrounding texels" into it: 1.0 rejects a texel if any ray hits a back face, 0 only
+if every ray does. Unity's scripting page (written for Enlighten's precompute) adds that on closed meshes, where back
+faces are rarely visible, "a positive value can reduce light leaking or darkening that intersecting geometry would
+otherwise cause"; single-sided geometry (a plane, a decal quad) is the reason to keep it low. Check it in the Scene
+view's Texel Validity draw mode. Sources: https://docs.unity3d.com/2022.3/Documentation/Manual/class-LightmapParameters.html,
+https://docs.unity3d.com/2022.3/Documentation/ScriptReference/LightmapParameters-backFaceTolerance.html (checked
+2026-10-27).
+
+**Overlays** (a decal, a sign, a plaque, a painted line) on a lightmapped surface are lightmapped whatever their size,
+at the surface's Scale In Lightmap with Cast Shadows Off (so the quad casts no shadow on the surface under it in the
+bake), and counted as the budget script's KIND `lightmap`; or they are modelled into the piece mesh and share its
+UV2. Probe-lit (the 64 px rule for a Free prop), an overlay gets one ambient value across its surface and reads as a
+lighter or darker patch on the lightmapped wall.
+
 ## Authoring UV2 in Blender without the uv-unwrapping skill
 
 The minimum that bakes cleanly:
@@ -55,7 +86,9 @@ Source: https://docs.unity3d.com/2022.3/Documentation/Manual/LightingGiUvs-Gener
 | Dark or bright fringes along chart borders | Gaps too small for the footprint |
 | Blocky, pixelated shadows | Texel density too low: raise Scale In Lightmap for that renderer, not the whole scene |
 | Visible seam across a flat wall | Charts split where they should be continuous. Stitch Seams (Mesh Renderer > Lightmapping, Progressive only, off by default) hides seams between straight, axis-aligned chart edges inside one renderer |
-| Seam exactly where two kit pieces meet | Unity: "Seam stitching only works on single GameObjects". Untested route: give neighbours equal texels/m x Scale In Lightmap, put chart borders on each piece's outer edges, or merge a co-planar run into one renderer and tick Stitch Seams |
+| Seam or step exactly where two kit pieces meet | Unity: "Seam stitching only works on single GameObjects": the run's rules above (density, Scale In Lightmap, chart borders, LODs). Still showing: merge a co-planar run into one renderer and tick Stitch Seams (untested) |
+| Light along the foot of a wall or under a ceiling | Pieces that only touch at the joint: seat and overlap them, then Backface Tolerance (above) |
+| A lighter or darker patch under a decal or sign | The overlay is probe-lit: lightmap it or model it into the piece (Overlays, above) |
 | Only part of a mesh is lit | UV2 outside 0-1, or the renderer is not Contribute GI |
 | Six lightmaps appeared and the bake time exploded | Scene Lightmap Resolution too high, or Scale In Lightmap left high on large meshes |
 | Lightmaps enormous in the build | Map count x size, and Directional mode (about twice the memory) |
