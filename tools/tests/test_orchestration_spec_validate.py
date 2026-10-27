@@ -971,13 +971,17 @@ class ShippedFiles(unittest.TestCase):
         self.assertIn("TRIM_Cornice_2x1_A", res.stdout)
 
     @unittest.skipUnless(DRY_RUN_SPEC.exists(), "the 2026-10-16 dry run's spec is not on this machine")
-    def test_dry_run_spec_passes_with_its_known_warnings(self):
+    def test_dry_run_spec_is_refused_for_its_split_kit_file(self):
+        # the 2026-10-16 dry run kept its families in blender/kits/KIT_World.blend; the pipeline now keeps
+        # everything in MASTER.blend, so that spec fails on exactly those three file fields and nothing else
         res = run_cli(DRY_RUN_SPEC)
-        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+        for fam in ("INT", "STR", "PROP"):
+            self.assertIn("ERROR family %s: file 'blender/kits/KIT_World.blend'" % fam, res.stdout)
         self.assertIn("PROP_Desk_Free_A is lightmapped but Free with no size", res.stdout)
         # 63% at box cost (Unity packs chart boxes, measured 2026-10-17); the old footprint-squared sum said 74%
         self.assertNotIn("lightmaps:", res.stdout)
-        self.assertIn("0 error(s), 1 warning(s)", res.stdout)
+        self.assertIn("3 error(s), 1 warning(s)", res.stdout)
 
 
 if __name__ == "__main__":
