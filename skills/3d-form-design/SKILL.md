@@ -1,6 +1,6 @@
 ---
 name: 3d-form-design
-description: Model props, furniture and hard-surface objects right first time, not AI-looking - blocky models of scaled cubes and cylinders, every edge chamfered, soap-bar or melted bevels, one bevel width everywhere, floating parts, wrong proportions, tables, chairs, sofas or shelves that look fake. A validated form spec and furniture templates, profile-first modelling, bevel sizes by material, a form audit. Wins for form and bevel sizing; topology and normals blender-mesh-topology, textures pbr-texturing.
+description: Model props, furniture and hard-surface objects that look AI-made or fake - blocky scaled cubes and cylinders, every edge chamfered, soap-bar or melted bevels, one bevel width everywhere, floating parts, wrong proportions in tables, chairs, sofas or shelves. Form spec, furniture templates, profile-first modelling, bevel sizes by material, form audit. Topology (blender-mesh-topology); textures (pbr-texturing).
 ---
 
 # Form design: right the first time

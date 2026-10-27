@@ -1,6 +1,6 @@
 ---
 name: image-to-pbr
-description: Turn one image into a PBR material - a photo, scan or generated pattern (rug, fabric, tiles, stone, wood) to base colour, normal, height, roughness, AO and metallic maps; "seamless" texture that shows a seam, pattern squashed, maps too dark or shiny. Seam and repeat detection, whole-period crops, delighting, DeepBump ML normals with a built-in fallback, value calibration. Hand-authored materials, bakes and look-dev go to pbr-texturing; formats and VRAM vrchat-texture-and-vram.
+description: Turn one image (photo, scan or generated pattern of rug, fabric, tiles, stone, wood) into a PBR material - base colour, normal, height, roughness, AO, metallic; a seamless texture that shows a seam, pattern squashed, maps too dark or shiny. Seam and repeat detection, delighting, DeepBump normals, value calibration. Hand-authored materials and bakes (pbr-texturing); formats and VRAM (vrchat-texture-and-vram).
 ---
 
 # Image to PBR

@@ -1,6 +1,6 @@
 ---
 name: blender-mesh-topology
-description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading from the mesh, too many triangles, edge flow; a greybox piece that looks plain, boxy or too clean, what to model, at what size. 3-to-1 reduction grids, Quad Remesher, hard-surface chamfers, weighted normals, audit and review renders. Wins for topology and kit-piece finishing; blocky or over-bevelled props and furniture 3d-form-design, textures pbr-texturing.
+description: Retopology and clean low-count topology in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading, too many triangles, an over-dense low, edge flow; a greybox piece that looks plain, boxy or too clean, what detail to model, at what size. Reduction grids, loop removal, Quad Remesher, hard-surface chamfers, weighted normals, audit, review renders. Blocky props (3d-form-design); textures (pbr-texturing).
 ---
 
 # Clean topology for generated and hard-surface meshes

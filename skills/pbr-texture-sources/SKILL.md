@@ -1,6 +1,6 @@
 ---
 name: pbr-texture-sources
-description: Find and download free CC0 PBR textures and materials - need a brick, wood, concrete, metal, ground or fabric texture, search Poly Haven or ambientCG, download maps at 1k-8k, grab a material from a texture library. One script searches both APIs, downloads the chosen maps with one naming scheme (BaseColor, NormalGL, Roughness), verifies the files and records source and licence. Authoring, values and engine packing belong to pbr-texturing.
+description: Find and download free CC0 PBR textures and materials - a brick, wood, concrete, metal, ground or fabric texture, search Poly Haven or ambientCG, maps at 1k-8k. One script searches both, downloads with one naming scheme (BaseColor, NormalGL, Roughness), verifies the files and records source and licence. Authoring, values and engine packing (pbr-texturing).
 ---
 
 # PBR texture sources

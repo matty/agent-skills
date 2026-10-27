@@ -1,6 +1,6 @@
 ---
 name: blender-to-unity
-description: Blender to Unity FBX export and import - models arriving 100x too big or rotated X -90/270, faceted shading after import, missing LOD or collision meshes, stray .fbm or Materials folders, unshared materials, kit pieces to package as prefabs. Export settings, headless batch export, a Unity import postprocessor, prefab variants, LODs, colliders, mesh audit, VRChat notes. For kit .blend structure see blender-kit-library, layout sync blender-unity-placement-sync, UVs uv-unwrapping.
+description: Blender to Unity FBX export and import - models 100x too big or rotated X -90/270, faceted shading after import, missing LOD or collision meshes, stray .fbm or Materials folders, unshared materials, kit pieces as prefabs. Headless batch export, import postprocessor, prefab variants, mesh audit. Kit .blend structure (blender-kit-library); layout sync (blender-unity-placement-sync); UVs (uv-unwrapping).
 ---
 
 # Blender to Unity

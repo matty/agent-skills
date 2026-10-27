@@ -1,6 +1,6 @@
 ---
 name: uv-unwrapping
-description: UV unwrapping in Blender for real-time 3D - stretched, blurry, backwards or overlapping UVs, visible seams or normal-map lines, bleeding bakes, wasted island space; seams, texel density (px/m), mip-safe padding, stacking, trim, tiling, unique and lightmap UV2 rules, with an audit and layout script. For automating with RizomUV, rizomuv-uv-pipeline wins; for lightmap resolution, footprint budgets and bakes, vrchat-lighting-and-baking wins.
+description: UV unwrapping in Blender - stretched, blurry, backwards or overlapping UVs, visible seams or normal-map lines, bleeding bakes, wasted space; seams, texel density (px/m), padding, stacking, trim, tiling, unique and lightmap UV2 rules. Automating with RizomUV (rizomuv-uv-pipeline); lightmap resolution, budgets and bakes (vrchat-lighting-and-baking).
 ---
 
 # UV unwrapping

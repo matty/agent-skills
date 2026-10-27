@@ -1,6 +1,6 @@
 ---
 name: blender-unity-placement-sync
-description: A Blender layout and a Unity scene disagree - pieces moved, added or deleted in Unity that Blender must get (or the reverse), a layout to rebuild in Unity as prefab instances, placements lost after a re-export, CONFLICT, BLOCKED or REFUSED in a sync report. Stable placement ids, JSON dumps, a three-way merge with safety refusals, MASTER and ASM scopes. For .blend structure see blender-kit-library, for FBX export and prefabs blender-to-unity.
+description: A Blender layout and a Unity scene disagree - pieces moved, added or deleted in Unity that Blender must get (or the reverse), a layout to rebuild as prefab instances, placements lost after a re-export, CONFLICT, BLOCKED or REFUSED in a sync report. Stable ids, a three-way merge, MASTER and ASM scopes. .blend structure (blender-kit-library); FBX export and prefabs (blender-to-unity).
 ---
 
 # Blender <-> Unity placement sync
