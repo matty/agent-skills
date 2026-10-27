@@ -69,6 +69,7 @@ CANON = {
     "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0},
     "uv_island_min_share": 0.005,
     "tile_phase_texels": 0.5,
+    "free_scale_band": (0.8, 1.25),   # the even scale a Free piece may be placed at without its own scale_range
     "texel_band": {"unique": (0.8, 1.25), "tiling": (0.9, 1.1), "trim": (0.9, 1.1)},
     "sliver_quality": 0.02,     # triangle quality below which both UV graders skip a triangle as a sliver
     "mobile_limit_text": "104,857,600",      # VRChat's 100 MB mobile world limit in bytes (its MB is 2^20)
@@ -546,6 +547,10 @@ def check_tile_phase():
     b = re.search(pat, read("vrchat-world-qa/scripts/qa_measure.py"))
     if not (a and b and a.group(1) == b.group(1)):
         fail("vrchat-world-qa/scripts/qa_measure.py", "PHASE_VARIANT_RE differs from spec_validate's (or is missing)")
+    for rel in ("vrchat-world-orchestration/scripts/spec_validate.py", "vrchat-world-qa/scripts/qa_measure.py"):
+        got = module_constant(rel, "FREE_SCALE_BAND")
+        if got != CANON["free_scale_band"]:
+            fail(rel, "FREE_SCALE_BAND is %r, canon %r" % (got, CANON["free_scale_band"]))
 
 
 def check_uv_gate():
