@@ -124,7 +124,7 @@ LOD_LIGHTMAP_SCALE = 0.5      # the Progressive Lightmapper gives LODn its own a
 LIGHTMAPPERS = ("unity", "bakery")   # whose footprint --lightmap-texels uses; "progressive" is accepted for unity
 BAKERY_AREA_FACTOR = 2.0      # Bakery sizes a renderer by the sum of |cross| over its triangles, 2 x its area, and
 BAKERY_INSET_TEXELS = 3       # its Default atlas packer insets each rect 3 texels (ftBuildGraphics.cs as installed
-                              # in a Unity 2022.3.22f1 project, read 2026-10-24; not measured in a bake)
+                              # in a Unity 2022.3.22f1 project, read 2026-10-24; measured in a bake 2026-10-27)
 EFFECTIVE_DENSITY_MIN = 0.5   # Bakery: a PROBLEM when a mesh of MIN_FOOTPRINT_PX or more gets under this share of the
                               # texels per metre planned for it (U4; uv-unwrapping's audit applies the same gate)
 TRIM_FAMILY = "TRIM"       # placed on grid.sub_module (--sub-module), as the pipeline's spec validator checks it
