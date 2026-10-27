@@ -77,11 +77,8 @@ Measure, do not eyeball. The gate (this skill owns the numbers; `rizomuv-uv-pipe
 | Area p95 (log2 of the density change inside an island) | <= 0.20 | 0 = even density inside each island |
 
 Fix with seams first; keep a `uv.minimize_stretch` result only if the audit improves (sphere p95 1.06 to 1.23, 5.2.2).
-When the texture's placement must stay (a shipped look, directional fabric, a bake UV derived from it):
-`ua.reunwrap_in_place(objs, units_per_m=1.0)` (tiling at 1 unit/m; leave it out to keep each island's UV area)
-unwraps each island inside its own borders, then fits it back to its old position and direction, mirrored if it was.
-A bent 120 deg patch went from p95 1.64 to 1.00 with its centre, grain and density kept (5.2.2). Never a re-unwrap or
-`align_rotation` for this: both move and turn the islands.
+Texture placement must stay (a shipped look, directional fabric, a bake UV from it): `ua.reunwrap_in_place(objs)`
+re-unwraps each island in its borders and fits it back where it was (p95 1.64 to 1.00, 5.2.2), never a plain unwrap.
 
 ## 5. Straighten and orient
 
