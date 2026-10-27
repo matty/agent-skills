@@ -191,7 +191,7 @@ at the wrong one, correct pieces fail and pieces built at the wrong size pass.
 | Name | Piece collections match the pattern; collections that hold objects but have no kit name are listed |
 | Transforms | Every object in a piece at identity (origin at the pivot, rotation and scale applied); `instance_offset` zero |
 | Footprint | Grid pieces: minimum corner at the origin, extents in whole modules matching the `Size` token (axes under one module skipped) |
-| Materials | Named `M_<FAMILY>_<Name>`, matching `^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$` (a `.001` duplicate fails), and only the piece's family or `M_TRIM_*` (another set: `audit_kit(module, materials=("M_EXT_", ...))`) |
+| Materials | Named `M_<FAMILY>_<Name>`, matching `^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$` (a `.001` duplicate fails), and only the piece's family or `M_TRIM_*` (another set: `audit_kit(module, materials=("M_EXT_", ...))`, CLI `--materials M_EXT_,M_STR_,M_TRIM_`) |
 | Stray meshes | Mesh objects outside any piece collection (`REF` aside) |
 | Layout | Single MASTER: every piece inside `KIT`, every assembly inside `ASM`, both excluded from the view layer, a `MASTER` collection |
 | Libraries | Linked libraries whose file is missing, and linked data missing from a file that exists (renamed in it) |
