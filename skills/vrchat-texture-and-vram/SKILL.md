@@ -1,6 +1,6 @@
 ---
 name: vrchat-texture-and-vram
-description: Cut texture memory and download size in VRChat/Unity worlds - Quest or iOS build over 100 MB, slow loads, stutter, VRAM blowout. Format per map (BC7, DXT1/5, BC5, ASTC block sizes), crunch limits, mip streaming, Android and iOS overrides, metallic-smoothness packing, mesh and audio import settings. Whole-world triage starts at vrchat-world-optimization; lightmap size and count belong to vrchat-lighting-and-baking.
+description: Cut texture memory and download size in VRChat/Unity worlds - Quest or iOS build over 100 MB, slow loads, stutter, VRAM blowout. Format per map (BC7, DXT, BC5, ASTC), crunch, mip streaming, Android and iOS overrides, metallic-smoothness packing, mesh and audio import. Whole-world triage starts at vrchat-world-optimization; lightmaps (vrchat-lighting-and-baking).
 ---
 
 # Texture, VRAM and build-size optimisation

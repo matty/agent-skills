@@ -120,7 +120,7 @@ LIGHTMAP_MAX = 0.80          # error above: a spill to another map is likely. At
 LOD_COST = 0.25              # LODn gets its own atlas space at texel scale 0.5^n, so it costs 0.25^n of its area
                              # (Unity 2022.3.22f1, measured 2026-10-17: scale 0.995 / 0.492 / 0.250 for LOD0-2)
 BAKERY_AREA_FACTOR = 2.0     # lighting.baker bakery (Bakery's ftBuildGraphics.cs as installed in a Unity 2022.3.22f1
-BAKERY_INSET_TEXELS = 3      # project, read 2026-10-24; not measured in a bake): a renderer's rect has side
+BAKERY_INSET_TEXELS = 3      # project, read 2026-10-24, measured in a bake 2026-10-27): a renderer's rect has side
                              # texels_per_m x sqrt(2 x A x Scale In Lightmap) on its UV2 bounds' short side and costs
                              # side^2 x the bounds' aspect (1 to plan), each LOD at its own area with no LOD factor;
                              # the Default atlas packer insets the rect 3 texels on every side

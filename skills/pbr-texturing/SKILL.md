@@ -1,6 +1,6 @@
 ---
 name: pbr-texturing
-description: Texturing and materials for real-time 3D - materials look flat, plastic, too clean, too dark or too bright, tiling or repetition shows, a normal map looks inverted or shimmers, a bake has seams or skewed detail. Kit, trim sheet and prop texturing, decals, wear, mesh-map bakes (Substance baker, Cycles), Substance Designer and Painter, PBR checks, look-dev renders. UVs uv-unwrapping, formats and VRAM vrchat-texture-and-vram, lightmaps vrchat-lighting-and-baking, modelling blender-mesh-topology.
+description: Texturing and materials for real-time 3D - flat, plastic, too clean, too dark or bright materials, visible tiling or repetition, a normal map inverted or shimmering, bake seams or skewed detail. Kits, trim sheets, props, decals, wear, mesh-map bakes, Substance Designer and Painter, PBR checks, look-dev. UVs (uv-unwrapping); formats and VRAM (vrchat-texture-and-vram); lightmaps (vrchat-lighting-and-baking).
 ---
 
 # PBR texturing

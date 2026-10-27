@@ -1,6 +1,6 @@
 ---
 name: blender-kit-library
-description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in MASTER, editing a MASTER the user also edits, linked libraries broken after files moved, naming, sizing or pivoting pieces. One MASTER .blend with KIT, ASM and layout collections by default (split files on request), syncing with the user's changes, grid modules, kit_status, a create, place, snapshot and audit script. Engine-neutral; export blender-to-unity, Unity layout sync blender-unity-placement-sync.
+description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in MASTER, a MASTER the user also edits, linked libraries broken after a move, naming, sizing or pivoting pieces. One MASTER .blend with KIT, ASM and layout collections, grid modules, status, place and audit scripts. Export (blender-to-unity); Unity layout sync (blender-unity-placement-sync).
 ---
 
 # Blender kit library: KIT, ASM and MASTER

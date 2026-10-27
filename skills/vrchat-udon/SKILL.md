@@ -1,6 +1,6 @@
 ---
 name: vrchat-udon
-description: Udon / UdonSharp scripts for VRChat worlds - scripts costing frametime, Update loops, networking laggy, desynced or clogged, late joiners seeing the wrong state, ownership, manual vs continuous sync, NetworkCallable events, sync budgets, pooling, toggling expensive objects. Wins for script design and networking; for SDK components and multi-client testing see vrchat-world-sdk-setup, for whole-world frame time vrchat-world-optimization.
+description: Udon / UdonSharp scripts for VRChat worlds - scripts costing frametime, Update loops, laggy, desynced or clogged networking, late joiners seeing the wrong state, ownership, manual vs continuous sync, NetworkCallable events, sync budgets, pooling, toggles. SDK components and multi-client tests (vrchat-world-sdk-setup); whole-world frame time (vrchat-world-optimization).
 ---
 
 # Udon and UdonSharp for VRChat worlds

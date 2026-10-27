@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-orchestration
-description: Build, plan, resume or continue a whole VRChat world or map end to end, from a brief or reference images to PC and Quest builds ready to upload - a master agent delegates every stage (spec, kit, modelling, texturing, Unity, lighting, Udon, builds) to subagents, with user gates, QA after every task and a resumable ledger. Whole builds only; one step goes to its skill (QA vrchat-world-qa, budgets vrchat-world-optimization, builds and upload vrchat-world-sdk-setup).
+description: Build, plan, resume or continue a whole VRChat world or map end to end, from a brief or reference images to PC and Quest builds ready to upload - a master agent delegates every stage to subagents, with user gates, QA and a resumable ledger. Whole builds only; one step goes to its skill (QA vrchat-world-qa, budgets vrchat-world-optimization, upload vrchat-world-sdk-setup).
 ---
 
 # VRChat world orchestration
