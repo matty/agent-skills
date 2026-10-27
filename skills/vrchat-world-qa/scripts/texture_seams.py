@@ -28,16 +28,17 @@ Command line (exit 0 when no seam shows, 1 when one does, 2 for a request it can
 
 A seam edge shows (`visible_m`, an issue) when its mean step is over LIMITS["ratio"] (3) x its mean inner step (never
 less than the texture's median step between neighbouring texels) and over the floor (colour: mean absolute step over
-the channels; normal: degrees between the two sides' shading normals, after taking out the step between their corner
-normals, which a hard edge puts there on purpose); between note_ratio (2) and that it is worth a
+the channels; normal: degrees between the two sides' shading normals); between note_ratio (2) and that it is worth a
 close look (`look_m`, a note). Measured on Blender 5.2.2 at 512 px: smooth noise or a smooth image laid by UVs, every
 seam at p50 9-14; the same from Object coordinates or a Box-projected image, p95 1.1-1.4; a clean cage bake's normal
 map p95 0.8 and the same map with one island turned after the bake, 6.2 m of 18 m showing; a busy library texture
 (forest ground) cut at random by UVs, p95 2.3-2.4 with some edges in the note band. Edges where
 the mesh folds sharper than LIMITS["fold_deg"] are reported apart (`folds_m`), not judged: a texture may change at
-a real corner. joints() matches edges of different pieces that coincide in world space (within tol) and
-judges the pair of faces that continue each other across them (two walls' fronts, not their end caps) the same
-way; collection instances (a kit layout) are expanded through the depsgraph. Textures wrap
+a real corner; so are a normal map's seams on hard edges (corner normals split over LIMITS["hard_deg"]), where the low
+breaks its shading on purpose (a flat map on a chamfered box showed 22.9 m there, a creased bottle's bake 0.3 m).
+joints() matches edges of different pieces that coincide in world space (within tol) and judges the pair of faces
+that continue each other across them (two walls' fronts, not their end caps) the same way; collection instances (a
+kit layout) are expanded through the depsgraph. Textures wrap
 (Repeat), so tiling UVs far outside 0-1 sample as the engine does. The image is read as stored codes from its own
 copy, loaded Non-Color: the scene's images and their settings are left alone. Nothing in the scene is changed.
 """
@@ -61,6 +62,9 @@ LIMITS = dict(
     colour_floor=0.01,       # ... and over this mean absolute step (0-1 codes; 8-bit noise is about 0.002)
     normal_floor_deg=2.0,    # ... or, for a normal map, over this many degrees between the two sides' normals
     fold_deg=89.0,           # edges whose faces meet sharper than this are reported apart, not judged
+    hard_deg=0.5,            # a normal map's seam on a hard edge (corner normals split by more than this) is a fold
+                             # too: the low breaks its shading there on purpose, and a bake of a creased high (a
+                             # bottle's shoulder) leaves each side its own tilt
     samples=9,               # sample points along each seam edge (at 1/(n+1) ... n/(n+1) of its length)
     uv_eps=1e-6,             # UVs closer than this are the same UV vertex
 )
@@ -309,6 +313,33 @@ def _face_normal(d, f):
     return c / max(np.linalg.norm(c), 1e-12)
 
 
+def _frame_at(d, f, uvq, sign):
+    """The tangent frame (tangent, sign, corner normal) interpolated at UV points uvq (k, 2) inside face f: barycentric
+    over the fan triangle of the face that holds each point (the nearest when one lies just outside)."""
+    s, n = int(d["ls"][f]), int(d["lt"][f])
+    loops = np.arange(s, s + n)
+    best_w = np.full(len(uvq), -np.inf)
+    tg = np.zeros((len(uvq), 3))
+    cn = np.zeros((len(uvq), 3))
+    for i in range(1, n - 1):
+        c = loops[[0, i, i + 1]]
+        a, b, e = d["uv"][c[0]], d["uv"][c[1]], d["uv"][c[2]]
+        den = (b[1] - e[1]) * (a[0] - e[0]) + (e[0] - b[0]) * (a[1] - e[1])
+        if abs(den) < 1e-18:
+            continue
+        w0 = ((b[1] - e[1]) * (uvq[:, 0] - e[0]) + (e[0] - b[0]) * (uvq[:, 1] - e[1])) / den
+        w1 = ((e[1] - a[1]) * (uvq[:, 0] - e[0]) + (a[0] - e[0]) * (uvq[:, 1] - e[1])) / den
+        w = np.stack([w0, w1, 1 - w0 - w1], 1)
+        score = w.min(axis=1)
+        take = score > best_w
+        best_w[take] = score[take]
+        tg[take] = w[take] @ d["tg"][c]
+        cn[take] = w[take] @ d["cn"][c]
+    tg /= np.maximum(np.linalg.norm(tg, axis=1, keepdims=True), 1e-12)
+    cn /= np.maximum(np.linalg.norm(cn, axis=1, keepdims=True), 1e-12)
+    return tg, sign, cn
+
+
 def _side_samples(d, img, f, la, lb, kind, ts):
     """Samples along the edge from corner la to corner lb of face f: at 0.5, 1.5, 2.5 and 3.5 texels inside it, and
     half a texel outside it on the face's own UVs continued (what the texture would show there if it went on):
@@ -326,21 +357,10 @@ def _side_samples(d, img, f, la, lb, kind, ts):
     lerp = lambda a: d[a][la][None, :] * (1 - ts[:, None]) + d[a][lb][None, :] * ts[:, None]
     sign = np.full(len(ts), d["sg"][la])
     frame = (lerp("tg"), sign, lerp("cn"))
-    return [shade(x, *frame) for x in inside], shade(out, *frame)
-
-
-def _turn(v, src, dst):
-    """Each row of v (k, 3) turned by the smallest rotation taking unit src to unit dst (same row; Rodrigues)."""
-    a = np.cross(src, dst)
-    c = (np.asarray(src) * np.asarray(dst)).sum(axis=1, keepdims=True)
-    return v + np.cross(a, v) + np.cross(a, np.cross(a, v)) / np.maximum(1.0 + c, 1e-6)
-
-
-def _corner_normals(d, side, ts):
-    """The corner normals of one side of an edge, interpolated along it at ts (k, 3), unit length."""
-    _f, la, lb = side
-    n = d["cn"][la][None, :] * (1 - ts[:, None]) + d["cn"][lb][None, :] * ts[:, None]
-    return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    # each inner sample in the tangent frame at its own place on the face: on a Harden Normals chamfer the frame turns
+    # about 16 deg per texel, and decoding the inner texels in the edge's frame read that turn as a seam
+    inner = [shade(x, *_frame_at(d, f, base + k * step, sign)) for x, k in zip(inside, (0.5, 1.5, 2.5, 3.5))]
+    return inner, shade(out, *frame)
 
 
 def _pair_rows(da, img_a, side_a, db, img_b, side_b, kind, limits, length, mid, folded, continued=False):
@@ -355,11 +375,6 @@ def _pair_rows(da, img_a, side_a, db, img_b, side_b, kind, limits, length, mid, 
         return None
     diff = angle_deg if kind == "normal" else colour_step
     (ia, oa), (ib, ob) = a, b
-    if kind == "normal" and not continued:
-        # a hard edge's crease is the mesh's, not the map's: turn side b by the step between the two sides' corner
-        # normals, so only what the map adds is compared (a flat map on a chamfered box shows nothing)
-        nb, na = _corner_normals(db, side_b, ts), _corner_normals(da, side_a, ts)
-        ib = [_turn(x, nb, na) for x in ib]
     if continued:
         step = 0.5 * (diff(oa, ib[0]) + diff(ob, ia[0]))
     else:
@@ -378,6 +393,12 @@ def seams(ob, image, kind="color", uv_layer=None, material=None, limits=LIMITS):
     img, name = load_image(image)
     dg = bpy.context.evaluated_depsgraph_get()
     d = _mesh_arrays(ob.evaluated_get(dg), np.array(ob.matrix_world), uv_layer, kind == "normal", material)
+    used = np.repeat(d["keep"], d["lt"])
+    bad = int((~np.isfinite(d["uv"][used]).all(axis=1)).sum())
+    if bad:
+        return {"kind": kind, "object": ob.name, "image": name, "edges": 0, "seam_m": 0.0, "visible_m": 0.0,
+                "look_m": 0.0, "folds_m": 0.0, "worst": [], "notes": [],
+                "issues": ["%d UV corners are not numbers (NaN or inf): unwrap again, then judge the seams" % bad]}
     rows = []
     for (va, vb), sides in _edge_sides(d).items():
         if len(sides) != 2:
@@ -388,8 +409,10 @@ def seams(ob, image, kind="color", uv_layer=None, material=None, limits=LIMITS):
             continue                                                     # not a seam
         pa, pb = d["co"][va], d["co"][vb]
         fold = math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(_face_normal(d, fa), _face_normal(d, fb)))))))
+        hard = kind == "normal" and max(angle_deg(d["cn"][a0], d["cn"][b0]), angle_deg(d["cn"][a1], d["cn"][b1])) \
+            > limits["hard_deg"]
         r = _pair_rows(d, img, (fa, a0, a1), d, img, (fb, b0, b1), kind, limits, float(np.linalg.norm(pb - pa)),
-                       (pa + pb) / 2, fold > limits["fold_deg"])
+                       (pa + pb) / 2, fold > limits["fold_deg"] or hard)
         if r:
             rows.append(r)
     rep = dict(summarise(rows, kind, limits, baseline(img, kind)), object=ob.name, image=name)
@@ -538,8 +561,13 @@ def _run(argv):
     ap.add_argument("--material", default=None, help="only faces whose material name matches (a name or pattern)")
     ap.add_argument("--joints", action="store_true", help="judge where the matched pieces meet instead of their seams "
                     "(objects hidden or in excluded collections are left out)")
+    ap.add_argument("--fold-deg", type=float, default=LIMITS["fold_deg"], help="edges folding sharper than this are "
+                    "reported apart, not judged (default %(default)s)")
+    ap.add_argument("--hard-deg", type=float, default=LIMITS["hard_deg"], help="normal maps: a seam on an edge whose "
+                    "corner normals split more than this is a fold (default %(default)s; 180 judges hard edges too)")
     ap.add_argument("--json", default=None)
     a = ap.parse_args(argv)
+    lim = dict(LIMITS, fold_deg=a.fold_deg, hard_deg=a.hard_deg)
     obs = [o for o in bpy.data.objects if fnmatch.fnmatchcase(o.name, a.objects)
            and (o.type == "MESH" or (a.joints and o.instance_type == "COLLECTION"))]
     if a.joints:            # what the scene shows: a MASTER's kit masters sit in excluded collections at the origin
@@ -548,9 +576,9 @@ def _run(argv):
     if not obs:
         raise ValueError("no object matched --objects %r" % a.objects)
     if a.joints:
-        reps = [joints(obs, a.image, a.kind, a.uv, a.material)]
+        reps = [joints(obs, a.image, a.kind, a.uv, a.material, limits=lim)]
     else:
-        reps = [seams(o, a.image, a.kind, a.uv, a.material) for o in obs]
+        reps = [seams(o, a.image, a.kind, a.uv, a.material, limits=lim) for o in obs]
     for r in reps:
         print(line(r))
     if a.json:
