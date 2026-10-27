@@ -53,7 +53,8 @@ importer setting, with sources, is in `references/fbx-export.md`; folders, prefa
 
 ## Mesh hygiene
 
-- Merge by distance, recalculate normals outside, delete interior faces nobody sees.
+- Merge by distance, recalculate normals outside, delete interior faces nobody sees. An interior a moving part opens
+  counts as seen (inside a chest under its lid, behind a door, in a drawer): keep and texture those faces.
 - The export triangulates (`use_triangles`), splitting each face of 4+ corners its own way. That changes custom
   normals (measured on Blender 5.2.2: a weighted-normal panel 10.4 deg off flat after export) and can pick the other
   diagonal of a non-planar quad. So a piece with custom normals (Weighted Normal, Harden Normals) or non-planar faces
@@ -88,6 +89,8 @@ Material count drives SetPass calls more than triangle count drives anything.
   pieces into one atlas is `uv-unwrapping`; texture formats and sizes, `vrchat-texture-and-vram`.
 - Unity's Standard shader (VRChat PC): one `_MetallicGlossMap` with metallic in R and smoothness (1 - roughness) in
   A; occlusion is its own map. Never a glTF-style ORM map for Standard.
+- Normal maps (detail normals too) import as Texture Type Normal map and are never crunched
+  (`references/unity-packaging.md`, Order of work).
 - Keep material slot order stable between exports: submesh indices, and anything set per submesh in Unity, follow it.
 
 ## Splitting geometry: the culling trade-off
