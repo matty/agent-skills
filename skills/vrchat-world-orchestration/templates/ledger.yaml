@@ -11,9 +11,6 @@ intake:                               # what the spec does not hold; the answers
     The user's request in their own words: the place, mood, size, references and must-have interactions.
   answers: []                         # the user's intake replies, verbatim: {question, answer}
   skills_declined: []                 # skills the user chose not to install (QA marks their checks not-run, owner user)
-  blend_layout: single                # single (default: KIT, ASM and layout as collections in blender/MASTER.blend)
-                                      # or split (separate KIT and ASM files), only when the user asked for it
-  blend_layout_by: null               # split only: the user's words asking for separate files
 
 gates:                                # user approvals; tasks list them in deps as gate:<name>
   spec:
@@ -58,7 +55,6 @@ tasks:                                # stage 0 adds the first tasks; the planne
 
 flags:
   generated_assets: []                # props made with generate_3d or imported from a library: {piece, source, task}
-  overrides: []                       # library overrides in ASM or MASTER files: {file, object, reason}
   open_conflicts: []                  # unresolved placement-sync conflicts: {scope, id, why}
   user_actions: []                    # what only the user can do (installs, sign-in, uploads, reviews):
                                       # {what, why, task, since}

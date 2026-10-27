@@ -91,6 +91,15 @@ TILE_PHASE_PX = 0.5          # tile_phase: a tiling face further than this many 
 TILE_AXIS_TIE = 1e-4         # tile_uv: normal components this close to the largest count as a tie (a 45 deg chamfer),
                              # broken Z, then X, then Y, so float32 and float64 normals pick the same plane
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
+UV_HALF_ERR_PX = 1.0         # the most a 16-bit (FP16) UV0 may be rounded, in texels of the map: Unity's default
+                             # Vertex Compression stores UV0 as FP16 (engine notes), which rounds a UV of v to within
+                             # map_px x 2^(floor(log2 v) - 11) px, so far-out tiling UVs swim off their place
+
+
+def half_error_px(v, map_px):
+    """The most an FP16 UV of magnitude v is rounded, in pixels of a map_px texture (half its step there)."""
+    v = abs(float(v))
+    return 0.0 if v < 2.0 ** -14 else float(map_px) * 2.0 ** (math.floor(math.log2(v)) - 11)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
 STRIP_ATTR = "uv_strip"      # boolean face attribute: tiling faces unwrapped as a strip along a curve (a tower ring, an
@@ -874,6 +883,10 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     margin = (round(min(float(uv[hl, 0].min()) * w, float(1 - uv[hl, 0].max()) * w,
                         float(uv[hl, 1].min()) * h, float(1 - uv[hl, 1].max()) * h), 2) + 0.0
               if hl.any() else None)
+    # how far from 0 the UVs reach, as they are and with every island moved home by whole tiles (home_tiling)
+    uv_far = round(float(np.abs(uv).max()), 3) if len(uv) else 0.0
+    uv_far_home = round(float((hi - np.floor(lo + UV_EPS)).max()), 3) if n_isl else 0.0
+    half_err, half_err_home = half_error_px(uv_far, max(w, h)), half_error_px(uv_far_home, max(w, h))
     # strip direction and trim rows; islands holding text faces follow the text rule instead of the grain rule
     elong, along_v = _orientation(d, isl_poly, n_isl, aspect)
     along_v = along_v & ~text_isl & ~_all_marked(d.get("cross"), isl_poly, n_isl)
@@ -921,6 +934,8 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
            "mirror_stacks": int(mirror_stacks),
            "zero_area_uv_faces": int(len(np.unique(d["tpoly"][zero_uv]))),
            "outside_0_1": round(outside, 4), "islands_off_tile": int(off_tile),
+           "uv_far": uv_far, "uv_far_home": uv_far_home, "half_error_px": round(half_err, 3),
+           "half_error_px_home": round(half_err_home, 3),
            "texel_px_per_m": round(td_mean, 1), "texel_cv": round(td_cv, 3),
            "texel_island_range": ([round(float(td_isl[wi > 0].min()), 1), round(float(td_isl[wi > 0].max()), 1)]
                                   if (wi > 0).any() else None),
@@ -945,6 +960,11 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     if lightmap_fp:
         rep.update(lightmap_fp)
     rep["notes"] = []
+    if purpose in ("tiling", "trim") and half_err_home > UV_HALF_ERR_PX:
+        rep["notes"].append("an island reaches %.1f tiles from 0 even moved home, where an FP16 UV0 (Unity's default "
+                            "Vertex Compression) rounds up to %.0f px: split the surface, use a lower texel density "
+                            "with a detail map, or take Tex Coord 0 out of Vertex Compression"
+                            % (uv_far_home, half_err_home))
     low_density = None
     if purpose == "lightmap":
         # a lightmapper packs the charts' bounding box: empty space inside it costs texels (Unity 2022.3, measured;
@@ -1048,6 +1068,11 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False,
         out.append("UVs outside 0-1")
     if purpose == "unique" and r["islands_off_tile"]:
         out.append("%d islands leave the 0-1 tile (they do not fit)" % r["islands_off_tile"])
+    if (purpose in ("tiling", "trim") and r["half_error_px"] > UV_HALF_ERR_PX
+            and r["half_error_px_home"] < r["half_error_px"]):
+        out.append("UVs reach %.1f tiles from 0, where an FP16 UV0 rounds up to %.1f px (over %g): move the islands "
+                   "home by whole tiles, home_tiling(); it never changes the look"
+                   % (r["uv_far"], r["half_error_px"], UV_HALF_ERR_PX))
     if r.get("overlapping_island_pairs"):
         out.append("%d island pairs partly overlap" % r["overlapping_island_pairs"])
     if purpose == "lightmap" and r.get("stacked_island_pairs"):
@@ -2074,6 +2099,145 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
             ob.data.uv_layers.active_index = prev
     if pack_after:
         pack(objects, map_px=(w, h), pad_px=pad_px, layer=layer, scale=False, keep_stacks=keep_stacks, rotate=rotate)
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
+def home_tiling(objects, layer=0, period=1.0, material=None):
+    """Tiling and trim layers only: move every island by whole repeats so its lowest corner lands in the first one
+    (0 to period), never scaling or turning it. The texture samples the same texels after the move (Wrap Mode
+    Repeat), the UV editor shows the islands on its tile, and small UVs keep their precision where an engine stores
+    them as 16-bit floats. period: the texture's repeat in UV units, 1 / the material's tiling (tiling 0.5: period
+    2; shifting by 1 there would move the pattern half a texture). Islands longer than one repeat still reach past
+    it, as they must. Never on a unique or lightmap layer: it would fold +1 U bake copies onto their originals.
+    material: only those faces. Returns {object name: islands moved}."""
+    if period <= 0:
+        raise ValueError("home_tiling(period=%r): the repeat must be positive" % period)
+    objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for o in objects:
+        lay = _layer(o.data, layer)
+        if lay is None:
+            raise ValueError("%s has no UV layer %r" % (o.name, layer))
+        keep = _keep_faces(o, material)
+        if keep is not None and not keep.any():
+            continue
+        isl_loop, lo, _hi, _area, _signed, uv = _island_boxes(o, lay, keep)
+        shift = -np.floor(lo / period + UV_EPS) * period
+        moved = int(np.count_nonzero(np.abs(shift).max(1) > 0)) if len(shift) else 0
+        if moved:
+            _write_uv(o, lay, uv + shift[isl_loop], keep)
+        out[o.name] = moved
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
+def place_like(P, Q, scale=1.0, mirror=False):
+    """P scaled by scale about its centre, then turned and moved to fit Q best by least squares over corresponding
+    points (2D Umeyama): the same centre as Q, and the rotation that best matches Q. mirror=True fits the best
+    reflection instead, for a Q that is a mirrored copy. P and Q: (n, 2), listed in the same order."""
+    P, Q = np.asarray(P, float), np.asarray(Q, float)
+    mp, mq = P.mean(0), Q.mean(0)
+    X, Y = P - mp, Q - mq
+    U, _S, Vt = np.linalg.svd(Y.T @ X)
+    d = np.sign(np.linalg.det(U @ Vt)) or 1.0
+    R = U @ np.diag([1.0, -d if mirror else d]) @ Vt              # q = R p for column vectors
+    return scale * (X @ R.T) + mq
+
+
+def reunwrap_in_place(objects, layer=0, map_px=1024, units_per_m=None, material=None, method="ANGLE_BASED"):
+    """Fix stretch without moving the texture: unwrap each existing island again inside its own borders, then put it
+    back where it was. Seams go on the island borders only (the mesh's own seams are restored afterwards), Blender's
+    unwrap runs on the layer, and each new island is scaled back and fitted to its old one by a rotation and a move
+    (place_like), mirrored if the old one was. So it keeps its position, its direction (grain) and its density, while
+    the shape inside it is the unwrap's. units_per_m: scale each island to that many UV units per metre of surface
+    (1.0 for a tiling map at 1 unit/m); None keeps each island's own UV area. map_px: the map's shape, so a non-square
+    sheet ("2048x1024") is fitted in square pixels. material: only those faces; the others keep their UVs.
+    method: "ANGLE_BASED" or "CONFORMAL". Returns per object islands, mirrored and moved_max (the furthest any
+    corner moved, in UV units). Audit afterwards: a closed or folded island needs a new seam, not this."""
+    w, h = map_size(map_px)
+    aspect = np.array([w, h], float) / max(w, h)
+    objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for o in objects:
+        lay = _layer(o.data, layer)
+        if lay is None:
+            raise ValueError("%s has no UV layer %r" % (o.name, layer))
+        keep = _keep_faces(o, material)
+        if keep is not None and not keep.any():
+            continue
+        name = lay.name                                              # Edit Mode below invalidates lay
+        full = _arrays(o, name, evaluated=False)
+        d = _subset(full, keep) if keep is not None else full
+        pa, pb, uv_split, _hard, key = _edges(d)
+        old_au = _triangles(d, aspect)["au"]
+        old_isl, _split, _flipped = _island_ids(d, pa, pb, uv_split, old_au)
+        me = o.data
+        seams = np.zeros(len(me.edges), bool)
+        me.edges.foreach_get("use_seam", seams)
+        prev_layer, prev, hidden = me.uv_layers.active_index, None, None
+        try:
+            _mark_seams(me, _edge_index(me, key[old_isl[pa] != old_isl[pb]]), clear=True)
+            _set_active_layer(o, name)
+            if keep is not None:
+                hidden = _hide_others(o, keep)
+            prev = _edit([o])
+            bpy.ops.uv.unwrap(method=method, margin=UNWRAP_MARGIN)
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            if hidden is not None:
+                _unhide(o, hidden)
+            me.edges.foreach_set("use_seam", seams)
+            me.update()
+            if prev is not None:
+                _restore(prev)
+                if bpy.context.mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode="OBJECT")
+            me.uv_layers.active_index = prev_layer
+        lay = _layer(me, name)
+        n2 = _arrays(o, name, evaluated=False)
+        n2 = _subset(n2, keep) if keep is not None else n2
+        pa2, pb2, split2, _h2, _k2 = _edges(n2)
+        new_isl = _islands(len(n2["ls"]), pa2, pb2, ~split2)
+        _, grp = np.unique(old_isl * (int(new_isl.max()) + 1) + new_isl, return_inverse=True)  # old and new island
+        ng = int(grp.max()) + 1
+        tr_new = _triangles(n2)
+        tg = grp[n2["tpoly"]]
+        a3 = np.bincount(tg, weights=tr_new["a3"], minlength=ng)
+        a_new = np.bincount(tg, weights=tr_new["au"], minlength=ng)
+        a_old = np.bincount(tg, weights=old_au, minlength=ng)
+        if units_per_m is None and np.abs(a_old).sum() <= 1e-12:
+            raise ValueError("%s: the old islands have no UV area to keep; pass units_per_m" % o.name)
+        dens = np.abs(a_old).sum() / max(a3.sum(), 1e-30)            # for an island collapsed to nothing
+        loop_g = np.repeat(grp, d["lt"])
+        old_p, new_p = d["uv"] * aspect, n2["uv"]                   # the unwrap's shape is square in its own units
+        res = np.empty_like(old_p)
+        mirrored = 0
+        for g in range(ng):
+            m = loop_g == g
+            if abs(a_new[g]) <= 1e-30:
+                res[m] = old_p[m]
+                continue
+            if units_per_m is not None:
+                want = (units_per_m * aspect[0]) ** 2 * a3[g]
+            else:
+                want = abs(a_old[g]) if abs(a_old[g]) > 1e-12 * max(a3[g], 1e-30) else dens * a3[g]
+            flip = a_old[g] * a_new[g] < 0
+            mirrored += int(flip)
+            res[m] = place_like(new_p[m], old_p[m], math.sqrt(want / abs(a_new[g])), flip)
+        uv = res / aspect
+        _write_uv(o, lay, uv, keep)
+        out[o.name] = {"islands": ng, "mirrored": mirrored,
+                       "moved_max": float(np.linalg.norm(uv - d["uv"], axis=1).max()) if len(uv) else 0.0}
     if was_edit and bpy.context.view_layer.objects.active is not None:
         bpy.ops.object.mode_set(mode="EDIT")
     return out

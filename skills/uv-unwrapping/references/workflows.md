@@ -116,7 +116,9 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 2. One material per kind of surface: tiling (walls, floors) and trim (mouldings, frames, edges, pipes). Every audit
    below takes `material=` so each part is judged by its own rule.
 3. Tiling surfaces: `ua.tile_project([ob], tile_m=map_px / px_per_m, material="M_Wall*")` (512 / 512 = 1 m; the
-   tile must divide the grid module and the storey height: next section). Leave the UVs outside 0-1: they tile.
+   tile must divide the grid module and the storey height: next section). Never scale them into 0-1: they tile. Move
+   them home by whole tiles, `ua.home_tiling([ob], material="M_Wall*")` (`period=` 1 / the material's tiling when it
+   is not 1); that never changes the phase.
    Not `bpy.ops.uv.cube_project`: it centres the projection on the selection's bounds, so each piece starts at a
    different phase (5.2.2, measured: a 1 m wall's left edge at U 0.375, a 2 m wall's at 0.25, with cube_size 4).
 4. Trim surfaces, on a sheet of w x h px (2048x1024 below). Neither this skill nor `rizomuv-uv-pipeline` automates

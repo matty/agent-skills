@@ -1,6 +1,6 @@
 ---
 name: rizomuv-uv-pipeline
-description: RizomUV from Python - auto seams, unfold and pack, batch-unwrap kit pieces in Blender, UVs stretched, overlapping or badly packed after RizomUV, Pack or texel density doing nothing, a lightmap UV2 packed in the same run for its footprint, stretch maps, parallel batches. Needs RizomUV 2027.0.417+ (headless). Wins for driving RizomUV; for seams, padding, density classes and UV2 rules see uv-unwrapping, for lightmap resolution and footprint budgets vrchat-lighting-and-baking.
+description: RizomUV from Python - auto seams, unfold and pack, batch-unwrap kit pieces from Blender, UVs stretched, overlapping or badly packed after RizomUV, Pack or texel density doing nothing, UV2 packed for its lightmap footprint, parallel batches. Needs RizomUV 2027.0.417+. Wins for driving RizomUV; seams, padding, density and UV2 rules (uv-unwrapping); lightmap budgets (vrchat-lighting-and-baking).
 ---
 
 # RizomUV UV pipeline (headless, from Python)

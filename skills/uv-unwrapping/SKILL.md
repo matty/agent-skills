@@ -1,6 +1,6 @@
 ---
 name: uv-unwrapping
-description: UV unwrapping in Blender for real-time 3D - stretched, blurry, backwards or overlapping UVs, visible seams or normal-map lines, bleeding bakes, wasted island space; seams, texel density (px/m), mip-safe padding, stacking, trim, tiling, unique and lightmap UV2 rules, with an audit and layout script. For automating with RizomUV, rizomuv-uv-pipeline wins; for lightmap resolution, footprint budgets and bakes, vrchat-lighting-and-baking wins.
+description: UV unwrapping in Blender - stretched, blurry, backwards or overlapping UVs, visible seams or normal-map lines, bleeding bakes, wasted space; seams, texel density (px/m), padding, stacking, trim, tiling, unique and lightmap UV2 rules. Automating with RizomUV (rizomuv-uv-pipeline); lightmap resolution, budgets and bakes (vrchat-lighting-and-baking).
 ---
 
 # UV unwrapping
@@ -18,7 +18,7 @@ mesh and drops the Triangulate and Weighted Normal: 12.59 deg off after export).
 
 | Surface | `purpose` | UVs |
 |---|---|---|
-| Walls, floors, terrain, large plain surfaces | `tiling` | world scale from each piece's axes, may run far outside 0-1 (`tile_project`, section 6) |
+| Walls, floors, terrain, large plain surfaces | `tiling` | world scale from each piece's axes (`tile_project`), never scaled or packed to fit 0-1; then `ua.home_tiling(objs)` moves each island home by whole tiles (section 6) |
 | Mouldings, frames, pipes, trims, kit edges | `trim` | straightened strips on the trim sheet's rows, U free along the strip |
 | Props and hero pieces with their own texture or a bake; objects sharing an atlas | `unique` | the order of work below, inside 0-1 |
 | Every render mesh of a kit (LODs and probe-lit props too, not `_COL`) | `lightmap` | the second UV map; its gaps and bends matter where it is lightmapped (section 9) |
@@ -79,7 +79,9 @@ Measure, do not eyeball. The gate (this skill owns the numbers; `rizomuv-uv-pipe
 | Per island (each with >= 0.5% of the area): angular p95, area p95; the `uv_text` faces: angular p95; area max (faces of a texel or more, not slivers) | <= 1.25, <= 0.50 (the 0.8-1.25x texel band inside one island); <= 1.15; <= 2.0 | the object's numbers hide a small island: a label on 2.5% stretched 1.45x passed them (5.2.2); 2.0 = a patch at 2x or 1/2 the density |
 
 Fix with seams first; keep a `uv.minimize_stretch` result only if the audit improves (sphere p95 1.06 to 1.23, 5.2.2).
-A piece whose look needs a number loosened passes `limits=` (recorded in the report: uv-audit.md).
+A piece whose look needs a number loosened passes `limits=` (recorded in the report: uv-audit.md). Texture placement
+must stay (a shipped look, directional fabric, a bake UV from it): `ua.reunwrap_in_place(objs)` re-unwraps each
+island in its borders and fits it back where it was (p95 1.64 to 1.00, 5.2.2), never a plain unwrap.
 
 ## 5. Straighten and orient
 
@@ -101,8 +103,7 @@ A piece whose look needs a number loosened passes `limits=` (recorded in the rep
 
 ## 6. Texel density
 
-Texels per metre of surface: `px_per_m = map_px x sqrt(UV area / surface area in m2)`. Keep it the same on neighbouring
-objects, or the odd one out looks blurry or oversharp.
+Texels per metre: `px_per_m = map_px x sqrt(UV area / surface m2)`. Keep it equal on neighbours, or one looks blurry.
 
 - Targets: about 1024 px/m for first-person games, 512 for third-person (Maxon, checked 2026-10-17,
   https://help.maxon.net/c4d/en-us/Content/html/Texel_Density.html). In VR a headset resolves about 1150 / d px/m at
@@ -117,6 +118,9 @@ objects, or the odd one out looks blurry or oversharp.
   half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
   0.5 m tile, never 4 m); floors and ceilings unturned; curves as strips marked `uv_strip`, closed on whole tiles;
   audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
+- Tiling and trim islands then go home: `ua.home_tiling(objs, period=1 / material tiling)` moves each by whole
+  repeats, so it never changes the look or the phase and the UVs stay small where an engine stores UV0 as FP16 (the
+  audit fails what FP16 would round by over 1 px: manual). Never home a unique or lightmap layer.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island even, marking those
   faces with the boolean face attribute `uv_low_density` (`_<UV map name>` for one map): the audit leaves them out of
   the mean and spread; `layout(..., low_factor=0.5)` sets them to half the class. Map size: `texel-density.md`.
@@ -181,6 +185,7 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 | Symptom | Cause | Fix |
 |---|---|---|
 | Checker squares stretched into rectangles or diamonds | too few seams, or a projection on a curved form | seams on the curve's back line, `unwrap(method="ANGLE_BASED")`, audit |
+| Stretch fails the gate but the texture must stay where it is | islands unwrapped or projected badly, then textured | `ua.reunwrap_in_place(objs)` (section 4), then audit; a folded or closed island needs a new seam first |
 | Blurry here, crisp there | uneven texel density inside or between objects | `layout(px_per_m=...)`, the same px/m for neighbours |
 | A line across a flat surface | seam in view, or seam pixels not padded | move the seam to a hard edge or hidden side; pad the gap (section 7) |
 | The tiling pattern jumps at every joint between kit pieces | Cube Projection (centred per piece), or a tile that does not divide the grid step | `tile_project`; tile divides module and storey; `audit(tile_m=, steps=)` |
@@ -195,21 +200,5 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 
 ## Script
 
-`scripts/uv_audit.py` (Blender 4.1+, tested on 5.2.2; no add-ons); purposes, report fields, every issue, accuracy and
-side effects: [references/uv-audit.md](references/uv-audit.md).
-
-```python
-import sys; sys.path.insert(0, r"<skill>/scripts")
-import uv_audit as ua
-st = ua.apply_stack(ob)                                            # from the top; Triangulate off until after layout
-if st["hard_surface"]: ua.seams_by_angle([ob])                     # route A / B: seams by angle, never re-shaded
-ua.seams_from_hard_edges(objs)                                     # a seam on every hard edge
-ua.apply_stack(ob, keep_mirror=False)                              # a Mirror kept live, just before the layout
-ua.layout(objs, map_px=2048, px_per_m=512, bake=True)              # UV0: density, one pack, fits, +1 U copies
-ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
-ua.pack_lightmap(objs, texels_per_m=20)                            # UV2: 2 texels at any scale; LODs at 0.5^n
-ua.audit_selected(texels_per_m=20)                                 # UV2 at its measured footprint
-```
-
-Command line (exit 1 when anything needs a look, 2 for a request it cannot audit; every flag in the manual):
-`blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --td 512`
+`scripts/uv_audit.py` (Blender 4.1+, tested on 5.2.2; no add-ons): the call order of section 2 as code, the command
+line, purposes, report fields, every issue, accuracy and side effects are in [references/uv-audit.md](references/uv-audit.md).

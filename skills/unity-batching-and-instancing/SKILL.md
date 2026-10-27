@@ -1,6 +1,6 @@
 ---
 name: unity-batching-and-instancing
-description: Cut draw calls and SetPass calls in Unity Built-in RP and VRChat worlds - GPU instancing that will not batch, static vs dynamic batching, MaterialPropertyBlocks, atlasing, instancing shaders, DrawMeshInstanced and VRCGraphics.DrawMeshInstanced from Udon, instancing on Quest materials. In a VRChat world, triage starts at vrchat-world-optimization; atlas UVs come from uv-unwrapping, shared materials from blender-to-unity.
+description: Cut draw calls and SetPass calls in Unity Built-in RP and VRChat worlds - GPU instancing that will not batch, static vs dynamic batching, MaterialPropertyBlocks, atlasing, instancing shaders, DrawMeshInstanced and VRCGraphics.DrawMeshInstanced from Udon, Quest instancing. VRChat triage starts at vrchat-world-optimization; atlas UVs (uv-unwrapping); shared materials (blender-to-unity).
 ---
 
 # Batching and GPU instancing (Unity Built-in RP)

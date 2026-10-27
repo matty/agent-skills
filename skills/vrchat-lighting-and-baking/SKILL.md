@@ -1,6 +1,6 @@
 ---
 name: vrchat-lighting-and-baking
-description: Bake and debug lighting in VRChat worlds (Unity Built-in RP) - black or flat avatars, seams, splotches, slow bakes, oversized lightmaps, light switches, mirrors, occlusion culling. Lightmap resolution, footprint and capacity; Progressive and Bakery, light probes, VRC Light Volumes, reflection probes, LTCGI, Quest and iOS lighting. Owns lightmap sizing and bakes; unwrapping UV2 is uv-unwrapping, whole-world performance triage is vrchat-world-optimization.
+description: Bake and debug lighting in VRChat worlds (Unity Built-in RP) - black or flat avatars, seams, splotches, slow bakes, oversized lightmaps, light switches, mirrors, occlusion culling. Lightmap sizing, Progressive and Bakery, light probes, VRC Light Volumes, reflection probes, LTCGI, Quest and iOS. UV2 unwrapping (uv-unwrapping); whole-world triage starts at vrchat-world-optimization.
 ---
 
 # VRChat world lighting and baking

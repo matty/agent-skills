@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-qa
-description: QA, review, check, verify or sign off a VRChat world stage - a kit, piece, assembly, layout, export, scene, bake or platform build, whether it may advance or upload and matches its mockup, plan and spec. Independent pass/fail checks with measured evidence and a fixed verdict block; never fixes. To fix, or audit one craft without sign-off, the specialist wins (uv-unwrapping, blender-mesh-topology, vrchat-world-optimization, vrchat-world-sdk-setup); vrchat-world-orchestration calls it.
+description: QA, review, check, verify or sign off a VRChat world stage - kit, piece, assembly, layout, export, scene, bake or platform build - may it advance or upload, does it match its mockup, plan and spec. Independent pass/fail checks with measured evidence; never fixes. To fix, or audit one craft without sign-off, the specialist skill wins; vrchat-world-orchestration calls it.
 ---
 
 # VRChat world QA

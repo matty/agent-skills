@@ -1707,7 +1707,130 @@ def tiling_kit_continues_across_joints():
         check(code == 1, "a 0.3 m step is not a whole number of 1 m tiles: exit %s" % code)
 
 
-CASES = [tiling_kit_continues_across_joints, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
+def tiling_islands_moved_home():
+    """home_tiling moves tiling islands by whole repeats only: each lands with its lowest corner in the first repeat,
+    the texture it samples is unchanged (UV mod period), sizes are kept. The tiling audit flags UVs that FP16 would
+    round by over 1 px when homing fixes it, and only notes an island too long to bring under it."""
+    q3 = [quad(0, 0, 0.45, 0.45), quad(1, 0, 2.75, 0.3), quad(3, 0, 3.5, 0.5)]
+    uvs = [sq(20.3, -7.6, 0.45), sq(-3.2, 30.1, 1.75, 0.3), sq(0.2, 0.2, 0.5)]
+    ob = make("TILES", q3, uvs)
+    before = np.concatenate(face_uvs(ob))
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(any("home_tiling" in i for i in r["issues"]), "far UVs not flagged: %s" % r["issues"])
+    moved = ua.home_tiling([ob])[ob.name]
+    after = np.concatenate(face_uvs(ob))
+    check(moved == 2, "moved %d islands, expected 2" % moved)
+    check(np.allclose(np.mod(after, 1.0), np.mod(before, 1.0), atol=1e-4), "the texture under an island changed")
+    lows = [f.min(0) for f in face_uvs(ob)]
+    check(all((lo >= -1e-6).all() and (lo < 1).all() for lo in lows), "island corners not home: %s" % lows)
+    check(np.allclose(np.ptp(after.reshape(3, 4, 2), 1), np.ptp(before.reshape(3, 4, 2), 1), atol=1e-5),
+          "an island changed size")
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(r["uv_far"] < 2.8 and not r["issues"] and not r["notes"], "after home: %s / %s" % (r["issues"], r["notes"]))
+    reset()
+    ob = make("TILES2", [quad(0, 0, 0.5, 0.5)], [sq(3.25, 0.25, 0.5)])
+    ua.home_tiling([ob], period=2.0)
+    check(abs(face_uvs(ob)[0].min(0)[0] - 1.25) < 1e-5, "period 2 moved by %s" % face_uvs(ob)[0].min(0))
+    reset()
+    ob = make("FLOOR", [quad(0, 0, 20, 1)], [sq(0.0, 0.0, 20.0, 1.0)])     # 20 m at 1 unit/m: cannot come home
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(not r["issues"] and any("FP16" in n for n in r["notes"]), "long floor: %s / %s" % (r["issues"],
+                                                                                            r["notes"]))
+
+
+def bent_patch(name, mirror=False, extra=False):
+    """A 120 deg arc of a cylinder (r 0.3 m, 0.6 m long along Y) with planar UVs from above: stretched towards its
+    sides. Turned 30 deg and moved to (0.6, 0.5) like a tiling UV0; mirror flips it in U. extra adds a flat quad on a
+    second material whose UVs must not change."""
+    verts, faces = [], []
+    nx, ny = 8, 6
+    for i in range(nx + 1):
+        t = math.radians(30 + 120 * i / nx)
+        for j in range(ny + 1):
+            verts.append((0.3 * math.cos(t), 0.6 * j / ny, 0.3 * math.sin(t)))
+    for i in range(nx):
+        for j in range(ny):
+            a = i * (ny + 1) + j
+            faces.append((a, a + ny + 1, a + ny + 2, a + 1))
+    if extra:
+        b = len(verts)
+        verts += quad(1, 0, 1.5, 0.5)
+        faces.append((b, b + 1, b + 2, b + 3))
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], faces)
+    me.update()
+    c, s = math.cos(math.radians(30)), math.sin(math.radians(30))
+    uv = []
+    for k, f in enumerate(faces):
+        for v in f:
+            x, y = verts[v][0], verts[v][1]
+            if extra and k == len(faces) - 1:
+                uv += [x - 1, y]
+                continue
+            x = -x if mirror else x
+            uv += [0.6 + c * x - s * y, 0.5 + s * x + c * y]
+    for ln in ("UVMap", "UVMap2"):
+        me.uv_layers.new(name=ln).uv.foreach_set("vector", uv)
+    if extra:
+        for nm in ("M_Fabric", "M_Other"):
+            me.materials.append(bpy.data.materials.get(nm) or bpy.data.materials.new(nm))
+        me.polygons.foreach_set("material_index", [0] * (len(faces) - 1) + [1])
+    me.edges[0].use_seam = True
+    me.uv_layers.active_index = 1
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob, nx * ny
+
+
+def reunwrap_keeps_placement():
+    """reunwrap_in_place (#13): a stretched tiling island comes back unstretched at 1 unit/m with its centre, its
+    direction along the cylinder and its mirroring kept; the mesh's seams, the active layer, the other layer and
+    another material's faces are left as they were."""
+    def axis_angle(ob, n):
+        f = face_uvs(ob)[:n]
+        g = np.array([q[3] - q[0] for q in f]).mean(0)                 # each face's first to last corner: along Y
+        return math.degrees(math.atan2(g[1], g[0]))
+
+    def signed(ob, n):
+        f = face_uvs(ob)[:n]
+        return sum(0.5 * sum(q[i][0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * q[i][1] for i in range(4)) for q in f)
+
+    flips = []
+    for mirror in (False, True):
+        reset()
+        ob, n = bent_patch("CUSHION_M" if mirror else "CUSHION", mirror=mirror, extra=True)
+        before = np.concatenate(face_uvs(ob))
+        other = face_uvs(ob, layer=1)
+        ang0, sgn0 = axis_angle(ob, n), signed(ob, n)
+        r0 = ua.audit(ob, purpose="tiling", map_px=1024, material="M_Fabric")
+        check(r0["angular_p95"] > ua.LIMITS["angular_p95"], "fixture not stretched: %s" % r0["angular_p95"])
+        res = ua.reunwrap_in_place([ob], units_per_m=1.0, material="M_Fabric")[ob.name]
+        after = np.concatenate(face_uvs(ob))
+        r = ua.audit(ob, purpose="tiling", map_px=1024, material="M_Fabric")
+        print("INFO reunwrap_keeps_placement mirror=%s: p95 %.2f -> %.3f, p99 %.2f -> %.3f, area p95 %.2f -> %.3f, "
+              "px/m %.0f, axis %.1f -> %.1f deg, moved up to %.3f" % (
+                  mirror, r0["angular_p95"], r["angular_p95"], r0["angular_p99"], r["angular_p99"],
+                  r0["area_p95"], r["area_p95"], r["texel_px_per_m"], ang0, axis_angle(ob, n), res["moved_max"]))
+        check(res["islands"] == 1, "result %s" % res)
+        flips.append(res["mirrored"])
+        check(not r["issues"], "after: %s" % r["issues"])
+        check(abs(r["texel_px_per_m"] / 1024.0 - 1) < 0.02, "density %.0f px/m, not 1 unit/m" % r["texel_px_per_m"])
+        check(abs(axis_angle(ob, n) - ang0) < 1.0, "direction %.1f -> %.1f" % (ang0, axis_angle(ob, n)))
+        check(np.sign(signed(ob, n)) == np.sign(sgn0), "mirroring changed")
+        check(np.abs(after[:4 * n].mean(0) - before[:4 * n].mean(0)).max() < 0.03, "centre moved")
+        check(np.allclose(after[4 * n:], before[4 * n:]), "the other material's UVs changed")
+        check(all(np.allclose(a, b) for a, b in zip(face_uvs(ob, layer=1), other)), "the other layer changed")
+        check(ob.data.uv_layers.active_index == 1, "active layer not restored")
+        check([e.use_seam for e in ob.data.edges].count(True) == 1 and ob.data.edges[0].use_seam, "seams not restored")
+    check(sorted(flips) == [0, 1], "mirrored per variant %s: one of the two is mirrored against its faces" % flips)
+    reset()
+    ob, n = bent_patch("KEEP_AREA")
+    a0 = abs(signed(ob, n))
+    ua.reunwrap_in_place([ob])
+    check(abs(abs(signed(ob, n)) / a0 - 1) < 1e-3, "units_per_m=None did not keep the UV area")
+
+
+CASES = [tiling_kit_continues_across_joints, reunwrap_keeps_placement, tiling_islands_moved_home, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
          stack_added_triangulate, seams_by_angle_matches_select_sharp, text_up_attribute_in_world_space,
          trim_sheet_2048x1024, material_filter_and_command_line, stack_faces_names_the_causes,
          lightmap_lods_at_their_own_footprint, hard_edges_route_a_boolean, modular_wall_mixed_materials,

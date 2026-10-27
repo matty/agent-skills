@@ -20,9 +20,10 @@ What it checks:
   - required sections and fields, the allowed values of every enumerated field, and the type of every value (a
     wrong type is an ERROR naming the field, never a traceback); unknown keys are warned with the nearest known one
     (zones[].lighting_state: did you mean lighting_states?);
-  - piece, assembly, family and material names (M_TRIM_ materials allowed in any family); the Blender file layout:
-    single (every family and assembly file is blender/MASTER.blend, the default) or split (one assembly per ASM
-    file, named after it), never mixed; with --ledger, the layout matches the ledger's intake.blend_layout;
+  - piece, assembly, family and material names (M_TRIM_ materials allowed in any family); everything lives in one
+    blender/MASTER.blend, so a family or assembly `file` other than that (a split KIT or ASM file) is an ERROR and
+    one naming MASTER a NOTE (no longer needed); with --ledger, no task writes blender/kits/ or blender/asm/ and the
+    ledger records no other intake.blend_layout;
   - piece sizes against the grid (a one-number Size needs `size`); grid.sub_module divides grid.module; grid
     placements on the module (TRIM on the sub-module) in 90-degree turns; every piece in an elevation, placement or
     assembly exists and every piece is used; assemblies that are never placed, and pieces that appear only in an
@@ -119,7 +120,7 @@ LIGHTMAP_MAX = 0.80          # error above: a spill to another map is likely. At
 LOD_COST = 0.25              # LODn gets its own atlas space at texel scale 0.5^n, so it costs 0.25^n of its area
                              # (Unity 2022.3.22f1, measured 2026-10-17: scale 0.995 / 0.492 / 0.250 for LOD0-2)
 BAKERY_AREA_FACTOR = 2.0     # lighting.baker bakery (Bakery's ftBuildGraphics.cs as installed in a Unity 2022.3.22f1
-BAKERY_INSET_TEXELS = 3      # project, read 2026-10-24; not measured in a bake): a renderer's rect has side
+BAKERY_INSET_TEXELS = 3      # project, read 2026-10-24, measured in a bake 2026-10-27): a renderer's rect has side
                              # texels_per_m x sqrt(2 x A x Scale In Lightmap) on its UV2 bounds' short side and costs
                              # side^2 x the bounds' aspect (1 to plan), each LOD at its own area with no LOD factor;
                              # the Default atlas packer insets the rect 3 texels on every side
@@ -295,14 +296,14 @@ KNOWN_KEYS = {
               "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
     "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase",
-               "turn_symmetry", "scale_range", "floor"),
+               "turn_symmetry", "scale_range", "floor"),                                       # file: legacy
     "budgets": BUDGET_KEYS + ("download_mb", "piece_tris", "lightmap"),
     "lightmap": ("max_px", "count", "texels_per_m", "min_footprint_px"),
     "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size", "ref",
               "detail", "bake"),
     "look": ("references", "wear", "lighting_mood", "quality_bar", "lead_family", "materials"),
     "look_material": ("ref", "albedo_srgb", "roughness", "metal", "wear"),
-    "assembly": ("name", "file", "size", "uses"),
+    "assembly": ("name", "file", "size", "uses"),                                                         # file: legacy
     "zone": ("id", "name", "kind", "bounds", "floor_z", "placements", "rooms", "lighting_states", "switch",
              "mirrors"),
     "placement": ("ref", "pos", "rot", "scale", "mirror"),
@@ -784,9 +785,7 @@ def check_families(families, module, sub_module, f, storey=None):
                             "shared M_TRIM_ material" % (mname, code, code))
             if not one_of(fam.get("texturing"), TEXTURING):
                 f.error("family %s texturing must be one of %s" % (code, "/".join(sorted(TEXTURING))))
-            if not str(fam.get("file") or "").endswith(".blend"):
-                f.error("family %s needs a .blend file path: blender/MASTER.blend (single layout, the default) or "
-                        "its KIT file (split)" % code)
+            check_legacy_file(fam, "family %s" % code, f)
             td = fam.get("texel_density")
             if not number(td) or td <= 0:
                 f.error("family %s needs texel_density (px per metre on UV0)" % code)
@@ -877,49 +876,33 @@ def check_pieces(spec, families, module, f):
     return pieces
 
 
-MASTER_FILE = "blender/master.blend"      # normalised (_norm): the single layout's one file
-LAYOUTS = ("single", "split")
+MASTER_FILE = "blender/master.blend"      # normalised (_norm): the one Blender file every piece and assembly lives in
 
 
-def blend_layout(spec, f):
-    """single when every family and assembly file is blender/MASTER.blend, split when none is; mixed is an ERROR
-    (returns None), as is a spec with neither."""
-    fams, asms = spec.get("families"), spec.get("assemblies")
-    files = [_norm(fam.get("file") or "") for fam in (fams.values() if isinstance(fams, dict) else [])
-             if isinstance(fam, dict)]
-    files += [_norm(a.get("file") or "") for a in (asms if isinstance(asms, list) else []) if isinstance(a, dict)]
-    files = [x for x in files if x]
-    if not files:
-        return None
-    single = [x == MASTER_FILE for x in files]
-    if all(single):
-        return "single"
-    if not any(single):
-        return "split"
-    f.error("families and assemblies mix blender/MASTER.blend with separate files: either every one is in "
-            "blender/MASTER.blend (single layout, the default) or each has its own KIT or ASM file (split, only when "
-            "the user asked for it)")
-    return None
+def check_legacy_file(obj, where, f):
+    """`file` on a family or assembly is left over from specs that allowed separate KIT and ASM files."""
+    if "file" not in obj:
+        return
+    if _norm(str(obj.get("file") or "")) == MASTER_FILE:
+        f.note("%s: file is no longer needed (everything lives in blender/MASTER.blend); remove it" % where)
+    else:
+        f.error("%s: file %r: this pipeline keeps every piece and assembly in blender/MASTER.blend, never in a "
+                "separate KIT or ASM file; remove file" % (where, obj.get("file")))
 
 
-def check_layout(ledger, layout, f):
-    """The ledger's intake.blend_layout against the layout the spec's files show, and task writes that suit it."""
-    chosen = ((ledger.get("intake") or {}).get("blend_layout"))
-    if chosen is None:
-        f.warn("ledger intake.blend_layout is not set: record single (the default) or split (only when the user asked "
-               "for separate KIT and ASM files)")
-    elif chosen not in LAYOUTS:
-        f.error("ledger intake.blend_layout must be single or split, got %r" % (chosen,))
-    elif layout and layout != chosen:
-        f.error("the ledger records the %s layout but the spec's family and assembly files are %s" % (chosen, layout))
-    if (chosen or layout) == "single":
-        for t in ledger.get("tasks") or []:
-            if not isinstance(t, dict):
-                continue
-            for w in t.get("writes") or []:
-                if _norm(w).startswith(("blender/kits/", "blender/asm/")):
-                    f.warn("task %s writes %s, but in the single layout pieces and assemblies live in "
-                           "blender/MASTER.blend" % (t.get("id"), w))
+def check_layout(ledger, f):
+    """Everything lives in blender/MASTER.blend: no split layout recorded, no task writing a KIT or ASM file."""
+    chosen = (ledger.get("intake") or {}).get("blend_layout")
+    if chosen not in (None, "single"):
+        f.error("ledger intake.blend_layout is %r: this pipeline keeps everything in blender/MASTER.blend (separate KIT "
+                "and ASM files are not supported); remove blend_layout" % (chosen,))
+    for t in ledger.get("tasks") or []:
+        if not isinstance(t, dict):
+            continue
+        for w in t.get("writes") or []:
+            if _norm(w).startswith(("blender/kits/", "blender/asm/")):
+                f.error("task %s writes %s, but pieces and assemblies live in blender/MASTER.blend (a long task "
+                        "works on blender/work/<task id>/)" % (t.get("id"), w))
 
 
 def check_assemblies(spec, pieces, f):
@@ -932,10 +915,7 @@ def check_assemblies(spec, pieces, f):
         asms[name] = a
         with Guard(f, "assembly %s" % name):
             check_keys(a, "assembly", "assembly %s" % name, f)
-            want = "blender/asm/%s.blend" % name
-            if _norm(a.get("file") or "") not in (want.lower(), MASTER_FILE):
-                f.error("assembly %s: file must be %s (single layout, the default) or %s (split: one assembly per "
-                        "ASM file, named after it)" % (name, MASTER_FILE, want))
+            check_legacy_file(a, "assembly %s" % name, f)
             uses = a.get("uses")
             if isinstance(uses, dict):
                 for u, n in uses.items():
@@ -1463,7 +1443,6 @@ def check_spec(spec, f, root=None):
                    if isinstance(spec.get("grid"), dict) else None)
     pieces = check_pieces(spec, families, module, f)
     asms = check_assemblies(spec, pieces, f)
-    layout = blend_layout(spec, f)
     used = set()
     for a in asms.values():
         used.update(p for p, _ in uses_counts(a))
@@ -1503,7 +1482,7 @@ def check_spec(spec, f, root=None):
         check_lighting_states(spec, pieces, asms, module, families, f)
 
     lm = budgets.get("lightmap")
-    ctx = {"pieces": pieces, "asms": asms, "module": module, "families": families, "layout": layout,
+    ctx = {"pieces": pieces, "asms": asms, "module": module, "families": families,
            "lightmap": lm if isinstance(lm, dict) else {}}
     with Guard(f, "budgets.lightmap"):
         ctx.update(check_lightmap(spec, pieces, asms, module, families, f))
@@ -1978,7 +1957,7 @@ def main():
             if a.draft:
                 ledger = merge_draft(ledger, as_ledger(load(a.draft), f, a.draft), f)
             check_ledger(ledger, f)
-            check_layout(ledger, ctx.get("layout"), f)
+            check_layout(ledger, f)
             if a.mermaid:
                 os.makedirs(os.path.dirname(os.path.abspath(a.mermaid)), exist_ok=True)
                 with open(a.mermaid, "w", encoding="utf-8") as out:

@@ -1,6 +1,6 @@
 ---
 name: blender-kit-library
-description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in MASTER, editing a MASTER the user also edits, linked libraries broken after files moved, naming, sizing or pivoting pieces. One MASTER .blend with KIT, ASM and layout collections by default (split files on request), syncing with the user's changes, grid modules, kit_status, a create, place, snapshot and audit script. Engine-neutral; export blender-to-unity, Unity layout sync blender-unity-placement-sync.
+description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in MASTER, a MASTER the user also edits, linked libraries broken after a move, naming, sizing or pivoting pieces. One MASTER .blend with KIT, ASM and layout collections, grid modules, status, place and audit scripts. Export (blender-to-unity); Unity layout sync (blender-unity-placement-sync).
 ---
 
 # Blender kit library: KIT, ASM and MASTER
@@ -17,8 +17,8 @@ well-formed piece collections, whatever engine they go to. Helpers: `scripts/kit
 | `split` | Only when the user asks for it (typically a large world with several people or agents modelling families at the same time) | `blender/kits/KIT_<FamilyName>.blend` per family, `blender/asm/ASM_<Name>_<Variant>.blend` per assembly, `blender/MASTER.blend` linking them |
 
 Never pick `split` on your own: one file is far easier to keep in step on a small project. Record the decision with
-the user's words where the project keeps its decisions (`vrchat-world-orchestration`: the ledger's
-`intake.blend_layout`); the file records it too, as the scene custom property `kit_layout` (`"single"`), which
+the user's words where the project keeps its decisions (`vrchat-world-orchestration` always builds `single` and has
+no split option); the file records it too, as the scene custom property `kit_layout` (`"single"`), which
 `setup_single_master()` sets and the audit, QA and placement-sync scripts read. No property means a split file.
 Everything below applies to both layouts unless it says otherwise.
 

@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-sdk-setup
-description: VRChat world SDK setup and testing - players spawn wrong or fall forever, cannot interact or click UI, objects on the wrong layer after upload, SDK validation or build fails, ClientSim and Build & Test on PC, Quest and iOS, pickups, Object Sync, stations, mirrors, scene descriptor, layers, publish fields, one blueprint ID across platforms. Wins for SDK components and testing; scripts go to vrchat-udon, performance to vrchat-world-optimization, lighting and mirrors to vrchat-lighting-and-baking.
+description: VRChat world SDK setup and testing - players spawn wrong or fall forever, cannot interact or click UI, wrong layers after upload, SDK validation or build fails, ClientSim and Build & Test on PC, Quest and iOS, pickups, Object Sync, stations, mirrors, scene descriptor, publish fields, one blueprint ID across platforms. Scripts (vrchat-udon); performance (vrchat-world-optimization); mirror lighting (vrchat-lighting-and-baking).
 ---
 
 # VRChat world SDK setup

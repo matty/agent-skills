@@ -1,6 +1,6 @@
 ---
 name: vrchat-world-optimization
-description: Optimise, profile or audit a VRChat world (performance entry point) - low fps, too many draw calls or SetPass calls, VRAM blowout, long downloads, Quest, Android or iOS builds over 100 MB, budgets before building. Ranks the costs and routes to the owning skill (batching, lighting and mirrors, textures, Udon, Blender export, topology, UVs), which wins for its own settings. For whole builds from brief to upload see vrchat-world-orchestration.
+description: Optimise, profile or audit a VRChat world's performance (entry point) - low fps, too many draw or SetPass calls, VRAM blowout, long downloads, Quest, Android or iOS builds over 100 MB, budgets before building. Ranks the costs and routes to the owning skill, which wins for its settings. Whole builds from brief to upload (vrchat-world-orchestration).
 ---
 
 # VRChat world optimization

@@ -8,8 +8,27 @@ Every function works on UV0 unless given another layer (an index, a name, or `"a
 the lightmap calls (`pack_lightmap`, `lightmap_footprint`, and `audit` for a lightmap) default to the second map,
 index 1. Every function leaves the active UV map, the selection and the mode as it found them.
 
+## Quick start
+
+```python
+import sys; sys.path.insert(0, r"<skill>/scripts")
+import uv_audit as ua
+st = ua.apply_stack(ob)                                            # from the top; Triangulate off until after layout
+if st["hard_surface"]: ua.seams_by_angle([ob])                     # route A / B: seams by angle, never re-shaded
+ua.seams_from_hard_edges(objs)                                     # a seam on every hard edge
+ua.apply_stack(ob, keep_mirror=False)                              # a Mirror kept live, just before the layout
+ua.layout(objs, map_px=2048, px_per_m=512, bake=True)              # UV0: density, one pack, fits, +1 U copies
+ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
+ua.pack_lightmap(objs, texels_per_m=20)                            # UV2: 2 texels at any scale; LODs at 0.5^n
+ua.audit_selected(texels_per_m=20)                                 # UV2 at its measured footprint
+```
+
+Command line (exit 1 when anything needs a look, 2 for a request it cannot audit; every flag below):
+`blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --td 512`
+
 ## Contents
 
+- Quick start
 - Functions
 - Purposes: which checks apply
 - Report fields
@@ -36,13 +55,15 @@ index 1. Every function leaves the active UV map, the selection and the mode as 
 | `lod_level(name)` | n of a `<Piece>_LOD<n>` name (a `.001` suffix allowed), else 0 |
 | `set_texel_density(objs, px_per_m, map_px, layer=0, per_island=True, pack_after=True, pad_px=None, keep_stacks=False, rotate=False, material=None, low_factor=None)` | scales islands to the density, then packs with `scale=False`; `layout` is the safer call. On a non-square trim sheet ("2048x1024"), which `layout` and `pack` refuse, call it with `pack_after=False` and place the strips on their rows. `material=`: only those faces (with `pack_after=False`; the others keep their UVs) |
 | `tile_project(objs, tile_m, layer=0, material=None, offset=(0, 0, 0))` | tiling UVs for kit pieces: a box projection from each piece's own axes (scale applied), one tile per `tile_m` metres, phase 0 at the pivot, U to the right seen from the front of each face and V up (Z on walls, +Y on floors and ceilings), so pieces on a grid whose step is a whole number of tiles continue the pattern across joints (walls turned in 90 deg steps too; floors and ceilings only unturned, since their pattern turns with them). Each face's plane from its own positions (Newell), 45 deg ties broken Z, X, Y; a negative scale is refused. Use it instead of Cube Projection, which centres on the selection (5.2.2: a 1 m wall started at U 0.375 and a 2 m wall at 0.25 with `cube_size` 4). `offset`: a phase variant, projected as if the piece stood that far along. Returns faces written per object |
+| `home_tiling(objs, layer=0, period=1.0, material=None)` | tiling and trim layers: moves each island by whole repeats (`period`, 1 / the material's tiling) so its lowest corner lands in the first one; never scales or turns, so the texture under it is unchanged. Never on a unique or lightmap layer (it folds the +1 U bake copies back). Returns islands moved per object |
+| `reunwrap_in_place(objs, layer=0, map_px=1024, units_per_m=None, material=None, method="ANGLE_BASED")` | fixes stretch while the texture stays put: seams on the layer's island borders only (mirrored halves joined on an axis count as two), Blender's unwrap, then each new island scaled back (to `units_per_m` UV units per metre of surface, or its own old UV area when None) and fitted to its old corners by the least-squares rotation and move (`place_like`), mirrored where the old island was mirrored against its faces. Centre, direction and density stay; the shape is the unwrap's. The mesh's own seams, the active layer, the other layers and other materials' faces are restored or untouched. `map_px` fits a non-square sheet in square pixels. Returns per object `islands`, `mirrored` and `moved_max` (the furthest corner moved, UV units). Audit afterwards; an island that cannot unfold flat without a cut still needs a seam |
 | `tile_uv(p, n, tile_m)`, `tile_phase(d, tile_m, map_px, frame=None, steps=None, offset=(0, 0, 0))`, `tile_steps_issues(tile_m, steps)` | the maths behind it, without bpy: the projection, a layout's distance from it per face (faces marked `uv_strip`, a curve unwrapped as a strip, are left to the seam check: `strip_faces`), placement steps that are not whole numbers of tiles |
 | `straighten(objs, layer=0, material=None)` | step 6 for strips: every all-quad island's most rectangular quad squared to its 3D sides at the island's density, turned to the nearest of U or V, then Follow Active Quads (`LENGTH`) from it; islands with a triangle or an n-gon are skipped and counted. Returns per object `straightened`, `skipped` |
 | `turn_islands(objs, map_px=1024, layer=0, material=None)` | turns every long island whose long side runs along V by 90 deg about its centre, in square pixels of `map_px` (a non-square sheet stays undistorted): for trim strips no single GEOMETRY axis lays along U. `material=`: only those faces, so a mesh's tiling faces stay as projected. Check a profiled strip's top side afterwards |
 | `pair_faces(ob, src_faces, offset, tol=None)` | the faces of a copy in `src_faces`' order: each source face's partner is the face whose centre sits at its centre + `offset` (object space). For Array copies once a Bevel below them is applied: `stack_faces(ob, src, pair_faces(ob, src, (0, 0, step)))`. Raises when a face has no partner |
 | `stack_faces(ob, src_faces, dst_faces, layer=0)` | stacks a duplicated part exactly: copies UVs face by face, corner by corner, in order. First fits the copy's corners to the source's by a rotation and a move (no scaling, no mirroring): if any corner is off by more than 1/10000 of the part's size (plus float rounding), or a face pair has different corner counts, it raises naming the pair and the likely causes, and writes nothing. The causes: a mirrored copy (keep the Mirror modifier live instead), a scaled copy (even 1.001x), or faces re-ordered after duplicating (Array copies once a Bevel below them is applied: pair them with `pair_faces`; a Bevel applied after a `bmesh.ops.duplicate` copy, while Shift+D and joined object copies kept their order; a Triangulate: stack before triangulating) |
 | `seams_from_hard_edges(objs, clear=False)` | a seam on every hard edge (split corner normals); returns the count per object |
-| `measure(d, ...)`, `measure_shared(named, ...)`, `footprint_px(area_m2, texels_per_m, scale, coverage)`, `uv_box_share(uv)`, `corner_misfit(P, Q)` | the maths behind them, without bpy |
+| `measure(d, ...)`, `measure_shared(named, ...)`, `footprint_px(area_m2, texels_per_m, scale, coverage)`, `uv_box_share(uv)`, `corner_misfit(P, Q)`, `place_like(P, Q, scale=1.0, mirror=False)` | the maths behind them, without bpy |
 
 ## Purposes: which checks apply
 
@@ -107,6 +128,8 @@ grain check and `turn_islands`.
 | `zero_area_uv_faces` | faces collapsed to a line or a point in UV |
 | `outside_0_1` | share of UV coordinates outside 0-1 |
 | `islands_off_tile` | islands outside the tile that are not whole-tile copies of an island inside it: they did not fit |
+| `uv_far`, `uv_far_home` | how far from 0 the UVs reach (tiles), as they are and with every island moved home by whole tiles |
+| `half_error_px`, `half_error_px_home` | the most an FP16 UV0 (Unity's default Vertex Compression) is rounded there, in texels of the map: `map_px x 2^(floor(log2 v) - 11)`; `half_error_px(v, map_px)` computes it |
 | `texel_px_per_m`, `texel_cv`, `texel_island_range` | mean density, spread between islands, lowest and highest island; faces marked `uv_low_density` left out |
 | `islands_off_density` | unique, tiling and trim with `px_per_m`: islands outside the band (marked islands left out) |
 | `text_faces` | faces marked `uv_text` |
@@ -134,6 +157,7 @@ grain check and `turn_islands`.
 | `N folded faces` | part of an island flipped over the rest | unwrap again; look for a twisted seam or a pinned vertex dragged across |
 | `N faces with zero UV area` | faces collapsed in UV, under 1/100 of their island's UV area per 3D area (Project from View with faces edge-on does it) | unwrap them again |
 | `UVs outside 0-1` (lightmap) | a chart leaves the tile | pack again |
+| `UVs reach x tiles from 0, where an FP16 UV0 rounds up to y px` | tiling or trim UVs that FP16 would round by more than 1 texel (`UV_HALF_ERR_PX`) when moving home would round them less | `home_tiling()`; an island still over 1 px when home is only a note: split the surface, a lower density with a detail map, or take Tex Coord 0 out of Vertex Compression |
 | `N islands leave the 0-1 tile` | a unique layout that did not fit | a larger map, a lower density, split the piece, or delete faces nobody sees |
 | `N island pairs partly overlap` | two islands share texels | pack again; for a tiling or trim layer audit with that purpose |
 | `N stacked island pairs in a lightmap` | stacked copies would share lightmap texels | apply Mirror and Array, unwrap the second map uniquely |
@@ -202,9 +226,10 @@ grain check and `turn_islands`.
 - `seams_from_hard_edges` reads the evaluated mesh when its topology matches the mesh's own, so a Smooth by Angle
   modifier (what Shade Auto Smooth adds) or a live Weighted Normal counts; with a modifier that changes the topology
   it reads the mesh itself. `seams_by_angle` reads the mesh's face normals. Both change only edge seams.
-- `layout`, `pack`, `pack_lightmap`, `set_texel_density`, `tile_project`, `turn_islands` and `stack_faces` change only the UV map they
-  work on, and restore the active UV map, the selection and the mode. Those that write UVs directly leave Edit Mode
-  while they write (edit-mode data would overwrite the new UVs on exit) and return to it.
+- `layout`, `pack`, `pack_lightmap`, `set_texel_density`, `tile_project`, `turn_islands`, `home_tiling`,
+  `reunwrap_in_place` and `stack_faces` change only the UV map they work on, and restore the active UV map, the
+  selection and the mode (`reunwrap_in_place` also puts the mesh's own seams back). Those that write UVs directly
+  leave Edit Mode while they write (edit-mode data would overwrite the new UVs on exit) and return to it.
 - `set_texel_density` and `layout(px_per_m=...)` refuse a mesh whose modifiers change its corner count: run
   `apply_stack` (and `apply_stack(ob, keep_mirror=False)` for a Mirror kept live) and keep the Triangulate off in the
   viewport until after `layout`.

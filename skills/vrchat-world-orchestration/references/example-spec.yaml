@@ -28,10 +28,8 @@ grid:
   sub_module: 0.1                   # trim placement: divides the module and every wall thickness (0.3)
   storey_height: 3.0
 
-families:
+families:                           # every family's pieces live in blender/MASTER.blend, under KIT/KIT_<FAMILY>
   EXT:
-    file: blender/MASTER.blend      # single layout (default): every family's pieces in MASTER, under KIT/KIT_EXT;
-                                    # split layout (only when the user asked): blender/kits/KIT_Arch_Exterior.blend
     materials: [M_EXT_Brick, M_EXT_Stone]
     texturing: tiling               # tiling | trim | atlas | unique
     texel_density: 512              # px per metre on UV0: T512, facades seen from 1.5-3 m and further
@@ -41,13 +39,11 @@ families:
     thickness: 0.3                  # wall thickness in metres (walls run along X, thickness in +Y)
     detail_map: true                # shop fronts players walk right up to: a fine detail albedo and normal
   TRIM:
-    file: blender/MASTER.blend
     materials: [M_TRIM_Sheet01]
     texturing: trim
     texel_density: 512
     map_px: 1024
   PROP:
-    file: blender/MASTER.blend
     materials: [M_PROP_Atlas01]
     texturing: atlas
     texel_density: 512              # crates and barrels seen from 1.5-3 m (T512)
@@ -77,9 +73,8 @@ pieces:
   - {name: PROP_Crate_Free_A, desc: "Wooden crate", collision: box, size: [0.6, 0.6, 0.6],
      lightmap: false}               # small prop: probe-lit
 
-assemblies:                         # single: in MASTER, under ASM; split: one ASM file each, named after it
+assemblies:                         # in blender/MASTER.blend, under ASM
   - name: ASM_ShopFront_A
-    file: blender/MASTER.blend      # split: blender/asm/ASM_ShopFront_A.blend
     size: [6, 0.3, 7]               # metres x, y, z, for plans
     uses: {EXT_Wall_2x3_A: 1, EXT_Door_2x3_A: 1, EXT_Window_2x3_A: 4, TRIM_Cornice_2x1_A: 3}
 

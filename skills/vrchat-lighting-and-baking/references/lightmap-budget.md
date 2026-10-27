@@ -115,18 +115,18 @@ Read from Bakery's scripts as installed in a Unity 2022.3.22f1 project, 2026-10-
 string): `Assets/Editor/x64/Bakery/scripts/ftBuildGraphics.cs` (the area loop in `CalculateHolderUVBounds`,
 `ApplyAreaToUVBounds`, `Pack`, the xatlas pack, `NormalizeAutoAtlases`) and `Assets/Bakery/BakeryProjectSettings.cs`
 (the defaults). With Bakery's defaults: Alternative Scale In Lightmap off (on, it treats Scale In Lightmap linearly
-and rounds sizes: this section does not apply) and Hole Filling off. Not measured in a bake here; the cinema numbers
-are the repo owner's (GitHub issue #8). `lightmap_budget.py --lightmapper bakery` does the arithmetic.
+and rounds sizes: this section does not apply) and Hole Filling off. Measured in a bake on 2026-10-27 (below); the
+cinema numbers are the repo owner's (GitHub issue #8). `lightmap_budget.py --lightmapper bakery` does the arithmetic.
 
 | | Unity Progressive | Bakery |
 |---|---|---|
 | What sizes a renderer | its area and b: texels_per_m x sqrt(A / b) x S per UV unit | its area only: a rect of side L = texels_per_m x sqrt(2 x A x S) texels. The area loop sums abs(cross) over the triangles (2 x A); the division by the UV area is commented out ("uv layouts always have empty spaces") |
 | Scale In Lightmap S | linear | multiplies the area (`area *= scaleInLm` before `ApplyAreaToUVBounds`): a linear factor s needs S = s^2 |
 | UV2 bounds' aspect | free: the box costs (texels_per_m x S)^2 x A whatever its shape | L goes to the bounds' short side, L x aspect to the long side: a thin column of charts in bounds 0.06 x 1 costs 1 / 0.06, about 17 times L^2 (issue #8: about 15x its area) |
-| Rect edge | Lightmap Padding between boxes | Default packer: the rect is inset `texelPaddingForDefaultAtlasPacker` (3) texels on every side, then the bounds are mapped onto what is left. xatlas: no inset, `texelPaddingForXatlasAtlasPacker` (1 by default) texels between rects. ftBuildGraphics' static default is xatlas; the scene's Bakery settings can pick either |
+| Rect edge | Lightmap Padding between boxes | Default packer: the rect is inset `texelPaddingForDefaultAtlasPacker` (3) texels on every side, then the bounds are mapped onto what is left. xatlas: no inset, `texelPaddingForXatlasAtlasPacker` texels between rects (1 by default; read the project's `BakeryProjectSettings`: 2 in the cinema). ftBuildGraphics' static default is xatlas; the scene's Bakery settings can pick either |
 | LODs | 0.5^n of LOD0's texel scale | no LOD factor: each LOD is sized by its own area; `Pack` keeps each scene LOD level in lightmaps of its own; a `BakerySharedLodUv` component on the LOD Group makes LOD1+ share LOD0's |
 | A part-empty lightmap | as packed | the Default packer scales every rect up to fill it (`NormalizeAutoAtlases`), never down: the footprint below is a floor |
-| A rect longer than the map | (one tile) | clamped to the map: less density, and uneven when one side is clamped |
+| A rect longer than the map | (one tile) | Default packer: the long side is clamped to the map and the short side keeps its footprint, so density is uneven. xatlas: the whole chart shrinks to fit the lightmap group's resolution, so both sides lose density (measured) |
 
 Footprint, the same along both axes:
 
@@ -140,6 +140,26 @@ Footprint, the same along both axes:
   oblong bounds. Gaps packed for Unity's b = 1 footprint (texels_per_m x sqrt(A) x S) hold under Bakery while
   sqrt(2 x S) >= S x w_short: always up to S = 2 under xatlas. The Default packer's 6 texels break them on small rects
   (Unity footprints under about 15 px at S = 1), and above S = 2 they can fail anywhere: repack for Bakery.
+
+Measured in a bake (2026-10-27, Bakery as installed in the cinema's Unity 2022.3.22f1 project, Texels Per Unit 20,
+throwaway scene): five quads, `lightmapScaleOffset` x the lightmap's size.
+
+| Renderer | A (m2), S, UV2 bounds | Formula (px per UV unit) | Default packer | xatlas |
+|---|---|---|---|---|
+| oblong | 2, 1, 1 x 0.125 | (40 - 6) / 0.125 = 272 | short side 272, exact; long side clamped to 122 (the 128 map less 6) | about 34 texels on the short side (formula 40): shrunk to fit |
+| oblong | 2, 4, 1 x 0.125 | (80 - 6) / 0.125 = 592 | short side 592, exact; long side clamped | about 33 (formula 80): shrunk to fit |
+| square | 1, 1, 1 x 1 | 28.3 - 6 = 22.3 | 30.3 (alone in its own 32 px map, scaled up to fill it) | 31 texels |
+| square | 4, 1, 1 x 1 | 56.6 - 6 = 50.6 | 60.6 (own 64 px map) | 59 texels |
+| square | 4, 4, 1 x 1 | 113.1 - 6 = 107.1 | 121.2 (own 128 px map) | 115 texels |
+
+- The short-side footprint, the 3-texel inset and sqrt(S) hold exactly where nothing rescales the rect: S = 4
+  doubles the footprint under both packers, never quadruples it.
+- A part-empty atlas scales rects up, never down: the footprint above is a floor, as planned.
+- xatlas gives each chart about L plus its padding, so p = 0 is a floor too, while the chart fits. Its atlas is then
+  stretched onto a square texture: here a 255 x 195 texel atlas went onto a 256 x 256 lightmap, so V got 1.31 times
+  the texels of U. Read both axes of `lightmapScaleOffset`, and gate on the smaller.
+- An oblong UV2 long enough to pass the map loses density under either packer: the Default packer on its long side
+  only, xatlas on both. Lay UV2 charts out so their bounds stay near square.
 
 Effective density, the texels per metre the surface gets, for either lightmapper:
 
