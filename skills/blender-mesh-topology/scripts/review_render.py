@@ -7,6 +7,8 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/review_render.py", encodi
                  matcap="check_reflection_horizontal.exr", wire=True)
     with ns["isolate"](["MyPiece"], hide=["OldPiece"]): ns["render"](...)     # temporary visibility, restored after
     ns["contact_sheet"]([a.png, b.png, c.png, d.png], r"C:/.../sheet.png", cols=2)
+    ns["compare"]("Cushion_dense", "Cushion_low", views=[(0, -1.2, 0.3), (1.2, 0, 0)], out=r"C:/.../compare.png",
+                  light="MATCAP", matcap="check_reflection_horizontal.exr")   # before | after | silhouette
 
 Pass absolute output paths. Live, it works while Blender's window is minimised (it draws through
 gpu.types.GPUOffScreen, not a screenshot) using a 3D viewport in the current screen, switched to Solid shading with
@@ -20,6 +22,9 @@ A matcap shows curved bands across flat faces in a perspective view: that is the
 """
 
 import contextlib
+import os
+import shutil
+import tempfile
 
 import bpy
 import gpu
@@ -170,17 +175,83 @@ def isolate(show, hide=()):
         bpy.context.view_layer.update()
 
 
+def _load(path):
+    im = bpy.data.images.load(path)
+    try:
+        return np.array(im.pixels[:], dtype=np.float32).reshape(im.size[1], im.size[0], 4)
+    finally:
+        bpy.data.images.remove(im)
+
+
 def contact_sheet(paths, out, cols=2):
     """Tile equally sized PNGs into one image, left to right, top to bottom."""
-    ims = []
-    for p in paths:
-        im = bpy.data.images.load(p)
-        try:
-            ims.append(np.array(im.pixels[:], dtype=np.float32).reshape(im.size[1], im.size[0], 4))
-        finally:
-            bpy.data.images.remove(im)
+    ims = [_load(p) for p in paths]
     h, w = ims[0].shape[:2]
     rows = [ims[i:i + cols] + [np.zeros_like(ims[0])] * (cols - len(ims[i:i + cols])) for i in range(0, len(ims), cols)]
     grid = np.vstack([np.hstack(r) for r in rows][::-1])        # Blender images are stored bottom row first
     _save(grid, grid.shape[1], grid.shape[0], out)
     return out
+
+
+def _centre(ob):
+    """World-space centre of the object's bounding box (modifiers included, as it draws)."""
+    pts = [ob.matrix_world @ Vector(c) for c in ob.bound_box]
+    return sum(pts, Vector()) / len(pts)
+
+
+def _silhouette(px, tol=0.02):
+    """Pixels that differ from the background, taken as the most common of the four corner colours."""
+    corners = [tuple(np.round(px[y, x, :3], 3)) for y in (0, -1) for x in (0, -1)]
+    bg = np.array(max(set(corners), key=corners.count))
+    return np.abs(px[..., :3] - bg).max(-1) > tol
+
+
+def compare(before, after, views, out, wire=(True, False), silhouette=True, **render_kw):
+    """Before | after review sheet of two objects (names), e.g. a dense source and its low. Each object is rendered
+    alone (every other visible mesh hidden with isolate()) from the same eye and target relative to its own
+    bounding-box centre, so a copy placed beside the original is framed exactly as the original is. Never render both
+    in one wide frame: perspective shears the object off the frame's centre, and a correct low reads as distorted.
+    views: eye offsets from the centre, or (eye offset, target offset) pairs. wire: one sheet row per view and per
+    value (wire, then plain shading by default). silhouette=True adds a third column from the plain renders: grey
+    where both cover the pixel, red where only before does, blue where only after does. render_kw go to render()
+    (lens, w, h, light, matcap). Returns {"sheet": out, "mismatch": [per view, pixels covered by one object only /
+    pixels covered by either]}."""
+    if not wire:
+        raise ValueError("compare() needs at least one wire value: wire=(True, False), (True,) or (False,)")
+    obs = [bpy.data.objects[before], bpy.data.objects[after]]
+    others = [o.name for o in bpy.context.view_layer.objects if o.type == 'MESH' and o.visible_get()
+              and o.name not in (before, after)]
+    tmp = tempfile.mkdtemp(prefix="review_compare_")
+    tiles, mismatch = [], []
+    try:
+        for vi, v in enumerate(views):
+            eye_off, target_off = (v if len(v) == 2 and len(v[0]) == 3 else (v, (0.0, 0.0, 0.0)))
+            masks = []
+            for wi, w in enumerate(list(wire) + ([False] if silhouette and False not in wire else [])):
+                row = []
+                for k, ob in enumerate(obs):
+                    c = _centre(ob)
+                    p = os.path.join(tmp, "v%d_w%d_%d.png" % (vi, wi, k))
+                    with isolate([ob.name], hide=[obs[1 - k].name] + others):
+                        render(p, eye=c + Vector(eye_off), target=c + Vector(target_off), wire=w, **render_kw)
+                    row.append(p)
+                if not w and silhouette and not masks:
+                    masks = [_silhouette(_load(p)) for p in row]
+                if wi < len(wire):
+                    tiles.append(row)
+            if silhouette:
+                a, b = masks
+                img = np.ones(a.shape + (4,), np.float32)
+                img[..., :3] = 1.0
+                img[a & b, :3] = 0.55
+                img[a & ~b, :3] = (0.85, 0.1, 0.1)
+                img[b & ~a, :3] = (0.1, 0.25, 0.9)
+                p = os.path.join(tmp, "v%d_sil.png" % vi)
+                _save(img, img.shape[1], img.shape[0], p)
+                for row in tiles[-len(wire):]:
+                    row.append(p)
+                mismatch.append(round(float((a ^ b).sum()) / max(int((a | b).sum()), 1), 4))
+        contact_sheet([p for row in tiles for p in row], out, cols=3 if silhouette else 2)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {"sheet": out, "mismatch": mismatch}

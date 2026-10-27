@@ -952,6 +952,35 @@ def test_review_render_headless_wire_follows_modifiers():
     check(min(dark) > 50, "wire pixels left/right %s: the mirrored half has no wire" % dark)
 
 
+def test_review_compare_frames_each_object_alone():
+    """#12: compare() renders an offset copy from the same eye relative to its own centre, so an identical copy
+    matches its original (one wide frame would shear it); a squashed copy does not. The sheet is before | after |
+    silhouette, one row per view and wire value, and visibility comes back as it was."""
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)
+    src = cube("Dense")
+    same = cube("Low")
+    same.location = (3.0, 0.0, 0.0)                               # placed beside the source, as the issue's lows
+    squashed = cube("Squashed")
+    squashed.location, squashed.scale = (-3.0, 0.0, 0.0), (1.0, 1.0, 0.7)
+    bystander = cube("Bystander")
+    bystander.location = (0.0, 2.0, 0.0)                          # in the frame unless compare() hides it
+    bystander.hide_set(False)
+    kw = dict(views=[(2.0, -3.0, 1.5), ((0.0, -4.0, 0.0), (0.0, 0.0, 0.0))], lens=35, w=200, h=150, light="FLAT")
+    out = str(TMP / "compare.png")
+    res = RR["compare"]("Dense", "Low", out=out, **kw)
+    check(os.path.exists(out), "no sheet written")
+    img = bpy.data.images.load(out)
+    check(tuple(img.size) == (600, 600), "sheet %s, expected 3 columns x 4 rows of 200x150" % (tuple(img.size),))
+    check(len(res["mismatch"]) == 2 and max(res["mismatch"]) < 0.01, "identical copy mismatch %s" % res["mismatch"])
+    bad = RR["compare"]("Dense", "Squashed", out=str(TMP / "compare_bad.png"), wire=(False,), **kw)
+    check(min(bad["mismatch"]) > 0.05, "squashed copy mismatch %s" % bad["mismatch"])
+    check(not any(o.hide_get() for o in (src, same, squashed, bystander)), "visibility not restored")
+    check(len(bpy.data.objects) == 4, "temporary objects left behind")
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -968,7 +997,7 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
-           test_review_render_headless_wire_follows_modifiers):
+           test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

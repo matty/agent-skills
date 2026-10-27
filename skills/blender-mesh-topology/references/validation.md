@@ -60,6 +60,12 @@ neighbour beside it. Anything only on one side is a T-junction crack waiting to 
 - `render(path, eye, target, ..., light, matcap, wire)` from fixed cameras: a **close-up wire**, a studio view, and a
   reflective matcap (`check_reflection_horizontal.exr`), before and after, tiled with `contact_sheet`. Look at the wire
   close up: a knot of tiny faces is obvious in wire and invisible from ten metres.
+- Before and after of two objects (a dense source and its low placed beside it): `compare(before, after, views, out)`.
+  Each renders alone, every other mesh hidden, from the same eye and target offsets relative to its own bounding-box
+  centre; the sheet has one row per view and wire value, columns before | after | silhouette (grey both, red before
+  only, blue after only), and `mismatch` gives the pixels covered by one only over those covered by either, per view.
+  One wide frame with both side by side shears the off-centre one into a parallelogram (measured on two cushions,
+  0.42 m and 0.64 m, at `lens=24`), so a correct low looks distorted.
 - Live, it draws the current 3D viewport off-screen, switched to Solid shading for the render, and restores the
   viewport's settings; headless (`blender -b`) it falls back to a Workbench scene render with wire drawn by temporary
   Wireframe-modifier copies.
