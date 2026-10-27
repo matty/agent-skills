@@ -67,8 +67,9 @@ two places in the texture) and compares the step across with the texture's own s
 shows nothing). Over 3 times: the seam shows (an issue, `visible_m`); 2-3 times: look at it in a close render
 (`look_m`); under the floor (0.01 mean absolute step, 2 deg for normals) it never counts. Joints compare each side
 with the other side's texture continued across the joint, so a mortar line falling on a joint is not mistaken for a
-jump. Edges where the mesh folds more than 89 deg are listed apart (`folds_m`). It samples the full-size map only:
-whether the gutters hold at a distance is the padding rule (`uv-unwrapping`, map_px / 64).
+jump. Edges where the mesh folds more than 89 deg, and a normal map's seams on hard edges, are listed apart
+(`folds_m`). It samples the full-size map only: whether the gutters hold at a distance is the padding rule
+(`uv-unwrapping`, map_px / 64).
 
 | Shows | Cause | Fix |
 |---|---|---|

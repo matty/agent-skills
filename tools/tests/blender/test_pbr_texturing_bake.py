@@ -482,6 +482,17 @@ def test_bake_refuses_an_excluded_high():
         check("not evaluated" in str(ex) and "cube_high" in str(ex), "message: %s" % ex)
     finally:
         bpy.data.collections.remove(coll)
+    if not high.users_collection:
+        bpy.context.scene.collection.objects.link(high)
+    tri = low.modifiers.new("Triangulate", "TRIANGULATE")      # props sweep: switched off for the UV work only
+    tri.show_viewport = False
+    try:
+        BAKE["bake"](low, [high], maps=("normal",), size=32, out_dir=str(TMP / "split_toggle"))
+        raise AssertionError("baked a low whose viewport and render stacks differ")
+    except ValueError as ex:
+        check("Triangulate" in str(ex) and "viewport or the render" in str(ex), "message: %s" % ex)
+    finally:
+        low.modifiers.remove(tri)
 
 
 def write_maps(d, smooth):

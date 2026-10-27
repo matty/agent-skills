@@ -567,6 +567,12 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
     if mode == "fitted" and extrusion is not None:
         raise ValueError("extrusion sets a uniform cage: leave it out with cage='fitted'")
     _require_evaluated([low] + highs, bpy.context.evaluated_depsgraph_get())
+    split = [m.name for m in low.modifiers if m.show_viewport != m.show_render]
+    if split:
+        raise ValueError("%s: modifier(s) %s are on in the viewport or the render but not both; the bake evaluates the "
+                         "render stack and its cage the viewport one, so their faces differ (Blender's 'cage mesh "
+                         "must have the same number of faces'). Turn the Triangulate back on after the UV layout, or "
+                         "match the two toggles" % (low.name, ", ".join(split)))
     out_w, out_h = map_size(size)
     diag = max(float(reference_size) if reference_size else low.dimensions.length, 1e-6)
     stats, fitted = {}, {}
