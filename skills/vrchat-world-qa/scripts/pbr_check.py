@@ -69,7 +69,8 @@ PBR_LIMITS = dict(
     convention_max_px=1024,      # the convention test pools a larger map down to at most this many pixels a side
     # Tiling maps (--tiling). Calibrated 2026-10-27 on 20 Poly Haven 1k tiling materials, each judged by eye in a
     # 3 x 3 composite: the six with an obvious grid measured tile_lf 0.0118-0.0205, ten with a milder repeat
-    # 0.0037-0.0126, four with none 0.0000-0.0088; the windowed seam of all 20 (seamless) measured 0.08-1.06.
+    # 0.0012-0.0126, four with none 0.0000-0.0088; the windowed seam of all 20 (seamless) measured 0.08-1.06. At
+    # 0.011, 7 of 20 fail: the six, and ganges_river_pebbles (0.0126), judged milder.
     tile_lf_sigma=0.125,         # tile-scale variation: Gaussian blur of this share of the tile per axis, wrapped
     tile_lf_chroma=2.0,          # OKLab a and b weighted against L: colour patches at this scale show more than tone
     tile_lf_problem=0.011,       # base colour: RMS OKLab distance of the blurred tile from its mean, a PROBLEM above
