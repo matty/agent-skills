@@ -28,7 +28,8 @@ Command line (exit 0 when no seam shows, 1 when one does, 2 for a request it can
 
 A seam edge shows (`visible_m`, an issue) when its mean step is over LIMITS["ratio"] (3) x its mean inner step (never
 less than the texture's median step between neighbouring texels) and over the floor (colour: mean absolute step over
-the channels; normal: degrees between the two sides' shading normals); between note_ratio (2) and that it is worth a
+the channels; normal: degrees between the two sides' shading normals, after taking out the step between their corner
+normals, which a hard edge puts there on purpose); between note_ratio (2) and that it is worth a
 close look (`look_m`, a note). Measured on Blender 5.2.2 at 512 px: smooth noise or a smooth image laid by UVs, every
 seam at p50 9-14; the same from Object coordinates or a Box-projected image, p95 1.1-1.4; a clean cage bake's normal
 map p95 0.8 and the same map with one island turned after the bake, 6.2 m of 18 m showing; a busy library texture
@@ -328,6 +329,20 @@ def _side_samples(d, img, f, la, lb, kind, ts):
     return [shade(x, *frame) for x in inside], shade(out, *frame)
 
 
+def _turn(v, src, dst):
+    """Each row of v (k, 3) turned by the smallest rotation taking unit src to unit dst (same row; Rodrigues)."""
+    a = np.cross(src, dst)
+    c = (np.asarray(src) * np.asarray(dst)).sum(axis=1, keepdims=True)
+    return v + np.cross(a, v) + np.cross(a, np.cross(a, v)) / np.maximum(1.0 + c, 1e-6)
+
+
+def _corner_normals(d, side, ts):
+    """The corner normals of one side of an edge, interpolated along it at ts (k, 3), unit length."""
+    _f, la, lb = side
+    n = d["cn"][la][None, :] * (1 - ts[:, None]) + d["cn"][lb][None, :] * ts[:, None]
+    return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+
+
 def _pair_rows(da, img_a, side_a, db, img_b, side_b, kind, limits, length, mid, folded, continued=False):
     """One edge's row for summarise. continued=False (a UV seam inside a mesh, where the islands need not continue
     each other in the texture): the step from one side to the other. continued=True (a joint between pieces laying
@@ -340,6 +355,11 @@ def _pair_rows(da, img_a, side_a, db, img_b, side_b, kind, limits, length, mid, 
         return None
     diff = angle_deg if kind == "normal" else colour_step
     (ia, oa), (ib, ob) = a, b
+    if kind == "normal" and not continued:
+        # a hard edge's crease is the mesh's, not the map's: turn side b by the step between the two sides' corner
+        # normals, so only what the map adds is compared (a flat map on a chamfered box shows nothing)
+        nb, na = _corner_normals(db, side_b, ts), _corner_normals(da, side_a, ts)
+        ib = [_turn(x, nb, na) for x in ib]
     if continued:
         step = 0.5 * (diff(oa, ib[0]) + diff(ob, ia[0]))
     else:
@@ -516,11 +536,15 @@ def _run(argv):
     ap.add_argument("--kind", choices=("color", "normal"), default="color")
     ap.add_argument("--uv", default=None, help="UV map name (default the active one)")
     ap.add_argument("--material", default=None, help="only faces whose material name matches (a name or pattern)")
-    ap.add_argument("--joints", action="store_true", help="judge where the matched pieces meet instead of their seams")
+    ap.add_argument("--joints", action="store_true", help="judge where the matched pieces meet instead of their seams "
+                    "(objects hidden or in excluded collections are left out)")
     ap.add_argument("--json", default=None)
     a = ap.parse_args(argv)
     obs = [o for o in bpy.data.objects if fnmatch.fnmatchcase(o.name, a.objects)
            and (o.type == "MESH" or (a.joints and o.instance_type == "COLLECTION"))]
+    if a.joints:            # what the scene shows: a MASTER's kit masters sit in excluded collections at the origin
+        vl = bpy.context.view_layer.objects
+        obs = [o for o in obs if o.name in vl and o.visible_get()]
     if not obs:
         raise ValueError("no object matched --objects %r" % a.objects)
     if a.joints:
