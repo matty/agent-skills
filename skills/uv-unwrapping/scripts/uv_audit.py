@@ -79,6 +79,8 @@ EFFECTIVE_DENSITY_MIN = 0.5  # Bakery: an issue when the charts get under this s
 UNWRAP_MARGIN = 0.001       # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
 TILE_PHASE_PX = 0.5          # tile_phase: a tiling face further than this many texels from tile_project's UVs (mod
                              # whole tiles) breaks the pattern at a joint
+TILE_AXIS_TIE = 1e-4         # tile_uv: normal components this close to the largest count as a tie (a 45 deg chamfer),
+                             # broken Z, then X, then Y, so float32 and float64 normals pick the same plane
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
@@ -995,13 +997,16 @@ def measure_shared(named, map_px=1024, pad_px=None, purpose="unique"):
 
 def tile_uv(p, n, tile_m):
     """tile_project's box projection: UVs for positions p (k, 3) in the piece's own axes (metres from its pivot,
-    scale applied) on a face whose normal in those axes is n. The normal's largest component picks the plane (ties:
-    X, then Y, then Z); U runs to the right seen from the front of the face and V up (Z on walls, +Y on floors and
-    ceilings), one tile per tile_m metres, phase 0 at the pivot. Pieces whose pivots sit on a grid whose step is a
-    whole number of tiles therefore continue the pattern across every joint, whatever their size or turn."""
+    scale applied) on a face whose normal in those axes is n. The normal's largest component picks the plane (within
+    TILE_AXIS_TIE of it counts as a tie, broken Z, then X, then Y); U runs to the right seen from the front of the face
+    and V up (Z on walls, +Y on floors and ceilings), one tile per tile_m metres, phase 0 at the pivot. Pieces whose
+    pivots sit on a grid whose step is a whole number of tiles therefore continue the pattern across every joint,
+    whatever their size, and walls whatever their turn about Z; a floor or ceiling turned about Z turns its pattern
+    with it, so tiling floors and ceilings are placed unturned (or turned by the texture's own symmetry)."""
     p = np.asarray(p, float).reshape(-1, 3)
     n = np.asarray(n, float)
-    ax = int(np.argmax(np.abs(n)))
+    a = np.abs(n)
+    ax = next(k for k in (2, 0, 1) if a[k] >= a.max() - TILE_AXIS_TIE)
     s = 1.0 if n[ax] >= 0 else -1.0
     if ax == 0:
         u, v = s * p[:, 1], p[:, 2]
@@ -1036,6 +1041,10 @@ def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX
     co = np.asarray(d["co"], float)
     if frame is not None:
         rot, t = frame
+        if np.linalg.det(np.asarray(rot, float)) < 0:
+            return {"tile_m": float(tile_m), "faces": int(len(d["ls"])), "phase_px_max": None, "off_faces": None,
+                    "mirrored_faces": None, "issues": tile_steps_issues(tile_m, steps) + [
+                        "the object is mirrored (negative scale): apply its scale, then tile_project"]}
         co = (co - np.asarray(t, float)) @ np.asarray(rot, float)
     normals = _poly_normals(dict(d, co=co))
     co = co + np.asarray(offset, float)
@@ -1789,11 +1798,16 @@ def tile_project(objects, tile_m, layer=0, material=None, offset=(0.0, 0.0, 0.0)
     V up (tile_uv). Replaces Cube Projection for kits: bpy.ops.uv.cube_project centres the projection on the
     selection's bounds (Blender 5.2.2: a 1 m wall started at U 0.375 and a 2 m wall at 0.25 with cube_size 4), so
     pieces of different sizes start out of phase. Positions are the mesh's own with the object's scale applied (apply
-    scale first; a pivot off the grid shifts the pattern). material: only faces whose material matches (a name or
-    pattern), the rest keep their UVs. offset (metres, the piece's axes): a phase variant, projected as if the piece
-    stood that far along (k x module for the copy placed k modules into a longer tile). Writes the mesh data, so
+    scale first; a pivot off the grid shifts the pattern; a negative scale is refused). material: only faces whose
+    material matches (a name or pattern), the rest keep their UVs. offset (metres, the piece's axes): a phase variant,
+    projected as if the piece stood that far along (k x module for the copy placed k modules into a longer tile).
+    Each face's plane comes from its own positions (Newell, float64), as tile_phase reads it. Writes the mesh data, so
     apply the stack first (apply_stack). Returns {object name: faces written}."""
     objects = [o for o in objects if o.type == "MESH"]
+    neg = [o.name for o in objects if min(o.scale) < 0]
+    if neg:
+        raise ValueError("tile_project: %s mirrored by a negative scale: apply the scale first (the projection reads "
+                         "each piece's own axes)" % ", ".join(neg))
     was_edit = bpy.context.mode == "EDIT_MESH"
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -1817,8 +1831,9 @@ def tile_project(objects, tile_m, layer=0, material=None, offset=(0.0, 0.0, 0.0)
                     continue
                 corners = list(range(p.loop_start, p.loop_start + p.loop_total))
                 vs = [me.loops[i].vertex_index for i in corners]
-                normal = np.array(p.normal, float) / np.maximum(sc, 1e-12)
-                uv[corners] = tile_uv(co[vs], normal, tile_m)
+                q = co[vs]
+                normal = np.cross(q, np.roll(q, -1, axis=0)).sum(axis=0)          # Newell, as tile_phase
+                uv[corners] = tile_uv(q, normal, tile_m)
                 n += 1
             lay.uv.foreach_set("vector", uv.ravel())
             me.update()
@@ -2087,6 +2102,8 @@ def _run(argv):
                     "every face checked against tile_project's scale and phase, so kit pieces continue at joints")
     ap.add_argument("--steps", default=None, help="with --tile-m: placement steps in metres, e.g. 1,3 (grid module, "
                     "storey height): each must be a whole number of tiles")
+    ap.add_argument("--tile-offset", default=None, help="with --tile-m: a phase variant's offset in metres, x,y,z "
+                    "(as given to tile_project)")
     ap.add_argument("--json", default=None, help="write the full reports here")
     ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
                     "check overlaps and gaps between them")
@@ -2108,7 +2125,9 @@ def _run(argv):
                          purpose=purpose, baking=a.baking, directional=a.directional, rows=a.rows,
                          texels_per_m=a.lightmap_texels, lightmap_scale=a.lightmap_scale, text=a.text, lod=a.lod,
                          material=a.material, lightmapper=lightmapper_name(a.lightmapper), tile_m=a.tile_m,
-                         steps=[float(x) for x in a.steps.split(",")] if a.steps else None)
+                         steps=[float(x) for x in a.steps.split(",")] if a.steps else None,
+                         tile_offset=tuple(float(x) for x in a.tile_offset.split(",")) if a.tile_offset
+                         else (0.0, 0.0, 0.0))
     bad = any(r["issues"] for r in reps)
     if a.shared:
         sh = audit_shared(obs, layer=layer, map_px=map_px or 1024, pad_px=a.pad, purpose=purpose,

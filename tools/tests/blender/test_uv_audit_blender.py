@@ -1584,6 +1584,32 @@ def tiling_kit_continues_across_joints():
         check(np.abs(du - np.round(du)).max() < 1e-5, "turned joint at z %s: %s vs %s" % (z, ua_, ub_))
     bad = ua.tile_steps_issues(4.0, [1.0, 3.0])
     check(len(bad) == 2, bad)
+    # a floor tile turned 90 deg turns its pattern: the joint with an unturned neighbour jumps (the documented limit)
+    def floor(name, loc, rot_z):
+        me = bpy.data.meshes.new(name)
+        me.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
+        me.update()
+        me.uv_layers.new(name="UVMap")
+        ob = bpy.data.objects.new(name, me)
+        ob.location, ob.rotation_euler = loc, (0, 0, rot_z)
+        bpy.context.scene.collection.objects.link(ob)
+        return ob
+    fa, fb = floor("FLOOR_A", (30, 0, 0), 0.0), floor("FLOOR_B_turned", (32, 0, 0), math.pi / 2)
+    bpy.context.view_layer.update()
+    ua.tile_project([fa, fb], 1.0)
+    # the corners of a 1 m tile are whole tiles on both sides; the joint edge's midpoint (the mean of its two corners'
+    # UVs on each side, where the UVs interpolate linearly) shows the jump
+    mid = lambda ob: np.mean([world_uv_at(ob, Vector((31, y, 0)), Vector((0, 0, 1)))[0] for y in (0, 1)], axis=0)
+    dv = np.subtract(mid(fa), mid(fb))
+    check(np.abs(dv - np.round(dv)).max() > 0.2,
+          "a floor turned 90 deg should jump at its joint: %s against %s" % (mid(fa), mid(fb)))
+    neg = wall_box("NEG_mirrored_wall", 1.0, loc=(40, 0, 0))
+    neg.scale = (-1, 1, 1)
+    try:
+        ua.tile_project([neg], 1.0)
+        raise AssertionError("tile_project must refuse a negative scale")
+    except ValueError as e:
+        check("negative scale" in str(e), e)
     # a 2 m tile on the 1 m grid: phase variants P0 at x 20 and P1 at x 21 continue; a second P0 at x 21 does not
     p0, p1 = wall_box("VAR_P0", 1.0, loc=(20, 0, 0)), wall_box("VAR_P1", 1.0, loc=(21, 0, 0))
     q0 = wall_box("VAR_P0_wrong", 1.0, loc=(21, 0, 0))

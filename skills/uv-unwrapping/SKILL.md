@@ -109,10 +109,10 @@ objects, or the odd one out looks blurry or oversharp.
   0.8-1.25x of their class; inside a piece `texel_cv` <= 0.15. The audit checks the mean and every unmarked island.
 - Blender has no texel-density tool (5.2; Average Islands Scale only evens islands): `ua.layout(..., px_per_m=...)`,
   or on a non-square trim sheet, which `layout` refuses, `ua.set_texel_density(..., pack_after=False)` (workflows).
-- Tiling: `ua.tile_project(objs, tile_m)`, `tile_m = map_px / px_per_m` (2048 / 512 = 4 m): a box projection from
+- Tiling: `ua.tile_project(objs, tile_m)`, `tile_m = map_px / px_per_m` (512 / 512 = 1 m): a box projection from
   each piece's axes, phase 0 at its pivot. Not Cube Projection: it centres on each selection (5.2.2: a 2 m wall began
   half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
-  0.5 m tile, never 4 m); audit with `tile_m=`, `steps=`. Corners, curves, slopes and terrain: workflows.
+  0.5 m tile, never 4 m); floors and ceilings unturned; audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
   mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
   audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.
@@ -128,10 +128,9 @@ objects, or the odd one out looks blurry or oversharp.
 Mips and a platform override that caps the map shrink the gap in pixels. Polycount gives 4, 8 and 16 px of padding
 round each shell at 512, 1024 and 2048 and twice that between shells (http://wiki.polycount.com/wiki/Edge_padding):
 `map_px / 64` is the minimum gap, the `layout` and `pack` default, pixel-exact. Bake dilation fills half the gap
-(Blender's 16 px: maps up to 2048). A shared texture: `ua.layout(objs, ..., together=True)`, then `--shared`.
-A bake atlas for one material of meshes that carry others (fabric baked, wood not): add `material="M_Fabric"`,
-so the other faces keep their UVs and take no atlas space, and `max_island_m=0.8` when a long shell (a sofa's
-back) caps the scale; then `--shared --material M_Fabric`.
+(Blender's 16 px: maps up to 2048). A shared texture: `ua.layout(objs, ..., together=True)`, then `--shared`. A bake
+atlas for one material of meshes that carry others (fabric baked, wood not): `material=`, and `max_island_m=` when a
+long shell caps the scale ([manual](references/uv-audit.md)).
 
 ## 8. Stacking, mirroring and overlap
 

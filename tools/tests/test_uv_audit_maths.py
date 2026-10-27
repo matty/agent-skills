@@ -663,6 +663,17 @@ class UvAuditMaths(unittest.TestCase):
             np.testing.assert_allclose(uv[1], (0.5, 0), atol=1e-12)
             np.testing.assert_allclose(uv[2], (0, 0.5), atol=1e-12)
 
+    def test_tile_uv_breaks_45_deg_ties_the_same_way_in_float32_and_float64(self):
+        ua = self.ua
+        n64 = np.array([0.0, -math.sqrt(0.5), math.sqrt(0.5)])
+        n32 = n64.astype(np.float32).astype(float) + np.array([0.0, -3e-8, 0.0])        # a float32 normal, a hair off
+        p = [(0.3, 0.2, 0.1), (1.3, 0.2, 0.1)]
+        np.testing.assert_allclose(ua.tile_uv(p, n64, 1.0), ua.tile_uv(p, n32, 1.0))
+        # a 45 deg chamfer strip projected from a float32 normal audits clean against tile_phase's float64 Newell normal
+        verts = [(0, -0.1, 3.0), (2, -0.1, 3.0), (2, 0.0, 3.1), (0, 0.0, 3.1)]
+        d = mesh(verts, [[0, 1, 2, 3]], [[tuple(ua.tile_uv([v], n32, 1.0)[0]) for v in verts]])
+        self.assertEqual(ua.tile_phase(d, 1.0, 1024)["off_faces"], 0)
+
     def test_tile_steps(self):
         ua = self.ua
         self.assertEqual(ua.tile_steps_issues(1.0, [1.0, 3.0]), [])
@@ -697,6 +708,10 @@ class UvAuditMaths(unittest.TestCase):
         moved["co"] = moved["co"] @ rot.T + np.array([5.0, 7.0, 0.0])
         r = ua.tile_phase(moved, 1.0, 1024, frame=(rot, (5.0, 7.0, 0.0)), steps=[1.0, 3.0])
         self.assertEqual((r["off_faces"], r["issues"]), (0, []), r)
+        # a mirrored frame is reported, not measured as if it were not
+        r = ua.tile_phase(moved, 1.0, 1024, frame=(rot @ np.diag([-1.0, 1.0, 1.0]), (5.0, 7.0, 0.0)))
+        self.assertIsNone(r["off_faces"])
+        self.assertIn("mirrored (negative scale)", r["issues"][-1])
         # a phase variant: projected as if 1 m along a 2 m tile; audited with its offset it passes, without it not
         variant = self.wall(0, 1.0, lambda v: ua.tile_uv([np.add(v, (1.0, 0, 0))], front, 2.0)[0])
         self.assertEqual(ua.tile_phase(variant, 2.0, 1024, offset=(1.0, 0, 0))["off_faces"], 0)

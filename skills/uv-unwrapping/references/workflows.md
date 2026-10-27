@@ -111,7 +111,7 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 1. Model to the grid; `ua.apply_stack(ob)`, then apply scale, as for any piece.
 2. One material per kind of surface: tiling (walls, floors) and trim (mouldings, frames, edges, pipes). Every audit
    below takes `material=` so each part is judged by its own rule.
-3. Tiling surfaces: `ua.tile_project([ob], tile_m=map_px / px_per_m, material="M_Wall*")` (2048 / 512 = 4 m; the
+3. Tiling surfaces: `ua.tile_project([ob], tile_m=map_px / px_per_m, material="M_Wall*")` (512 / 512 = 1 m; the
    tile must divide the grid module and the storey height: next section). Leave the UVs outside 0-1: they tile.
    Not `bpy.ops.uv.cube_project`: it centres the projection on the selection's bounds, so each piece starts at a
    different phase (5.2.2, measured: a 1 m wall's left edge at U 0.375, a 2 m wall's at 0.25, with cube_size 4).
@@ -163,14 +163,16 @@ storey height (or the vertical module) up the walls.
 
 A small tile repeats more often, so it must pass pbr-texturing's tile-scale check (an even tile), with variation from
 variants, decals and the lightmap. A photographed or library material keeps its real scale: its period is the size
-its source covers (`size_m` in its source record), or a whole number of its own repeats cropped to fit; scaled the
+its source covers (`size_m` in `pbr-texture-sources`' source.json, `tile_m` in `image-to-pbr`'s record), or a whole
+number of its own repeats cropped to fit; scaled the
 same on U and V, never squeezed (a 1.4 m brick tile forced into 1 m makes every brick 29% too small, and different
 factors on U and V stretch it). Where the art needs a period longer than the step:
 
 1. Place that family only on multiples of the tile (the world spec's placements, checked by the validator), or
 2. phase variants: one mesh per offset (`_P0`, `_P1`, ...: `tile_project(..., offset=(k * module, 0, 0))`, projected
    as if the piece stood k modules along), each placed where k = (x mod tile) / module; they share the material and
-   batch (audit each with `tile_offset=`), or
+   batch (audit each with `tile_offset=`, CLI `--tile-offset`, and `--steps <tile>,<storey>`: a variant family's
+   pieces repeat at the tile, not at the module), or
 3. a world-space UV shader (UVs from the world position in the vertex shader): a custom shader, allowed in VRChat
    worlds on every platform; measure it on the mobile device. Untested here.
 
@@ -178,9 +180,12 @@ factors on U and V stretch it). Where the art needs a period longer than the ste
 face off tile_project's scale and phase by more than half a texel (`tile_phase`, uv-audit.md).
 
 **Pivots and turns.** `tile_project` reads each face's position in the piece's own axes, so a piece must have its
-pivot on the grid (the kit's bottom-left corner) and its scale applied. Turns in 90 deg steps and mirrored pieces are
-fine: the projection follows each face's normal, so a turned piece's faces match an unturned piece facing the same
-way, and an applied Mirror gets the right U again when re-projected.
+pivot on the grid (the kit's bottom-left corner) and its scale applied (it refuses a negative scale). Walls may turn
+in 90 deg steps about Z: U runs along each wall face whichever way the piece faces, so a turned wall matches an
+unturned one facing the same way, and an applied Mirror gets the right U again when re-projected. **Floors and
+ceilings may not turn**: their faces take U and V from the piece's own X and Y, so a floor tile turned 90 deg turns
+its pattern too and jumps against its neighbours (measured, 5.2.2). Place tiling floor and ceiling pieces unturned,
+or turned only by the texture's own symmetry (a pattern that looks the same turned 180 deg), and give QA the rule.
 
 **Corners.** V is world Z on every wall face, so courses line up round any corner. U cannot continue round an outside
 corner and keep both walls' own phase (the wall thickness is not a whole number of tiles): cover the corner with a
@@ -205,9 +210,10 @@ those faces, then their V moved onto the row).
 5. The voussoirs or the arch's edge go on a trim strip bent along the arc. Audit `purpose="tiling"` for stretch.
 
 **Slopes and terrain.** A top-down projection (U = x, V = y, what tile_project gives faces that face up) stretches a
-slope by 1 / cos(slope): the tiling density band (0.9-1.1) fails above 25.8 deg and the angular p95 above 30 deg
-(*derived*). Project the ground from a shared origin (chunks with pivots on the tile grid, so they continue) and only
-where it is under about 25 deg; steeper ground is a separate mesh (a bank, a cliff, rocks) with a seam-based unwrap
+slope by 1 / cos(slope) along the fall line: the angular p95 gate (1.15) fails above 29.6 deg, the tiling density
+band (the audit's sqrt(UV area / surface area), sqrt(cos(slope)) here, under 0.9) above 35.9 deg (*derived*). Project
+the ground from a shared origin (chunks with pivots on the tile grid, so they continue) and only where it is under
+about 25 deg, a margin under the gate; steeper ground is a separate mesh (a bank, a cliff, rocks) with a seam-based unwrap
 at the family's density and its seams in cracks and at its foot, or a world-space triplanar shader (a custom shader;
 measure it on mobile). Compute terrain normals before cutting it into chunks and weld chunk borders, or every chunk
 edge shows as a lighting line. Never `uv.randomize_uv_transform` on a surface that continues across a joint or a
