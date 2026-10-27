@@ -130,7 +130,8 @@ Details, measurements and sources: `references/hard-surface.md`.
   `problems(r, flat_tol=0.5)` fails the last for flat-faced pieces; smooth curved parts are over it by design, so on
   a piece with them read `r["flat_faces"]` (each face over the tolerance once, as the mesh data's face index and a
   centre) and judge only the flat parts. A hard-surface piece:
-  `audit_stack(obj, flat_tol=0.5)` instead. `joint_match` for vertices shared with a neighbouring piece.
+  `audit_stack(obj, flat_tol=0.5)` instead. `joint_match` for vertices shared with a neighbouring piece, `joint_normals` for
+  the shading across them.
 - `review_render.render(...)`: close-up wire, studio, and a reflective matcap. Before and after:
   `review_render.compare(dense, low, views, out)` renders each alone from the same eye relative to its own centre,
   into a before | after | silhouette sheet, and returns the silhouette mismatch per view. Never put both in one wide
@@ -147,7 +148,7 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | `scripts/grid_topology.py` | `zone_stations`, `arc_segments`, `blend_error`, `grid_faces`, `step_reduce` / `step_3to1` with `mid_along` / `mid_between`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights`, `grid_triangles` |
 | `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run, `weld_layout()`, `mirror_half()`, `find_engine()` |
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
-| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)`, `high_low_gap(low, highs)` (how far high and low part, both ways), `bake_skew(low)` (how far the bake's rays lean) |
+| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `joint_normals(a, b, select, ...)`, `determinism_hash(obj)`, `high_low_gap(low, highs)` (how far high and low part, both ways), `bake_skew(low)` (how far the bake's rays lean) |
 | `scripts/review_render.py` | `render(path, eye, target, ...)` live or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)` |
 | `scripts/detail_scale.py` | Plain Python, no Blender: `px_per_m(d)`, `texel_class(d)`, `stereo_relief_m(d)`, `min_width_m(d, px=2)`, each with `ppd=20` (25 for Quest 3); `python detail_scale.py 0.5 1 2 [--ppd 25]` prints the table |
 

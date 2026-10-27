@@ -88,6 +88,11 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
 - Shared profiles: a moulding, skirting or cornice that runs across pieces has the identical section at both ends of
   every piece, on the same vertex rows (`grid-layout.md`, rows), so it continues without a step. Check the joint with
   `joint_match` (`validation.md`).
+- A curved piece meeting a straight one (a curved wall, an apse, a round corner): its smooth end vertices lean half a
+  facet angle off the straight neighbour (measured, Blender 5.2.2: 2.81 deg for 16 segments per quarter turn), a
+  crease in the shading at every such joint. Set the joint vertices' custom normals to the shared surface normal
+  (`me.normals_split_custom_set_from_vertices(normals)`: measured 0 deg after) and check `joint_normals` (under about
+  0.5 deg, *practice*).
 - Openings keep their greybox size; frames and reveals go inside them, the lining flush with the wall face (*practice*).
 
 ## 5. Imperfection without breaking the kit

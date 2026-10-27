@@ -10,6 +10,7 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/topology_audit.py", encod
     ns["audit_stack"](obj, flat_tol=0.5, before=snap)        # ... and after: fails if the normals moved
     ns["audit_many"]([o for o in bpy.data.objects if o.name.startswith("SK_")])
     ns["joint_match"](obj_a, obj_b, lambda co: abs(co.x) < 1e-4)   # do two pieces share their joint vertices?
+    ns["joint_normals"](obj_a, obj_b, lambda co: abs(co.x) < 1e-4) # ... and does the shading carry on across it?
     ns["determinism_hash"](obj)                               # compare across two builds: vertices and faces
     ns["high_low_gap"](low, [high])                          # how far high and low part (relief, silhouette), metres
     ns["bake_skew"](low)                                     # how slanted the bake's rays leave the low's faces
@@ -466,6 +467,45 @@ def joint_match(a, b, select, digits=5, matrix_a=None, matrix_b=None):
         return out
     pa, pb = pts(a, matrix_a), pts(b, matrix_b)
     return pa - pb, pb - pa, pa & pb
+
+
+def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None):
+    """Does the shading carry on across a joint? At each joint position the two pieces share (as joint_match finds
+    them, in one frame through matrix_a / matrix_b), the corner normals of the evaluated meshes are paired by the
+    smallest angle (each piece's visible face against its neighbour's, never the end caps pressed together) and the
+    worst pairing is reported. A smooth curved piece ending against a straight one leans its end vertices by half a
+    facet angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true
+    surface normal put it right. Returns {"positions": shared positions compared, "max_deg", "worst": [(deg,
+    position), ...]}."""
+    import bpy
+    dg = bpy.context.evaluated_depsgraph_get()
+
+    def corners(ob, m):
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        try:
+            rot = (m.to_3x3() if m is not None else None)
+            out = {}
+            for p in me.polygons:
+                for li in p.loop_indices:
+                    v = me.vertices[me.loops[li].vertex_index].co
+                    co = m @ v if m is not None else v.copy()
+                    if not select(co):
+                        continue
+                    n = me.corner_normals[li].vector.copy()
+                    if rot is not None:
+                        n = (rot.inverted().transposed() @ n).normalized()
+                    out.setdefault(tuple(round(c, digits) for c in co), []).append(n)
+            return out
+        finally:
+            ev.to_mesh_clear()
+    ca, cb = corners(a, matrix_a), corners(b, matrix_b)
+    worst = []
+    for key in set(ca) & set(cb):
+        best = min(math.degrees(na.angle(nb, 0.0)) for na in ca[key] for nb in cb[key])
+        worst.append((round(best, 3), list(key)))
+    worst.sort(key=lambda w: -w[0])
+    return {"positions": len(worst), "max_deg": worst[0][0] if worst else 0.0, "worst": worst[:5]}
 
 
 def determinism_hash(ob, digits=5):

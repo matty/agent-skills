@@ -1087,6 +1087,38 @@ def test_high_poly_routes_run_headless():
     check(zmin < 0.8, "the cloth should drape below the table top (0.9): lowest %.3f" % zmin)
 
 
+def test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight():
+    """A straight wall front meeting a quarter-circle wall of 16 segments, both smooth: the curve's end vertices lean
+    half a facet angle (2.81 deg) off the straight's normal; custom normals on them set to the straight's (-Y) put
+    the shading right (0 deg)."""
+    fresh()
+    ns = AUDIT
+    bm = bmesh.new()
+    vs = [bm.verts.new(c) for c in ((-1, 0, 0), (0, 0, 0), (0, 0, 3), (-1, 0, 3))]
+    bm.faces.new(vs)
+    straight = object_from_bmesh("straight", bm)
+    bm = bmesh.new()
+    cols = []
+    for i in range(17):
+        a = (math.pi / 2) * i / 16
+        cols.append((bm.verts.new((math.sin(a), 1 - math.cos(a), 0)), bm.verts.new((math.sin(a), 1 - math.cos(a), 3))))
+    for (a0, a1), (b0, b1) in zip(cols, cols[1:]):
+        bm.faces.new((a0, b0, b1, a1))
+    curved = object_from_bmesh("curved", bm)
+    for ob in (straight, curved):
+        ob.data.shade_smooth()
+    at_joint = lambda co: abs(co.x) < 1e-4 and abs(co.y) < 1e-4
+    r = ns["joint_normals"](straight, curved, at_joint)
+    check(r["positions"] == 2 and abs(r["max_deg"] - 90.0 / 16 / 2) < 0.01, r)
+    vn = [tuple(v.normal) for v in curved.data.vertices]
+    for v in curved.data.vertices:
+        if at_joint(v.co):
+            vn[v.index] = (0.0, -1.0, 0.0)
+    curved.data.normals_split_custom_set_from_vertices(vn)
+    r = ns["joint_normals"](straight, curved, at_joint)
+    check(r["max_deg"] < 0.01, r)
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1105,7 +1137,7 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
-           test_high_poly_routes_run_headless):
+           test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:
