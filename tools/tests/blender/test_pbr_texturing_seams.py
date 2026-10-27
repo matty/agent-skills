@@ -154,6 +154,41 @@ def normal_bake_clean_until_an_island_moves():
     check(r["visible_m"] > 1.0 and r["issues"], "a turned island must show at its border: %s" % r)
 
 
+def hard_edges_crease_is_not_a_seam():
+    """Arch sweep FP 2: a chamfered box with hard edges (and a UV seam on each, as uv-unwrapping requires) under a flat
+    normal map: its shading creases at every chamfer are the mesh's, so no seam shows; one face's island painted 20
+    deg off still shows along its border."""
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    ob = bpy.context.active_object
+    bev = ob.modifiers.new("Bevel", "BEVEL")
+    bev.width, bev.segments = 0.08, 1
+    bpy.ops.object.modifier_apply(modifier="Bevel")
+    ob.data.set_sharp_from_angle(angle=math.radians(30))
+    ob.data.shade_smooth()
+    select_only(ob)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(30), island_margin=0.02)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    ob.modifiers.new("Tri", "TRIANGULATE")
+    n = 512
+    px = np.tile(np.array([0.5, 0.5, 1.0, 1.0], np.float32), (n, n, 1))
+    img = bpy.data.images.new("flat_n", n, n)
+    img.colorspace_settings.name = "Non-Color"
+    img.pixels.foreach_set(px.ravel())
+    r = NS["seams"](ob, save(img, "T_flat_Normal.png"), kind="normal")
+    check(r["seam_m"] > 1 and r["visible_m"] == 0, "flat map on hard edges: %s" % r)
+    me = ob.data                                               # the biggest face's island, tilted 20 deg about V
+    big = max(me.polygons, key=lambda p: p.area)
+    uv = np.array([me.uv_layers.active.data[li].uv[:] for li in big.loop_indices])
+    (x0, y0), (x1, y1) = np.floor(uv.min(0) * n).astype(int) - 3, np.ceil(uv.max(0) * n).astype(int) + 3
+    tilt = math.radians(20)
+    px[max(y0, 0):y1, max(x0, 0):x1, :3] = (0.5 + 0.5 * math.sin(tilt), 0.5, 0.5 + 0.5 * math.cos(tilt))
+    img.pixels.foreach_set(px.ravel())
+    r = NS["seams"](ob, save(img, "T_tilt_Normal.png"), kind="normal")
+    check(r["visible_m"] > 1.0, "a tilted island must show at its border: %s" % r)
+
+
 def brick_tile(n=256, seed=4):
     """A seamless 1 m brick tile: four courses, half-bond, a tone per brick, mortar lines."""
     rng = np.random.default_rng(seed)
@@ -215,6 +250,10 @@ def kit_joints_through_collection_instances():
     bpy.context.view_layer.update()
     r = NS["joints"](placed, path)
     check(len(r["pairs"]) == 2 and r["visible_m"] == 0 and r["seam_m"] > 5, "phase-0 pieces: %s" % r)
+    jp = os.path.join(TMP, "joints.json")                # the CLI on the whole file: the kit masters (excluded
+    code = NS["_run"](["--objects", "*", "--image", path, "--joints", "--json", jp])   # collections) are left out
+    rep = __import__("json").load(open(jp, encoding="utf-8"))[0]
+    check(code == 0 and rep["pieces"] == 3 and len(rep["pairs"]) == 2, "CLI joints: exit %s, %s" % (code, rep))
     # Cube Projection on the 2 m piece centres it on its bounds: half a tile off at both of its joints
     ob = pieces["WALL_2m"][1]
     bpy.context.view_layer.layer_collection.children["KIT_WALL_2m"].exclude = False
@@ -342,7 +381,7 @@ def maths_without_meshes():
 
 CASES = [maths_without_meshes, noise_from_uv_shows_from_object_does_not, normal_bake_clean_until_an_island_moves,
          kit_joints_through_collection_instances, mirrored_piece_joins_its_neighbour,
-         joints_long_triangles_and_partial_edges]
+         joints_long_triangles_and_partial_edges, hard_edges_crease_is_not_a_seam]
 
 
 def main():
