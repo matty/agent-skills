@@ -548,6 +548,11 @@ def _overlap2d(p, q):
     return any(_tri_overlap(a, b) for a in _triangles(p) for b in tq)
 
 
+def _same_corners(a, b, tol=1e-4):
+    """True when two faces have the same corners (any order), within tol metres."""
+    return len(a) == len(b) and all(any((p - q).length <= tol for q in b) for p in a)
+
+
 def coplanar_overlaps(faces):
     """Pairs of faces (labels) that lie in one plane (to 0.1 mm) and overlap with area, facing the same way or
     opposite ways: duplicated faces, z-fighting faces, zero-thickness doubles. faces: (label, normal, [Vector])."""
@@ -654,6 +659,12 @@ def measure_piece(coll, module, depsgraph, lightmap_texels=None, lightmap_scale=
             faces += f
     rep["lod0_tris"] = sum(rep["objects"][o.name]["tris"] for o in lod0)
     pairs = coplanar_overlaps(faces)
+    # a face and its own back (the same corners, facing the other way) is a double-sided card under a single-sided
+    # shader: culled, the two never draw together, so they cannot z-fight (foliage-and-alpha's cards)
+    by = {f[0]: f for f in faces}
+    backs = [(a, b) for a, b in pairs if by[a][1].dot(by[b][1]) < -0.99 and _same_corners(by[a][2], by[b][2])]
+    pairs = [q for q in pairs if q not in set(backs)]
+    rep["double_sided_faces"] = len(backs)
     rep["coplanar_overlaps"] = len(pairs)
     rep["coplanar_overlap_examples"] = ["%s / %s" % p for p in pairs[:5]]
     rep["bad_materials"] = sorted({n for st in rep["objects"].values() for n in st["materials"]
@@ -1215,6 +1226,10 @@ def notes(rep, pieces=None, probe_lit=None):
         n = p["piece"]
         if pieces is not None and not any(fnmatch.fnmatchcase(n, g) for g in pieces):
             continue
+        if p.get("double_sided_faces"):
+            out.append("%s: %d faces doubled back to back (a double-sided card for a single-sided shader): right "
+                       "while its material culls back faces; on a two-sided shader drop the backs" %
+                       (n, p["double_sided_faces"]))
         if any(fnmatch.fnmatchcase(n, g) for g in probe_lit or []):
             continue
         m = NAME_RE.match(n)

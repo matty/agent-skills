@@ -204,6 +204,9 @@ def build(d):
     slab_v = box_verts((0, 0, 0), (2, 2, 0.1)) + [(0.5, 0.5, 0.1), (1.5, 0.5, 0.1), (1.5, 1.5, 0.1), (0.5, 1.5, 0.1)]
     piece("TST_Overlap_2x2_A", [("TST_Overlap_2x2_A", mesh("overlap", slab_v, (), BOX_FACES + [(8, 9, 10, 11)]))],
           "modelled")
+    card_v = [(-0.5, 0, 0), (0.5, 0, 0), (0.5, 0, 1), (-0.5, 0, 1)] * 2      # a leaf card and its own back
+    piece("TST_Card_Free_A", [("TST_Card_Free_A", mesh("card", card_v, (), [(0, 1, 2, 3), (7, 6, 5, 4)]))],
+          "modelled")
     grid_v = [(x, y, 0) for y in (0, 1, 2) for x in (0, 1, 2)]
     grid = mesh("grid", grid_v, (), [(0, 1, 4, 3), (1, 2, 5, 4), (3, 4, 7, 6), (4, 5, 8, 7)])
     grid.materials.append(material("M_TST_Brick_Dark"))            # underscores in the name part are allowed
@@ -1024,6 +1027,9 @@ def coplanar_overlap_reported(r):
     check(has(kit["problems"], "TST_Overlap_2x2_A", "overlapping coplanar faces"), "no PROBLEM line")
     check(piece_of(kit, "TST_Grid_2x2_A")["coplanar_overlaps"] == 0, "adjacent faces counted as overlapping")
     check(piece_of(kit, "TST_Col_1x1x1_A")["coplanar_overlaps"] == 0, "LOD1 counted against LOD0")
+    card = piece_of(kit, "TST_Card_Free_A")        # props sweep: a double-sided card is a note, not z-fighting
+    check(card["coplanar_overlaps"] == 0 and card["double_sided_faces"] == 1 and not has(kit["problems"],
+          "TST_Card_Free_A", "coplanar") and has(kit["notes"], "TST_Card_Free_A", "back to back"), card)
 
 
 @case
