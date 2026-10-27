@@ -474,6 +474,7 @@ def build(d):
     copy = bpy.data.collections.new("ASM_Copy_A")                  # an appended assembly, never in the scene tree
     instance("inner", wall_l, parent=copy)
     instance("asm_copy", copy, (2.37, 12, 0), rot=(0, 0, 45), parent=zone)
+    instance("asm_squashed", booth_l, (40, 4, 0), scale=(1, 1, 0.8), parent=zone)   # uneven: its texels stretch
     piece("TST_Slab_2x2_A", [("TST_Slab_2x2_A", box("slab", (0, 0, 0), (2, 2, 0.1)))], "modelled")
     shadow = bpy.data.collections.new("TST_Bevel_1x1x1_A")         # same name as the linked piece (names are
     bpy.context.scene.collection.children.link(shadow)             # unique per library, so it keeps the name)
@@ -1105,6 +1106,9 @@ def master_placements(r):
     check(pl["wall_ok"]["kind"] == "grid" and pl["booth"]["kind"] == "asm" and pl["asm_copy"]["kind"] == "asm",
           [(p["object"], p["kind"]) for p in rep["placements"]])
     check(not has(rep["problems"], "placement asm_copy"), "assembly grid data turned into a PROBLEM line")
+    check(pl["asm_squashed"]["scale"] == [1.0, 1.0, 0.8] and has(rep["problems"], "asm_squashed", "unevenly"),
+          "an unevenly scaled placement of any kind stretches its texture: %s" % pl["asm_squashed"])
+    check(not has(rep["problems"], "wall_scaled", "unevenly"), "an even scale is not uneven")
     check("inner" not in pl, "an instance inside an unplaced collection counted as a placement")
 
 

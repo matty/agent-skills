@@ -18,9 +18,11 @@ the files it checks: fixes go back to the builder.
 3. **Measure with tools**, not by eye. `scripts/qa_measure.py` measures Blender files and re-imported FBX files
    (names, triangles, topology, transforms, pivots, materials, images, UV layers, linking, placements) and makes the
    review renders: run it on every .blend the task wrote, with the stage's `--expect-status`. Texture maps go through
-   its PBR check (`--pbr`, X8: base-colour and metal ranges, binary metallic, normal maps). For depth, load the
-   specialist skill a check names (UV audit: `uv-unwrapping`; joints and closed islands: `blender-mesh-topology`) and
-   use its own tools; if it is not installed, use the check's fallback and say so in `evidence`.
+   its PBR check (`--pbr`, X8: base-colour and metal ranges, binary metallic, normal maps; with `--pbr-tiling`, X4:
+   seams and the tile-scale variation that draws a grid). `scripts/texture_seams.py` measures every UV seam and kit
+   joint of a textured mesh (X9). For depth, load the specialist skill a check names (UV audit and tiling phase:
+   `uv-unwrapping`; joints, closed islands, high and low poly: `blender-mesh-topology`) and use its own tools; if it
+   is not installed, use the check's fallback and say so in `evidence`.
 4. **Look** (`references/visual-review.md`): render from the spec's views and compare with the mockups, plans,
    elevations and the spec's `look` references. Materials need a look-dev render (`--light lookdev`, EEVEE): the
    Workbench renders show base colour only, never roughness, metal or normal maps. After the bake, render the lit

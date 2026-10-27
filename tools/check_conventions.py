@@ -154,6 +154,7 @@ CONSTANTS = [
 
 # The PBR checker ships identically in these skills (texturing self-checks, QA's X8 runs the same code).
 PBR_CHECK_COPIES = ("pbr-texturing/scripts/pbr_check.py", "vrchat-world-qa/scripts/pbr_check.py")
+TEXTURE_SEAMS_COPIES = ("pbr-texturing/scripts/texture_seams.py", "vrchat-world-qa/scripts/texture_seams.py")
 
 # Text a file must contain because it states that fact: (CANON key, files).
 TEXT_PRESENT = [
@@ -685,6 +686,7 @@ def main():
     check_identical("blender-kit-library/scripts/kit_library.py",
                     "vrchat-world-orchestration/scripts/kit_library.py")
     check_identical(*PBR_CHECK_COPIES)
+    check_identical(*TEXTURE_SEAMS_COPIES)
     for rel in PBR_CHECK_COPIES:
         limits = module_constant(rel, "PBR_LIMITS")
         if limits is MISSING or list(limits.get("albedo_srgb", ())) != CANON["pbr_albedo_srgb"]:

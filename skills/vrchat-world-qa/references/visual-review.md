@@ -55,7 +55,7 @@ width and height (it is small; the scale factor enlarges it). `chrome` takes the
 | Silhouette | The skyline against the sky reads differently from the mockup |
 | Detail (stage 5+, a piece) | A feature in the piece's `detail` list is missing or off its stated size by more than 10% (house guidance), or a chamfer that should catch light shows none from the nearest walkable distance |
 | Materials (stage 7+) | Colour or value clearly differs from the mockup or `look.references` under flat or studio light, or roughness, metal or relief reads wrong under `--light lookdev` (a satin wall as glossy as glass, metal with no reflection, dents where the reference has bumps) |
-| Repetition (stage 7+) | *Advisory*, a note only: a tiling texture or a kit piece repeats visibly in a wide view (the same stain, brick or panel recurring in a grid); suggest a variant, a decal, a detail map or a trim to break it |
+| Repetition (stage 7+; A5 at stage 8) | Blocking: a tiling texture or a kit piece repeats visibly in a wide view (the same stain, brick or panel recurring in a grid, identical variants side by side); name where, and the fix: an even tile (`pbr-texturing`'s `tile_flatten.py` for a tile-scale grid), a variant, a decal, a detail map or a trim to break the run |
 | Final look (L7) | The lit Unity view's palette, light colour, contrast or mood clearly differs from the mockups, `look.references` and `look.lighting_mood` |
 | Scale | A 1.6 m figure looks wrong against doors, railings, furniture |
 

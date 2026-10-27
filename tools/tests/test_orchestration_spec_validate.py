@@ -48,7 +48,9 @@ def study_spec():
         placements.append({"ref": "STR_Ceiling_2x2_A", "pos": [x, y, 3], "rot": 0})
     placements += [{"ref": "PROP_Desk_Free_A", "pos": [3, 4.35, 0], "rot": 0},
                    {"ref": "PROP_LightSwitch_Free_A", "pos": [3.25, 1.2, 1.2], "rot": 180}]
-    family = {"file": "blender/kits/KIT_World.blend", "texturing": "tiling", "texel_density": 512, "map_px": 1024}
+    # a 1 m tile (512 px at 512 px/m) divides the 1 m module and the 3 m storey; the dry run's 2 m tile would jump at
+    # every other joint (the tile_phase rule)
+    family = {"file": "blender/kits/KIT_World.blend", "texturing": "tiling", "texel_density": 512, "map_px": 512}
     return {
         "version": 1,
         "world": {"name": "Study", "platforms": ["pc", "quest"], "scale": "small", "allow_generated_assets": False,
@@ -137,6 +139,7 @@ class SpecChecks(unittest.TestCase):
     def test_family_map_px_is_checked_against_the_pc_maximum_only(self):
         spec = study_spec()
         spec["world"]["platforms"] = ["pc", "quest", "ios"]
+        spec["families"]["INT"]["texturing"] = "atlas"                    # a tiling 4 m tile fails the tile rule
         spec["families"]["INT"]["map_px"] = 2048                          # mobile gets 1024 from import overrides
         self.assertEqual(run(spec)[0].errors, 0)
         spec["families"]["INT"]["map_px"] = 4096
@@ -162,6 +165,36 @@ class SpecChecks(unittest.TestCase):
         spec["families"]["INT"]["thickness"] = 0.3                        # under one module: a thin axis
         warnings = messages(run(spec)[0], "WARN")
         self.assertFalse(any("thickness" in m for m in warnings), warnings)
+
+    def test_tiling_tile_divides_the_grid_steps(self):
+        spec = study_spec()
+        spec["families"]["INT"]["map_px"] = 1024                          # a 2 m tile on a 1 m grid, 3 m storeys
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("family INT: its 2 m tile" in m and "grid.module 1 m" in m and "storey_height 3 m" in m
+                            for m in errors), errors)
+        spec["families"]["INT"]["map_px"] = 256                           # 0.5 m divides both
+        self.assertEqual(run(spec)[0].errors, 0)
+        spec["families"]["INT"]["map_px"] = 1024
+        spec["grid"]["storey_height"] = 4.0
+        spec["families"]["INT"]["tile_phase"] = "variants"                # a 2 m tile: 2 variants on a 1 m grid
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        self.assertTrue(any("2 phase variants" in m for m in messages(res, "NOTE")), messages(res, "NOTE"))
+        spec["grid"]["storey_height"] = 3.0                               # 3 m is not a whole number of 2 m tiles
+        self.assertTrue(any("tile_phase variants needs" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["families"]["INT"]["tile_phase"] = "world_uv"
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")))
+        self.assertTrue(any("world-space UV shader" in m for m in messages(res, "NOTE")))
+        spec["families"]["INT"]["tile_phase"] = "free"
+        self.assertTrue(any("tile_phase must be one of" in m for m in messages(run(spec)[0], "ERROR")))
+
+    def test_bake_is_a_flag(self):
+        spec = study_spec()
+        spec["pieces"][0]["bake"] = True
+        self.assertEqual(run(spec)[0].errors, 0)
+        spec["pieces"][0]["bake"] = "yes"
+        self.assertTrue(any("bake must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
 
     def test_world_name_is_required(self):
         spec = study_spec()

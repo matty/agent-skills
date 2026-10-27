@@ -35,6 +35,8 @@ it, or without its JSON, did not finish.
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --tile-seam T_EXT_Brick_BaseColor.png
     blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --pbr "blender/textures/EXT/*.png"
             --map-px 1024 --pbr-targets '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "metal": false}}'   # X8
+    blender -b --factory-startup --python-exit-code 1 --python qa_measure.py -- --pbr "textures/EXT/*.png"
+            --pbr-tiling   # X4: seams along part of an edge, tile-scale variation (--pbr-trim for a trim sheet)
 
 Renders leave out collision shells (*_COL) and every LOD but LOD0 (*_LOD1, *_LOD2...), in the file and inside
 collection instances: --lod n shows LOD n instead, --show-collision shows the shells, --hide-object hides more by
@@ -801,6 +803,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                 "id": ob.get("placement_id"), "pos": [round(v, 4) for v in loc], "rot_z": round(rz, 3),
                 "rot_xy_ok": z_axis.z > 1.0 - 1e-6,
                 "scale_ok": all(abs(s - 1.0) < EPS for s in scale),
+                "scale": [round(s, 4) for s in scale],
                 # X and Y only, heights are checked against the spec. Grid pieces must be on the grid at 90 deg
                 # steps; for assemblies the two values are data only (A3 compares them with the spec instead).
                 "on_grid": (all(abs(v / step - round(v / step)) < 1e-3 for v in loc[:2])
@@ -962,11 +965,12 @@ def _pbr_module():
         sys.dont_write_bytecode = keep
 
 
-def pbr(paths, map_px=None, targets=None):
+def pbr(paths, map_px=None, targets=None, tiling=False):
     """X8: the PBR value checks of texture maps paired by name (T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness,
     _Normal), one dict per material with its stats, "problems" (blocking) and "notes" (advisory). targets: the spec's
-    look.materials, {material: {albedo_srgb, roughness, metal}}."""
-    return _pbr_module().check_files(paths, map_px=map_px, targets=targets)
+    look.materials, {material: {albedo_srgb, roughness, metal}}. tiling (X4): True judges the maps as tiling (a seam
+    along part of an edge, tile-scale variation that draws a grid), "x" as a trim sheet (along U only)."""
+    return _pbr_module().check_files(paths, map_px=map_px, targets=targets, tiling=tiling)
 
 
 def compare_placements(rep, prev):
@@ -1194,6 +1198,10 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("linked piece %s: instance_offset %s in its KIT file, so every placement of it is drawn that "
                        "far off" % (lp["piece"], lp["instance_offset"]))
     for pl in rep["placements"]:
+        sc = pl.get("scale") or [1.0, 1.0, 1.0]
+        if max(sc) > min(sc) * (1.0 + 1e-3):
+            out.append("placement %s (%s) scaled unevenly %s: its texture stretches; scale it evenly or remodel it"
+                       % (pl["object"], pl["asset"], sc))
         if pl.get("kind") != "grid":
             continue                          # Free props and assemblies: data only, compared with the spec (A3)
         if pl["on_grid"] is False:
@@ -1582,6 +1590,9 @@ def _args(argv):
                     "T_<FAMILY>_<Name>_BaseColor, _MetallicSmoothness and _Normal; globs are expanded here")
     ap.add_argument("--map-px", type=int, metavar="PX", help="with --pbr: the family's map_px, the same number as "
                     "--texel-map (a larger map is a PROBLEM)")
+    ap.add_argument("--pbr-tiling", action="store_true", help="with --pbr: judge the maps as tiling (X4): a seam "
+                    "along part of a wrap edge, tile-scale variation that draws a grid")
+    ap.add_argument("--pbr-trim", action="store_true", help="with --pbr: a trim sheet, judged along U only (X4)")
     ap.add_argument("--pbr-targets", metavar="JSON", help="with --pbr: the spec's look.materials as JSON, e.g. "
                     '{"M_EXT_Brick": {"albedo_srgb": [60, 150], "roughness": [0.6, 0.95], "metal": false}}')
     ap.add_argument("--gain", type=float, help="with --image-stats or a render: also save a copy brightened this "
@@ -1617,8 +1628,8 @@ def _args(argv):
     a.tile_seam = _expand(ap, "--tile-seam", a.tile_seam)
     a.image_stats = _expand(ap, "--image-stats", a.image_stats)
     a.pbr = _expand(ap, "--pbr", a.pbr)
-    if (a.map_px or a.pbr_targets) and not a.pbr:
-        ap.error("--map-px and --pbr-targets work with --pbr only")
+    if (a.map_px or a.pbr_targets or a.pbr_tiling or a.pbr_trim) and not a.pbr:
+        ap.error("--map-px, --pbr-targets, --pbr-tiling and --pbr-trim work with --pbr only")
     if a.pbr_targets:
         try:
             a.pbr_targets = json.loads(a.pbr_targets)
@@ -1706,7 +1717,7 @@ def _main():
             print("[qa] pixels %s: %s%s" % (os.path.basename(s["image"]), _stats_text(s),
                                             ("; brightened copy " + s["gain_copy"]) if s.get("gain_copy") else ""))
     if a.pbr:
-        rep["pbr"] = pbr(a.pbr, a.map_px, a.pbr_targets)
+        rep["pbr"] = pbr(a.pbr, a.map_px, a.pbr_targets, "x" if a.pbr_trim else a.pbr_tiling)
         for r in rep["pbr"]:
             name = r["material"] or r["key"]
             bc, ms, nm = r.get("base_color") or {}, r.get("metallic_smoothness") or {}, r.get("normal") or {}

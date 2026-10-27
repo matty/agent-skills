@@ -219,8 +219,12 @@ from the command line) to self-check before reporting.
   `kit_status = modelled`.
 - Brief: load `blender-mesh-topology` (finishing the form: what is geometry and at what size, real-world sizes for
   anything the detail list leaves open; then topology). Paste each piece's `detail` and `ref` into the brief.
+- A piece with `bake: true` (ornament, carving, rivets, sculpted or cloth forms) also gets its high poly here, in
+  `blender/bake/<FAMILY>_high.blend` (`<Part>_high` objects, one vertex group per part on the low), never in MASTER or
+  a KIT file: built and gated by `blender-mesh-topology`'s high-and-low-poly reference (shading that bakes clean, the
+  low's outline within 2 px, carving seen close keeping its depth step in the low).
 - Budget: `budgets.piece_tris.<FAMILY>`, or the piece's `tris`.
-- QA: M1-M8.
+- QA: M1-M8, M10 (M10 only for `bake: true` pieces).
 - `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): spot-check the greybox
   views again with the modelled pieces (`split`: reload the libraries in MASTER first). QA: M9.
 
@@ -229,6 +233,10 @@ from the command line) to self-check before reporting.
 - `T-UV-<FAMILY>`: UV0 by the family's texturing approach (tiling to `texel_density`, trim onto the trim sheet
   layout, atlas or unique packed to `map_px`); a UV2 on every kit render mesh (LODs and probe-lit props too, not
   `_COL`), whose gaps matter on the lightmapped ones. `kit_status = uv`.
+- Tiling UV0 with `uv-unwrapping`'s `tile_project` (U from each piece's own axes, phase 0 at its pivot), never Cube
+  Projection, which centres on each piece so pieces of different sizes start out of phase; the family's tile divides
+  `grid.module` and `grid.storey_height` (the validator holds the spec to it) or its `tile_phase` says how the pattern
+  continues; outside corners covered by a trim or a corner piece.
 - UV2 gaps come from each mesh's own lightmap square, not from the lightmap's size: padding for the whole map (8 px
   "at 512") silently assumes every piece gets the whole map. Pack them for the worst case, UV2 charts whose bounding
   box fills the tile: at least 2 texels at `texels_per_m x sqrt(A) x Scale In Lightmap` px, and at least 1 texel to
@@ -260,8 +268,9 @@ from the command line) to self-check before reporting.
   unless its zone has lighting states; every other piece, `ZONE` shells included, stays lightmapped whatever its size
   (the validator only notes it).
 - Brief: load `uv-unwrapping`; also `rizomuv-uv-pipeline` when RizomUV is installed.
-- QA: U1-U6 (U4 checks the gaps at the UV2's measured bounding-box share, with `lighting.baker` passed to
-  `qa_measure` as `--lightmapper`; under Bakery it also gates each mesh's effective lightmap density).
+- QA: U1-U7 (U4 checks the gaps at the UV2's measured bounding-box share, with `lighting.baker` passed to
+  `qa_measure` as `--lightmapper`; under Bakery it also gates each mesh's effective lightmap density; U7 the tiling
+  phase).
 
 ## 7 - Texturing (texture artist)
 
@@ -280,14 +289,19 @@ from the command line) to self-check before reporting.
 - An `atlas` family runs the other way round: its UV task packs every piece into the shared atlas, then
   `T-TEX-<FAMILY>` paints it, so the texture task depends on the UV task. Only an atlas laid out from existing
   textures (UVs placed onto a finished sheet) needs a layout task first, like a trim sheet.
-- QA: `T-TEX-TRIM-LAYOUT` X6; `T-TEX-<FAMILY>` X1-X5, X7 and X8.
+- Seams and repetition: every signal of a unique map comes from 3D space (bakes, Object-coordinate procedurals,
+  Box-projected images, tri-planar fills), so no UV seam shows; tiling maps are even at tile scale (`pbr_check.py
+  --tiling`; `tile_flatten.py` when they fail) and carry no stand-out feature; `bake: true` pieces are baked from their
+  highs, exploded where parts sit close, with the bake report kept beside the maps (`pbr-texturing`).
+- QA: `T-TEX-TRIM-LAYOUT` X6; `T-TEX-<FAMILY>` X1-X5 and X7-X10.
 
 ## 8 - Assemblies and dressing (integrator)
 
 - `T-ASM-<NAME>`: finish each assembly (`split`: in its own ASM file) with final pieces (usually nothing to do but check, since
-  pieces improved in place), add sockets. QA: A1-A4, M9.
+  pieces improved in place), add sockets. QA: A1-A5, M9.
 - `T-DRESS-<ZONE>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
-  foliage), within budget. QA: A1-A4, M9.
+  foliage), within budget. Variants ordered so no two identical ones touch and no sequence repeats; breakers
+  (pilasters, doors, trims, props, decals) at irregular spacing on runs over about four tile periods. QA: A1-A5, M9.
 
 ## 9 - Export (exporter)
 

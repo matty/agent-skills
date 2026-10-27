@@ -294,11 +294,11 @@ KNOWN_KEYS = {
     "tools": ("blender", "blender_mcp", "unity_project", "substance_designer", "substance_painter", "rizomuv",
               "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
-    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map"),
+    "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase"),
     "budgets": BUDGET_KEYS + ("download_mb", "piece_tris", "lightmap"),
     "lightmap": ("max_px", "count", "texels_per_m", "min_footprint_px"),
     "piece": ("name", "collision", "tris", "lods", "lod_lightmap", "lightmap", "lightmap_scale", "size", "ref",
-              "detail"),
+              "detail", "bake"),
     "look": ("references", "wear", "lighting_mood", "quality_bar", "lead_family", "materials"),
     "look_material": ("ref", "albedo_srgb", "roughness", "metal", "wear"),
     "assembly": ("name", "file", "size", "uses"),
@@ -667,7 +667,51 @@ def check_grid(grid, f):
     return module, sub, True
 
 
-def check_families(families, module, sub_module, f):
+TILE_PHASES = ("grid", "variants", "world_uv")
+
+
+def whole_steps(step, tile):
+    """True when step is a whole number (1 or more) of tiles."""
+    r = float(step) / float(tile)
+    return r >= 1.0 - 1e-6 and abs(r - round(r)) < 1e-6
+
+
+def check_tile_phase(code, fam, module, storey, f):
+    """A tiling family's tile (map_px / texel_density metres) against the steps its pieces are placed on: instanced
+    pieces restart the pattern at their pivots, so it continues across a joint only when the tile divides the grid
+    module and the storey height (tile_phase grid, the default). variants: phase variants, one mesh per offset, which
+    needs the tile to be a whole number of modules and to divide the storey; world_uv: a world-space UV shader."""
+    td, mp = fam.get("texel_density"), fam.get("map_px")
+    if fam.get("texturing") != "tiling" or not (number(td) and td > 0 and number(mp) and mp > 0):
+        return
+    phase = fam.get("tile_phase", "grid")
+    if phase not in TILE_PHASES:
+        f.error("family %s tile_phase must be one of %s" % (code, "/".join(TILE_PHASES)))
+        return
+    tile = float(mp) / float(td)
+    steps = [("grid.module", module)] + ([("grid.storey_height", storey)] if number(storey) and storey > 0 else [])
+    if phase == "grid":
+        bad = [(n, v) for n, v in steps if not whole_steps(v, tile)]
+        if bad:
+            f.error("family %s: its %g m tile (map_px %g / texel_density %g) does not divide %s, so the pattern "
+                    "jumps at joints between instanced pieces (uv-unwrapping, tile_project); use a tile that divides "
+                    "every step (at %g px/m: %s px), or tile_phase: variants or world_uv"
+                    % (code, tile, mp, td, " and ".join("%s %g m" % b for b in bad), td,
+                       " or ".join(str(int(td * module / k)) for k in (1, 2, 4) if (td * module / k) >= 64)))
+    elif phase == "variants":
+        if not (module and whole_steps(tile, module)) or (number(storey) and storey > 0
+                                                          and not whole_steps(storey, tile)):
+            f.error("family %s: tile_phase variants needs the %g m tile to be a whole number of grid modules and to "
+                    "divide the storey height" % (code, tile))
+        else:
+            f.note("family %s: %d phase variants of each piece along the wall (a %g m tile on a %g m grid): each "
+                   "placed where its offset matches its position" % (code, int(round(tile / module)), tile, module))
+    else:
+        f.note("family %s: tile_phase world_uv needs a world-space UV shader on every platform; measure it on the "
+               "mobile device" % code)
+
+
+def check_families(families, module, sub_module, f, storey=None):
     for code, fam in families.items():
         if not FAMILY_RE.match(str(code)):
             f.error("family code %r must be 2-5 capitals" % code)
@@ -711,6 +755,7 @@ def check_families(families, module, sub_module, f):
                 f.error("family %s detail_map must be true or false (a close-range detail map on its materials)"
                         % code)
             mp = fam.get("map_px")
+            check_tile_phase(code, fam, module, storey, f)
             if not number(mp) or mp <= 0:
                 f.error("family %s needs map_px (texture size in pixels)" % code)
             elif mp > PLATFORM_LIMITS["pc"]["map_px"]:
@@ -758,6 +803,8 @@ def check_pieces(spec, families, module, f):
             if "ref" in pc and not image_list(pc["ref"]):
                 f.error("piece %s: ref must be an image path or a list of them (the references it is modelled to)"
                         % name)
+            if "bake" in pc and pc["bake"] not in (True, False):
+                f.error("piece %s: bake must be true or false (true: its detail is baked from a high poly)" % name)
             det = pc.get("detail")
             if det is not None and not (isinstance(det, list) and all(isinstance(x, str) and x for x in det)):
                 f.error('piece %s: detail must be a list of features with their sizes, e.g. ["sill: 60 mm '
@@ -1257,7 +1304,8 @@ def check_spec(spec, f, root=None):
         grid = check_grid(mapping(spec, "grid", f, "grid"), f)
     module = grid[0]
     families = mapping(spec, "families", f, "families")
-    check_families(families, module, grid[1], f)
+    check_families(families, module, grid[1], f, (spec.get("grid") or {}).get("storey_height")
+                   if isinstance(spec.get("grid"), dict) else None)
     pieces = check_pieces(spec, families, module, f)
     asms = check_assemblies(spec, pieces, f)
     layout = blend_layout(spec, f)
