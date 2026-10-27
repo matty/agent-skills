@@ -72,7 +72,7 @@ bpy.ops.object.mode_set(mode="OBJECT")                      # leave Edit Mode be
 | `uv.smart_project` | Smart UV Project | quick automatic unwraps of hard-surface and architectural pieces; a lightmap UV only with an audit after it (it can join charts across corners; the seam-based unwrap is the default) | `angle_limit` (radians, default 1.1519 = 66 deg; lower = more islands, less distortion), `island_margin` (0: pass 0.001), `margin_method`, `rotate_method` (`AXIS_ALIGNED_Y`), `area_weight` (0), `scale_to_bounds` |
 | `uv.lightmap_pack` | Lightmap Pack | one island per face, packed: only for very simple lightmaps | `PREF_CONTEXT` (`SEL_FACES`), `PREF_PACK_IN_ONE` (True), `PREF_NEW_UVLAYER` (False), `PREF_BOX_DIV` (12), `PREF_MARGIN_DIV` (0.1) |
 | `uv.follow_active_quads` | Follow Active Quads | straight grids from a quad strip: trims, belts, pipes, stairs (see below) | `mode` (`LENGTH_AVERAGE`; `EVEN`; `LENGTH`) |
-| `uv.cube_project` | Cube Projection | boxes and blocky world geometry, tiling textures at world scale | `cube_size` (1.0), `correct_aspect`, `clip_to_bounds`, `scale_to_bounds` |
+| `uv.cube_project` | Cube Projection | one-off boxes and blocky geometry; not kit pieces: it centres on the selection's bounds, so pieces of different sizes start at different phases (5.2.2; `uv_audit.tile_project` instead) | `cube_size` (1.0), `correct_aspect`, `clip_to_bounds`, `scale_to_bounds` |
 | `uv.cylinder_project` | Cylinder Projection | pipes, columns, cans, before a cleanup unwrap | `direction`, `align`, `pole`, `seam`, `radius`, `scale_to_bounds` |
 | `uv.sphere_project` | Sphere Projection | domes and balls, as a starting point | `direction`, `align`, `pole`, `seam` |
 | `uv.project_from_view` | Project from View (Bounds) | decals, flat faces seen head-on, matching a reference image | `orthographic`, `camera_bounds`, `scale_to_bounds` (needs a 3D view) |
@@ -125,7 +125,7 @@ Rectangular strips packed straight waste no space and tile or trim without stair
 | `uv.average_islands_scale` | give every island the same texel density, from its 3D area | `scale_uv` (False: keep aspect), `shear` (False) |
 | `uv.pack_islands` | fit the islands into the 0-1 tile | `rotate` (True), `rotate_method` (`ANY`; `CARDINAL` = 90 deg steps, `AXIS_ALIGNED`, `AXIS_ALIGNED_X/Y`), `scale` (True: False keeps island sizes), `margin_method` (`SCALED`; `ADD`; `FRACTION`), `margin` (0.001), `shape_method` (`CONCAVE`; `CONVEX`; `AABB`), `merge_overlap` (False: True keeps every overlapping group together, stacks and accidental overlaps alike), `pin` / `pin_method`, `udim_source` (`CLOSEST_UDIM`; 5.0+ `CUSTOM_REGION`) |
 | `uv.minimize_stretch` | relax selected islands (can make angles worse: measure) | `fill_holes`, `blend`, `iterations` (0 = until stopped, interactive only: pass a number in scripts) |
-| `uv.randomize_uv_transform` | random offset, rotation and scale per island: breaks repetition on tiling surfaces | - |
+| `uv.randomize_uv_transform` | random offset, rotation and scale per island. Only on separate objects (a scatter of loose stones); on a surface that continues across a seam or a kit joint every island jumps against its neighbour | - |
 
 **Padding in pixels.** Measured on 5.2.2 by packing a cube's six islands at 1024 px:
 
@@ -168,7 +168,7 @@ straight edges: organic, non-directional islands only.
 | `uv.select_overlap` | selects UV faces that overlap other faces |
 | `uv.select_by_winding(winding="NEGATIVE")` | selects flipped faces (mirrored islands, or folds) |
 | `uv.select_similar(type="AREA" / "AREA_3D" / "WINDING" / ...)` | islands or faces like the selected one |
-| A checker or colour-grid image (Image > New, `generated_type="UV_GRID"` or `"COLOR_GRID"`) on the material | stretch, density and orientation by eye |
+| A checker or colour-grid image (Image > New, `generated_type="UV_GRID"` or `"COLOR_GRID"`) on the material | stretch, density and orientation by eye; size it so a cell is a few centimetres where the player stands closest (*practice*: 2-5 cm for a prop seen within 1 m), or stretch hides inside one cell |
 | `uv.export_layout(filepath=..., size=(1024, 1024), mode="PNG")` | the layout as an image, for review or for painting over |
 | `scripts/uv_audit.py` | all of the above as numbers, plus texel density in px/m, padding in pixels and hard edges off seams |
 

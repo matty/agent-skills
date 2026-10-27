@@ -649,6 +649,59 @@ class UvAuditMaths(unittest.TestCase):
         r = self.m(mesh(verts, faces, uvs, smooth=True), map_px=1024, baking=True)
         self.assertEqual(r["hard_edges_not_seams"], 0)
 
+    # ---- tiling phase across joints (tile_uv / tile_phase)
+    def test_tile_uv_reads_right_from_the_front_of_every_face(self):
+        ua = self.ua
+        # seen from the front, a step to the viewer's right raises U and a step up raises V
+        for n, right, up in (((0, 1, 0), (-1, 0, 0), (0, 0, 1)), ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
+                             ((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+                             ((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (-1, 0, 0), (0, 1, 0))):
+            forward = -np.asarray(n, float)
+            self.assertTrue(np.allclose(np.cross(forward, up), right) or n[2] != 0)       # right = forward x up
+            uv = ua.tile_uv([(0, 0, 0), right, up], n, 2.0)
+            np.testing.assert_allclose(uv[0], (0, 0), atol=1e-12)                         # phase 0 at the pivot
+            np.testing.assert_allclose(uv[1], (0.5, 0), atol=1e-12)
+            np.testing.assert_allclose(uv[2], (0, 0.5), atol=1e-12)
+
+    def test_tile_steps(self):
+        ua = self.ua
+        self.assertEqual(ua.tile_steps_issues(1.0, [1.0, 3.0]), [])
+        self.assertEqual(ua.tile_steps_issues(0.5, [1.0, 3.0]), [])
+        bad = ua.tile_steps_issues(4.0, [1.0, 3.0])                                       # the example spec's EXT
+        self.assertEqual(len(bad), 2)
+        self.assertIn("not a whole number", bad[0])
+
+    def wall(self, x0, length, uv_fn, height=3.0):
+        verts = [(x0, 0, 0), (x0 + length, 0, 0), (x0 + length, 0, height), (x0, 0, height)]
+        return mesh(verts, [[0, 1, 2, 3]], [[uv_fn(v) for v in verts]])
+
+    def test_tile_phase(self):
+        ua = self.ua
+        front = np.array([0.0, -1.0, 0.0])                                               # this quad faces -Y
+        ok = self.wall(0, 2.0, lambda v: ua.tile_uv([v], front, 1.0)[0] + (3, -2))        # whole tiles off: fine
+        r = ua.tile_phase(ok, 1.0, 1024)
+        self.assertEqual((r["off_faces"], r["mirrored_faces"], r["issues"]), (0, 0, []), r)
+        # Cube Projection centred on a 2 m piece's bounds: half a tile off
+        centred = self.wall(0, 2.0, lambda v: ((v[0] - 1.0) / 1.0 + 0.5, (v[2] - 1.5) / 1.0 + 0.5))
+        r = ua.tile_phase(centred, 1.0, 1024)
+        self.assertEqual(r["off_faces"], 1)
+        self.assertAlmostEqual(r["phase_px_max"], 512.0, delta=1e-6)
+        mirrored = self.wall(0, 2.0, lambda v: (-v[0] / 1.0 + 0.25, v[2]))
+        mirrored["uv"][:, 0] -= 0.25                                                      # U = -x: backwards
+        r = ua.tile_phase(mirrored, 1.0, 1024)
+        self.assertEqual(r["mirrored_faces"], 1)
+        self.assertIn("mirrored", r["issues"][0])
+        # a piece rotated 90 deg about Z and moved: its own frame brings it back
+        rot = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        moved = self.wall(0, 2.0, lambda v: ua.tile_uv([v], front, 1.0)[0])
+        moved["co"] = moved["co"] @ rot.T + np.array([5.0, 7.0, 0.0])
+        r = ua.tile_phase(moved, 1.0, 1024, frame=(rot, (5.0, 7.0, 0.0)), steps=[1.0, 3.0])
+        self.assertEqual((r["off_faces"], r["issues"]), (0, []), r)
+        # a phase variant: projected as if 1 m along a 2 m tile; audited with its offset it passes, without it not
+        variant = self.wall(0, 1.0, lambda v: ua.tile_uv([np.add(v, (1.0, 0, 0))], front, 2.0)[0])
+        self.assertEqual(ua.tile_phase(variant, 2.0, 1024, offset=(1.0, 0, 0))["off_faces"], 0)
+        self.assertEqual(ua.tile_phase(variant, 2.0, 1024)["off_faces"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

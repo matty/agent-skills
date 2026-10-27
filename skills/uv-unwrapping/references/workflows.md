@@ -10,6 +10,7 @@ baking rules in `baking-and-normal-maps.md`, the script's functions in `uv-audit
 - Hard-surface prop with a baked normal map
 - Organic or curved prop
 - Modular piece with trims and tiling materials
+- Tiling across joints, corners, curves, slopes and terrain
 - Lightmap UV2
 
 ## Hard-surface prop with a baked normal map
@@ -90,7 +91,11 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 ## Organic or curved prop
 
 1. Few seams, all hidden: underside, back, natural folds; the mirror axis for symmetric forms, or offset from the
-   centre if the centre is seen. Cylinder-like parts: one seam down the least-seen side.
+   centre if the centre is seen. Cylinder-like parts: one seam down the least-seen side. Rocks, roots and stumps:
+   seams on the faces buried in or resting on the ground (delete faces that are always buried), along concave
+   cracks and under overhangs, never along a ridge or across a face the player looks at. Shade the low smooth whole
+   (an angle split makes every ridge a hard edge, and a hard edge a seam). Many small islands (*practice*: more than
+   about 50 on one rock) mean the low is too dense or the seams follow noise: cut along the big forms only.
 2. Unwrap `method="MINIMUM_STRETCH", iterations=150, margin=0.001` for even density, or `ANGLE_BASED` when shape
    matters more. Pin border vertices and use Live Unwrap (`SpaceUVEditor.use_live_unwrap`) for hand corrections.
 3. Audit; where a band stays stretched, add a seam there. With RizomUV installed, `rizomuv-uv-pipeline`'s `organic`
@@ -98,14 +103,18 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 4. Lay out: `ua.layout([ob], map_px, px_per_m, directional=False, rotate_method="ANY")` only when the texture has no
    direction; otherwise keep `directional=True`.
 5. Bake on the whole mesh with mirrored copies offset (`bake=True` in step 4).
+6. After texturing, measure every seam the player can see with pbr-texturing's seam check: a seam whose colour or
+   normal steps more than the texture does inside an island shows, however well it is hidden from one angle.
 
 ## Modular piece with trims and tiling materials
 
 1. Model to the grid; `ua.apply_stack(ob)`, then apply scale, as for any piece.
 2. One material per kind of surface: tiling (walls, floors) and trim (mouldings, frames, edges, pipes). Every audit
    below takes `material=` so each part is judged by its own rule.
-3. Tiling surfaces: `bpy.ops.uv.cube_project(cube_size=map_px / px_per_m, correct_aspect=False)`; one UV tile is
-   `cube_size` metres in object space (2048 / 512 = 4.0). Leave the UVs outside 0-1: they tile.
+3. Tiling surfaces: `ua.tile_project([ob], tile_m=map_px / px_per_m, material="M_Wall*")` (2048 / 512 = 4 m; the
+   tile must divide the grid module and the storey height: next section). Leave the UVs outside 0-1: they tile.
+   Not `bpy.ops.uv.cube_project`: it centres the projection on the selection's bounds, so each piece starts at a
+   different phase (5.2.2, measured: a 1 m wall's left edge at U 0.375, a 2 m wall's at 0.25, with cube_size 4).
 4. Trim surfaces, on a sheet of w x h px (2048x1024 below). Neither this skill nor `rizomuv-uv-pipeline` automates
    trim matching; do it by hand:
    - Give the trim material the sheet before unwrapping: an Image Texture node holding an image of the sheet's size,
@@ -129,11 +138,78 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
    RizomUV's Hotspot can match pieces to trim rectangles interactively, in RizomUV itself.
 5. Audit each material with its purpose: `ua.audit(ob, purpose="trim", material="M_Trim*", map_px="2048x1024",
    px_per_m=512, rows="0-128,128-192,192-224,896-1024")` and `ua.audit(ob, purpose="tiling", material="M_Wall*",
-   map_px=2048, px_per_m=512)` (CLI `--material`): distortion, density within 10% on every island, strips along U,
+   map_px=512, px_per_m=512, tile_m=1.0, steps=[1.0, 3.0])` (CLI `--material`, `--tile-m`, `--steps`): distortion,
+   density within 10% on every island, every tiling face at tile_project's scale and phase, strips along U,
    every strip inside one row; overlaps and the tile bounds do not apply. Audited whole, the trim rules flag the
    tiling faces and the other way round. `island_boxes_px` in the JSON gives each island's pixel box.
 6. Keep one density across the whole kit so pieces meet without a visible jump.
 7. UV0 may overlap freely here; the lightmap UV2 is a separate, unique unwrap.
+
+## Tiling across joints, corners, curves, slopes and terrain
+
+A tiling material on a kit is laid by every instance of every piece at once, so a joint shows wherever the UVs of two
+neighbours disagree mod one tile. Nothing per piece catches that: plan it.
+
+**The tile divides the placement step.** Instanced pieces share one mesh, so each copy's pattern restarts at its
+pivot; it continues across a joint only when every period in the material (the tile `map_px / px_per_m`, and a detail
+or macro layer's period) divides the step the pieces are placed on: the grid module along walls and floors, the
+storey height (or the vertical module) up the walls.
+
+| Grid | 512 px/m | 1024 px/m |
+|---|---|---|
+| 1 m module, 3 m storeys | 512 px map (1 m tile), or 256 (0.5 m) | 1024 px map (1 m tile) |
+| 2 m module, 4 m storeys | 1024 px (2 m), 512 (1 m) | 2048 px (2 m) |
+| 1 m module, 4 m tile wanted | jumps at three joints in four: one of the three options below | |
+
+A small tile repeats more often, so it must pass pbr-texturing's tile-scale check (an even tile), with variation from
+variants, decals and the lightmap. Where the art needs a period longer than the step:
+
+1. Place that family only on multiples of the tile (the world spec's placements, checked by the validator), or
+2. phase variants: one mesh per offset (`_P0`, `_P1`, ...: `tile_project(..., offset=(k * module, 0, 0))`, projected
+   as if the piece stood k modules along), each placed where k = (x mod tile) / module; they share the material and
+   batch (audit each with `tile_offset=`), or
+3. a world-space UV shader (UVs from the world position in the vertex shader): a custom shader, allowed in VRChat
+   worlds on every platform; measure it on the mobile device. Untested here.
+
+`audit(purpose="tiling", tile_m=..., steps=[module, storey])` flags a step that is not a whole number of tiles and any
+face off tile_project's scale and phase by more than half a texel (`tile_phase`, uv-audit.md).
+
+**Pivots and turns.** `tile_project` reads each face's position in the piece's own axes, so a piece must have its
+pivot on the grid (the kit's bottom-left corner) and its scale applied. Turns in 90 deg steps and mirrored pieces are
+fine: the projection follows each face's normal, so a turned piece's faces match an unturned piece facing the same
+way, and an applied Mirror gets the right U again when re-projected.
+
+**Corners.** V is world Z on every wall face, so courses line up round any corner. U cannot continue round an outside
+corner and keep both walls' own phase (the wall thickness is not a whole number of tiles): cover the corner with a
+trim (quoins on masonry, a corner bead or pilaster on plaster), or make the corner a piece of its own whose bricks
+turn the corner in its own unique or trim UVs. Inside corners show less (shadowed); the same fixes apply.
+
+**Trims across joints.** A strip's V span equals its row's span to half a pixel (an underfilled row cuts the baked
+bevel off), both sides of a mitre map the same rows, and the strip carries nothing along U that would show a jump:
+no patches, wear or features along it, or its U is projected from the piece's axes like tiling (`tile_project` on
+those faces, then their V moved onto the row).
+
+**Curved walls, arches, spiral stairs.** A box projection stretches a face turned theta off its axis by 1 / cos theta
+(1.15 at 30 deg, the angular p95 gate; 1.41 at 45 deg) and seams where the axis switches. Unwrap them as strips:
+
+1. Seams at the piece's ends and where the curve changes (an arch's springing lines and crown).
+2. Unwrap, then Follow Active Quads (`LENGTH_AVERAGE`) from a square quad, so U runs along the curve at arc length
+   and V up the wall (on an intrados or a stair soffit, V runs along the arc and U across).
+3. `ua.set_texel_density([ob], px_per_m, map_px, pack_after=False, per_island=False, material=...)` to the family's
+   density, then move U so the piece's ends sit on whole tiles.
+4. Plan the radius so the visible arc is a whole number of tiles (*derived*: a quarter circle of radius r is
+   pi r / 2 long, so r = 2 n x tile / pi); otherwise a short tile at one end, hidden by a trim.
+5. The voussoirs or the arch's edge go on a trim strip bent along the arc. Audit `purpose="tiling"` for stretch.
+
+**Slopes and terrain.** A top-down projection (U = x, V = y, what tile_project gives faces that face up) stretches a
+slope by 1 / cos(slope): the tiling density band (0.9-1.1) fails above 25.8 deg and the angular p95 above 30 deg
+(*derived*). Project the ground from a shared origin (chunks with pivots on the tile grid, so they continue) and only
+where it is under about 25 deg; steeper ground is a separate mesh (a bank, a cliff, rocks) with a seam-based unwrap
+at the family's density and its seams in cracks and at its foot, or a world-space triplanar shader (a custom shader;
+measure it on mobile). Compute terrain normals before cutting it into chunks and weld chunk borders, or every chunk
+edge shows as a lighting line. Never `uv.randomize_uv_transform` on a surface that continues across a joint or a
+seam: each island jumps against its neighbour. Ground materials (a macro map with the tiling detail in the detail
+slot): pbr-texturing.
 
 ## Lightmap UV2
 

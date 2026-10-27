@@ -1513,7 +1513,104 @@ def layout_cuts_long_islands():
     print("INFO layout_cuts_long_islands: %.0f px/m whole, %.0f px/m cut" % (cov_whole, r["texel_px_per_m"]))
 
 
-CASES = [pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
+def wall_box(name, length, height=3.0, thick=0.3, loc=(0, 0, 0), rot_z=0.0):
+    """A grid wall piece: pivot at the bottom-left corner, extending into +X, +Y and +Z, front facing -Y."""
+    me = bpy.data.meshes.new(name)
+    v = [(x, y, z) for z in (0, height) for y in (0, thick) for x in (0, length)]
+    f = [(0, 1, 5, 4), (3, 2, 6, 7), (2, 0, 4, 6), (1, 3, 7, 5), (4, 5, 7, 6), (2, 3, 1, 0)]
+    me.from_pydata(v, [], f)
+    me.update()
+    me.uv_layers.new(name="UVMap")
+    ob = bpy.data.objects.new(name, me)
+    ob.location, ob.rotation_euler = loc, (0, 0, rot_z)
+    bpy.context.scene.collection.objects.link(ob)
+    bpy.context.view_layer.update()
+    return ob
+
+
+def world_uv_at(ob, world_pt, normal_world, tol=1e-5):
+    """UVs of the corners at world_pt on faces facing normal_world."""
+    mw = ob.matrix_world
+    out = []
+    for p in ob.data.polygons:
+        n = (mw.to_3x3() @ p.normal).normalized()
+        if n.dot(normal_world) < 0.99:
+            continue
+        for li in range(p.loop_start, p.loop_start + p.loop_total):
+            co = mw @ ob.data.vertices[ob.data.loops[li].vertex_index].co
+            if (co - world_pt).length < tol:
+                out.append(tuple(ob.data.uv_layers[0].data[li].uv))
+    return out
+
+
+def tiling_kit_continues_across_joints():
+    """A 1 m and a 2 m wall side by side and a pair turned 90 deg, a 1 m tile on a 1 m grid with 3 m storeys. Cube
+    Projection (cube_size 1) centres on each piece's bounds, so the 2 m wall starts half a tile off and tile_phase
+    flags it; tile_project puts phase 0 at every pivot and the UVs agree at every shared joint vertex."""
+    from mathutils import Vector
+    a = wall_box("WALL_1m", 1.0)
+    b = wall_box("WALL_2m", 2.0, loc=(1, 0, 0))
+    c = wall_box("WALL_1m_turned", 1.0, loc=(10, 0, 0), rot_z=math.pi / 2)
+    d = wall_box("WALL_2m_turned", 2.0, loc=(10, 1, 0), rot_z=math.pi / 2)
+    for ob in (a, b, c, d):
+        for o in bpy.context.scene.objects:
+            o.select_set(o is ob)
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.cube_project(cube_size=1.0, correct_aspect=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    left_b = [u for u, _ in world_uv_at(b, Vector((1, 0, 0)), Vector((0, -1, 0)))]
+    check(bool(left_b) and abs(abs(left_b[0] - math.floor(left_b[0])) - 0.5) < 1e-4,
+          "Cube Projection: the 2 m wall's left edge should sit half a tile off, got %s" % left_b)
+    r = ua.audit(b, purpose="tiling", map_px=512, px_per_m=512, tile_m=1.0, steps=[1.0, 3.0])
+    check(r["tile_phase"]["off_faces"] > 0 and any("tile_project" in i for i in r["issues"]),
+          "tile_phase should flag the cube-projected 2 m wall: %s" % r["issues"])
+    written = ua.tile_project([a, b, c, d], 1.0)
+    check(written == {"WALL_1m": 6, "WALL_2m": 6, "WALL_1m_turned": 6, "WALL_2m_turned": 6}, written)
+    for ob in (a, b, c, d):
+        r = ua.audit(ob, purpose="tiling", map_px=512, px_per_m=512, tile_m=1.0, steps=[1.0, 3.0])
+        check(r["issues"] == [] and r["tile_phase"]["phase_px_max"] < 1e-3, "%s: %s" % (ob.name, r["issues"]))
+    # every shared joint vertex reads the same UVs (mod whole tiles) on both pieces' fronts
+    for (p, q, pt, n) in ((a, b, (1, 0, z), (0, -1, 0)) for z in (0, 3)):
+        ua_, ub_ = world_uv_at(p, Vector(pt), Vector(n)), world_uv_at(q, Vector(pt), Vector(n))
+        check(ua_ and ub_, "no joint corner at %s" % (pt,))
+        du = np.subtract(ua_[0], ub_[0])
+        check(np.abs(du - np.round(du)).max() < 1e-5, "joint at %s: %s vs %s" % (pt, ua_, ub_))
+    for z in (0, 3):                                             # the turned pair meet at world (10, 1, z), facing +X
+        ua_, ub_ = world_uv_at(c, Vector((10, 1, z)), Vector((1, 0, 0))), world_uv_at(d, Vector((10, 1, z)),
+                                                                                       Vector((1, 0, 0)))
+        du = np.subtract(ua_[0], ub_[0])
+        check(np.abs(du - np.round(du)).max() < 1e-5, "turned joint at z %s: %s vs %s" % (z, ua_, ub_))
+    bad = ua.tile_steps_issues(4.0, [1.0, 3.0])
+    check(len(bad) == 2, bad)
+    # a 2 m tile on the 1 m grid: phase variants P0 at x 20 and P1 at x 21 continue; a second P0 at x 21 does not
+    p0, p1 = wall_box("VAR_P0", 1.0, loc=(20, 0, 0)), wall_box("VAR_P1", 1.0, loc=(21, 0, 0))
+    q0 = wall_box("VAR_P0_wrong", 1.0, loc=(21, 0, 0))
+    ua.tile_project([p0, q0], 2.0)
+    ua.tile_project([p1], 2.0, offset=(1.0, 0, 0))
+    check(ua.audit(p1, purpose="tiling", map_px=1024, px_per_m=512, tile_m=2.0, tile_offset=(1.0, 0, 0))["issues"]
+          == [], "the P1 variant audited with its offset")
+    for z in (0, 3):
+        u0 = world_uv_at(p0, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        u1 = world_uv_at(p1, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        uq = world_uv_at(q0, Vector((21, 0, z)), Vector((0, -1, 0)))[0]
+        du, dq = np.subtract(u0, u1), np.subtract(u0, uq)
+        check(np.abs(du - np.round(du)).max() < 1e-5, "variants at z %s: %s vs %s" % (z, u0, u1))
+        check(abs(dq[0] - round(dq[0])) > 0.4, "a plain copy at 21 m should jump half a tile: %s vs %s" % (u0, uq))
+    # the command line takes --tile-m and --steps
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "kit.blend")
+        bpy.ops.wm.save_as_mainfile(filepath=path, copy=True)
+        code = ua._main(["--objects", "WALL_*", "--purpose", "tiling", "--map", "512", "--td", "512",
+                         "--tile-m", "1", "--steps", "1,3"])
+        check(code == 0, "command line on tile_project's walls: exit %s" % code)
+        code = ua._main(["--objects", "WALL_*", "--purpose", "tiling", "--map", "512", "--td", "512",
+                         "--tile-m", "1", "--steps", "1,3,0.3"])
+        check(code == 1, "a 0.3 m step is not a whole number of 1 m tiles: exit %s" % code)
+
+
+CASES = [tiling_kit_continues_across_joints, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
          stack_added_triangulate, seams_by_angle_matches_select_sharp, text_up_attribute_in_world_space,
          trim_sheet_2048x1024, material_filter_and_command_line, stack_faces_names_the_causes,
          lightmap_lods_at_their_own_footprint, hard_edges_route_a_boolean, modular_wall_mixed_materials,

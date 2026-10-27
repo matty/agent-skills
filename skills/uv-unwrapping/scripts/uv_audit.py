@@ -12,6 +12,7 @@ plain Python with numpy and no bpy, which is how the repo's tests check it.
     ua.seams_from_hard_edges(objs)                                  # a seam on every hard edge
     ua.apply_stack(ob, keep_mirror=False)                           # just before layout: a Mirror kept live
     ua.layout(objs, map_px=2048, px_per_m=512, bake=True)           # UV0: density, one pack, fit check, +1 U copies
+    ua.tile_project(kit_pieces, tile_m=1.0, material="M_EXT_*")     # tiling: phase 0 at each pivot, joints continue
     ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
     ua.audit_selected(purpose="trim", map_px="2048x1024", px_per_m=512, rows=[(0, 128), (128, 192)],
                       material="M_Trim*")                           # one material of a mixed mesh
@@ -25,7 +26,7 @@ Command line (one line per object; exit code 1 when anything needs a look, 2 for
             --purpose unique|tiling|trim|lightmap --map 1024|2048x1024|165.2 [--layer 0|1|name|active]
             [--material "M_Trim*"] [--pad 16] [--td 512]
             [--baking] [--directional] [--text] [--rows 0-128,128-192] [--lightmap-texels 20 --lightmap-scale 1]
-            [--lightmapper unity|bakery] [--lod 1] [--shared] [--json r.json]
+            [--lightmapper unity|bakery] [--lod 1] [--shared] [--tile-m 1 --steps 1,3] [--json r.json]
 
 Purposes: unique (own texture or atlas: inside 0-1, no partial overlaps, gap map/64), tiling and trim (may run
 outside 0-1 and overlap: distortion, density per island, strip direction and rows), lightmap (inside 0-1, nothing
@@ -76,6 +77,8 @@ BAKERY_AREA_FACTOR = 2.0     # Bakery sizes a renderer by the sum of |cross| ove
 BAKERY_INSET_TEXELS = 3      # Bakery's Default atlas packer insets each rect this much (engine notes)
 EFFECTIVE_DENSITY_MIN = 0.5  # Bakery: an issue when the charts get under this share of the planned texels per metre
 UNWRAP_MARGIN = 0.001       # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
+TILE_PHASE_PX = 0.5          # tile_phase: a tiling face further than this many texels from tile_project's UVs (mod
+                             # whole tiles) breaks the pattern at a joint
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
@@ -990,10 +993,89 @@ def measure_shared(named, map_px=1024, pad_px=None, purpose="unique"):
     return rep
 
 
+def tile_uv(p, n, tile_m):
+    """tile_project's box projection: UVs for positions p (k, 3) in the piece's own axes (metres from its pivot,
+    scale applied) on a face whose normal in those axes is n. The normal's largest component picks the plane (ties:
+    X, then Y, then Z); U runs to the right seen from the front of the face and V up (Z on walls, +Y on floors and
+    ceilings), one tile per tile_m metres, phase 0 at the pivot. Pieces whose pivots sit on a grid whose step is a
+    whole number of tiles therefore continue the pattern across every joint, whatever their size or turn."""
+    p = np.asarray(p, float).reshape(-1, 3)
+    n = np.asarray(n, float)
+    ax = int(np.argmax(np.abs(n)))
+    s = 1.0 if n[ax] >= 0 else -1.0
+    if ax == 0:
+        u, v = s * p[:, 1], p[:, 2]
+    elif ax == 1:
+        u, v = -s * p[:, 0], p[:, 2]
+    else:
+        u, v = s * p[:, 0], p[:, 1]
+    return np.stack([u, v], axis=1) / float(tile_m)
+
+
+def tile_steps_issues(tile_m, steps):
+    """Issues for placement steps (metres: the grid module along walls and floors, the storey height up them) that
+    are not whole numbers of tiles: a piece placed one step along restarts the pattern part-way through a tile."""
+    out = []
+    for step in steps or ():
+        r = float(step) / float(tile_m)
+        if r < 1.0 - 1e-6 or abs(r - round(r)) > 1e-6:
+            out.append("placement step %g m is not a whole number of %g m tiles (%.3g): the pattern jumps at every "
+                       "joint; use a tile that divides the step, or place the family only on multiples of the tile"
+                       % (step, tile_m, r))
+    return out
+
+
+def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX, offset=(0.0, 0.0, 0.0)):
+    """How far a tiling layout sits from tile_project's, per face, in texels after whole tiles are taken off (the
+    pattern only needs to agree mod 1). d: the flat arrays (_arrays); frame: (R, t), the piece's rotation (unit
+    columns) and pivot, to bring world positions into its own axes (None: d's positions already are). A face off by
+    more than limit_px breaks the pattern where it meets a neighbour; one that fits with U negated is reported as
+    mirrored (the pattern reads backwards and its joints show as a mirror line). offset: a phase variant's, as
+    given to tile_project."""
+    w, h = map_size(map_px)
+    co = np.asarray(d["co"], float)
+    if frame is not None:
+        rot, t = frame
+        co = (co - np.asarray(t, float)) @ np.asarray(rot, float)
+    normals = _poly_normals(dict(d, co=co))
+    co = co + np.asarray(offset, float)
+    exp = np.empty((len(d["lv"]), 2))
+    for f in range(len(d["ls"])):
+        sl = slice(int(d["ls"][f]), int(d["ls"][f] + d["lt"][f]))
+        exp[sl] = tile_uv(co[d["lv"][sl]], normals[f], tile_m)
+    scale = np.array([w, h], float)
+
+    def off(e):
+        # per face: the first corner's offset mod 1 (the phase), and how far each other corner's offset differs from
+        # it, not mod 1 (a wrong scale or a mirror; on whole-tile corners a mirrored U still lands on whole numbers)
+        if not len(d["ls"]):
+            return np.zeros(0)
+        delta = d["uv"] - e
+        first = delta[np.repeat(d["ls"], d["lt"])]
+        phase = np.abs(first - np.round(first)) * scale
+        spread = np.abs(delta - first) * scale
+        return np.maximum.reduceat(np.maximum(phase, spread).max(axis=1), d["ls"])
+
+    err = off(exp)
+    mir = off(exp * np.array([-1.0, 1.0]))
+    bad = err > limit_px
+    mirrored = bad & (mir <= limit_px)
+    issues = tile_steps_issues(tile_m, steps)
+    if mirrored.any():
+        issues.append("%d tiling faces mirrored against tile_project (U reads backwards): re-project with "
+                      "tile_project" % int(mirrored.sum()))
+    if (bad & ~mirrored).any():
+        issues.append("%d of %d tiling faces off tile_project's scale and phase by up to %.1f px (limit %.1f): the "
+                      "pattern jumps where they meet a neighbour; re-project with tile_project(tile_m=%g)"
+                      % (int((bad & ~mirrored).sum()), len(err), float(err[bad & ~mirrored].max()), limit_px, tile_m))
+    return {"tile_m": float(tile_m), "faces": int(len(err)), "phase_px_max": round(float(err.max()), 3) if len(err)
+            else 0.0, "off_faces": int(bad.sum()), "mirrored_faces": int(mirrored.sum()), "issues": issues}
+
+
 # ----------------------------------------------------------------------------------------------- audit (bpy)
 def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None, baking=False, lightmap=False,
           directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, material=None, lod=None,
-          evaluated=True, raster=True, lightmapper="unity"):
+          evaluated=True, raster=True, lightmapper="unity", tile_m=None, steps=None, tile_offset=(0.0, 0.0, 0.0)):
     """Measure one object's UV map on the evaluated mesh in world space; changes nothing. purpose: unique (default),
     tiling, trim or lightmap; lightmap=True or texels_per_m makes it a lightmap audit, and either with another
     purpose raises. layer: index or name; by default 0 (UV0), or 1 for a lightmap; "active" for the active map.
@@ -1006,8 +1088,12 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
     lod: the LOD level of a lightmap audit (texel scale x LOD_SCALE^lod); None reads it from a <Piece>_LOD<n> name.
     lightmapper: whose footprint a lightmap audit uses, "unity" (default; "progressive") or "bakery" (Bakery's
     area-based rect, no LOD factor, and an issue when the charts get under half the planned texels per metre).
-    rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192"."""
+    rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192". tile_m (purpose tiling): also check every face
+    against tile_project's scale and phase (tile_phase: a kit piece's pattern continues across joints), and steps
+    (metres: grid module, storey height) for being whole numbers of tiles; tile_offset: a phase variant's offset."""
     purpose = _purpose(purpose, lightmap, texels_per_m)
+    if tile_m is not None and purpose != "tiling":
+        raise ValueError("tile_m checks a tiling layout: pass purpose='tiling'")
     layer = _resolve_layer(layer, purpose)
     if ob.mode == "EDIT":
         ob.update_from_editmode()
@@ -1027,6 +1113,12 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
                   lightmapper=lightmapper)
     if material:
         rep["material"] = material
+    if tile_m is not None:
+        m = np.array(ob.matrix_world)
+        rot = m[:3, :3] / np.maximum(np.linalg.norm(m[:3, :3], axis=0), 1e-12)
+        tp = tile_phase(d, tile_m, map_px or 1024, frame=(rot, m[:3, 3]), steps=steps, offset=tile_offset)
+        rep["tile_phase"] = {k: v for k, v in tp.items() if k != "issues"}
+        rep["issues"] = list(rep.get("issues", [])) + tp["issues"]
     return rep
 
 
@@ -1691,6 +1783,53 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
     return out
 
 
+def tile_project(objects, tile_m, layer=0, material=None, offset=(0.0, 0.0, 0.0)):
+    """Tiling UVs for kit pieces that continue across joints: a box projection from each piece's own axes, one tile
+    per tile_m metres (map_px / px_per_m), phase 0 at its pivot, U to the right seen from the front of each face and
+    V up (tile_uv). Replaces Cube Projection for kits: bpy.ops.uv.cube_project centres the projection on the
+    selection's bounds (Blender 5.2.2: a 1 m wall started at U 0.375 and a 2 m wall at 0.25 with cube_size 4), so
+    pieces of different sizes start out of phase. Positions are the mesh's own with the object's scale applied (apply
+    scale first; a pivot off the grid shifts the pattern). material: only faces whose material matches (a name or
+    pattern), the rest keep their UVs. offset (metres, the piece's axes): a phase variant, projected as if the piece
+    stood that far along (k x module for the copy placed k modules into a longer tile). Writes the mesh data, so
+    apply the stack first (apply_stack). Returns {object name: faces written}."""
+    objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for ob in objects:
+        me = ob.data
+        if layer == 0 and not me.uv_layers:
+            me.uv_layers.new(name="UVMap")
+        prev = me.uv_layers.active_index
+        lay = _set_active_layer(ob, layer)
+        try:
+            keep = _keep_faces(ob, material)
+            sc = np.array(ob.scale, float)
+            co = np.empty(len(me.vertices) * 3)
+            me.vertices.foreach_get("co", co)
+            co = co.reshape(-1, 3) * sc + np.asarray(offset, float)
+            uv = _uv_get(lay, len(me.loops))
+            n = 0
+            for p in me.polygons:
+                if keep is not None and not keep[p.index]:
+                    continue
+                corners = list(range(p.loop_start, p.loop_start + p.loop_total))
+                vs = [me.loops[i].vertex_index for i in corners]
+                normal = np.array(p.normal, float) / np.maximum(sc, 1e-12)
+                uv[corners] = tile_uv(co[vs], normal, tile_m)
+                n += 1
+            lay.uv.foreach_set("vector", uv.ravel())
+            me.update()
+            out[ob.name] = n
+        finally:
+            me.uv_layers.active_index = prev
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
 def _island_boxes(ob, lay, keep=None):
     """Islands of the mesh's own layer: id per corner, bounding boxes, unsigned and signed UV areas, UVs. keep: per
     polygon, only those faces (the corners and UVs returned are theirs; write back with _write_uv)."""
@@ -1944,6 +2083,10 @@ def _run(argv):
                     "default: read from each object's <Piece>_LOD<n> name, else 0")
     ap.add_argument("--lightmapper", default="unity", help="whose footprint a lightmap audit uses: unity (default; "
                     "progressive is the same) or bakery")
+    ap.add_argument("--tile-m", type=float, default=None, help="tiling: the tile's size in metres (map / px per m): "
+                    "every face checked against tile_project's scale and phase, so kit pieces continue at joints")
+    ap.add_argument("--steps", default=None, help="with --tile-m: placement steps in metres, e.g. 1,3 (grid module, "
+                    "storey height): each must be a whole number of tiles")
     ap.add_argument("--json", default=None, help="write the full reports here")
     ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
                     "check overlaps and gaps between them")
@@ -1964,7 +2107,8 @@ def _run(argv):
     reps = audit_objects(obs, report_path=a.json, layer=layer, map_px=map_px, pad_px=a.pad, px_per_m=a.td,
                          purpose=purpose, baking=a.baking, directional=a.directional, rows=a.rows,
                          texels_per_m=a.lightmap_texels, lightmap_scale=a.lightmap_scale, text=a.text, lod=a.lod,
-                         material=a.material, lightmapper=lightmapper_name(a.lightmapper))
+                         material=a.material, lightmapper=lightmapper_name(a.lightmapper), tile_m=a.tile_m,
+                         steps=[float(x) for x in a.steps.split(",")] if a.steps else None)
     bad = any(r["issues"] for r in reps)
     if a.shared:
         sh = audit_shared(obs, layer=layer, map_px=map_px or 1024, pad_px=a.pad, purpose=purpose,

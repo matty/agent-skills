@@ -18,7 +18,7 @@ mesh and drops the Triangulate and Weighted Normal: 12.59 deg off after export).
 
 | Surface | `purpose` | UVs |
 |---|---|---|
-| Walls, floors, terrain, large plain surfaces | `tiling` | world scale, may run far outside 0-1 (Cube Projection, section 6) |
+| Walls, floors, terrain, large plain surfaces | `tiling` | world scale from each piece's axes, may run far outside 0-1 (`tile_project`, section 6) |
 | Mouldings, frames, pipes, trims, kit edges | `trim` | straightened strips on the trim sheet's rows, U free along the strip |
 | Props and hero pieces with their own texture or a bake; objects sharing an atlas | `unique` | the order of work below, inside 0-1 |
 | Every render mesh of a kit (LODs and probe-lit props too, not `_COL`) | `lightmap` | the second UV map; its gaps and bends matter where it is lightmapped (section 9) |
@@ -37,7 +37,8 @@ per asset type as runnable Python: [references/workflows.md](references/workflow
    normals) is never shaded by angle again: seam it by angle, `ua.seams_by_angle(objs)` (`edges_select_sharp` at 30
    deg, then Mark Seam), keeping its sharp edges. A plain piece whose sharp edges nobody set (`not
    st["shading_designed"]`): `ob.data.set_sharp_from_angle(angle=math.radians(30))`, `ob.data.shade_smooth()` (this
-   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object).
+   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object). An organic baked low (rock,
+   root, sculpt) is shaded smooth whole: an angle split turns every ridge of a decimated rock into a seam.
 3. Seams (section 3); a baked piece starts with `ua.seams_from_hard_edges(objs)`.
 4. Unwrap UV0: `ob.data.uv_layers.active_index = 0`, then `bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)`.
    Without `method` it reuses the last one; at margin 0, islands that land touching along a seam fuse into one.
@@ -108,8 +109,10 @@ objects, or the odd one out looks blurry or oversharp.
   0.8-1.25x of their class; inside a piece `texel_cv` <= 0.15. The audit checks the mean and every unmarked island.
 - Blender has no texel-density tool (5.2; Average Islands Scale only evens islands): `ua.layout(..., px_per_m=...)`,
   or on a non-square trim sheet, which `layout` refuses, `ua.set_texel_density(..., pack_after=False)` (workflows).
-- Tiling: Cube Projection maps `cube_size` metres to one UV tile in object space, so `cube_size = map_px / px_per_m`
-  (2048 / 512 = 4.0, verified on 5.2.2). An unapplied scale of 2 halves the density.
+- Tiling: `ua.tile_project(objs, tile_m)`, `tile_m = map_px / px_per_m` (2048 / 512 = 4 m): a box projection from
+  each piece's axes, phase 0 at its pivot. Not Cube Projection: it centres on each selection (5.2.2: a 2 m wall began
+  half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
+  0.5 m tile, never 4 m); audit with `tile_m=`, `steps=`. Corners, curves, slopes and terrain: workflows.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
   mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
   audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.
@@ -136,7 +139,7 @@ back) caps the scale; then `--shared --material M_Fabric`.
 |---|---|
 | Tiling and trim UV0 | yes, freely |
 | Unique UV0, painted, no bake | stack identical parts and mirrored halves exactly; mirrored islands print text backwards |
-| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently |
+| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently, and copies seen together within about 1 m (identical wear on four brackets reads as a stamp) |
 | Lightmap UV | never |
 
 - Stack by face correspondence, before triangulating: `ua.stack_faces(ob, src_faces, copy_faces)` copies UVs corner by
@@ -177,6 +180,8 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 | Checker squares stretched into rectangles or diamonds | too few seams, or a projection on a curved form | seams on the curve's back line, `unwrap(method="ANGLE_BASED")`, audit |
 | Blurry here, crisp there | uneven texel density inside or between objects | `layout(px_per_m=...)`, the same px/m for neighbours |
 | A line across a flat surface | seam in view, or seam pixels not padded | move the seam to a hard edge or hidden side; pad the gap (section 7) |
+| The tiling pattern jumps at every joint between kit pieces | Cube Projection (centred per piece), or a tile that does not divide the grid step | `tile_project`; tile divides module and storey; `audit(tile_m=, steps=)` |
+| Tiling stretched on a slope, arch or curved wall | a box projection on faces far off its axis (1 / cos: 1.15 at 30 deg) | strip unwrap along the curve at the density, or a separate mesh per slope (workflows) |
 | Normal-map line along a hard edge, light leaking at corners | hard edge without a UV seam, or a bake without a cage | a seam on every hard edge (`baking=True` audit), bake with an averaged cage |
 | X-shaped shading blotches, seams only in the engine | baker and engine triangulated or computed tangents differently | triangulate before baking and export that mesh; MikkTSpace tangents in the engine |
 | Coloured fringe at island edges from a distance | gaps under `map_px / 64`, or a platform override that caps the map | `map_px / 64` gaps at the shipped size; bake dilation that fills them |
