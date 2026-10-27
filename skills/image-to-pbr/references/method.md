@@ -25,6 +25,13 @@
    affinely into the range and clip, scaling RGB by the luma ratio so the hue survives.
 3. 8-bit sRGB, dithered.
 
+Both steps work on luma: the delighting gain is one value per pixel, from the blurred luma, applied to R, G and B
+alike, and the remap scales RGB by a luma ratio (`base_colour()`). Brightness is flattened at the blur's scale and
+above; hue is not, so a greener or redder patch the size of a tile survives, and so does any patch, light or dark,
+smaller than the blur. In a tiling map such patches repeat as a grid: the `pbr-texturing` skill's tile-scale
+variation check (`pbr_check.py --tiling`, which weighs chroma) gates the result, and its tile flattener removes
+them from the whole map set.
+
 ## DeepBump route
 
 - `setup_deepbump.py` pins commit `fad19ba87dae` (2025-03-17) and the SHA-256 of `deepbump256.onnx`,
