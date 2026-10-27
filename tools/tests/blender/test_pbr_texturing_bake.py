@@ -561,6 +561,33 @@ def test_lookdev_cli_renders_maps():
     check(float(px[:, :, :3].mean()) > 0.05, "look-dev render is black")
 
 
+def test_lookdev_maps_on_an_object_from_the_eye():
+    """Hero prop F16: --object with --maps renders the exported maps in place of the object's own material (here a red
+    emission, as an EMIT bake leaves it) from --eye towards --target, and puts the material back."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.mesh.primitive_plane_add(size=1.0)
+    ob = bpy.context.active_object
+    ob.name = "P_low"
+    red = bpy.data.materials.new("M_BakeEmit")
+    red.use_nodes = True
+    nt = red.node_tree
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Color"].default_value = (1.0, 0.0, 0.0, 1.0)
+    nt.links.new(em.outputs[0], next(n for n in nt.nodes if n.type == "OUTPUT_MATERIAL").inputs["Surface"])
+    ob.data.materials.append(red)
+    base, ms = write_maps(TMP / "eye_maps", 0.3)
+    png = TMP / "eye_maps" / "eye.png"
+    code = LOOK["main"](["--object", "P_low", "--maps", str(TMP / "eye_maps" / "T_TST_*.png"), "--eye", "0", "-0.8",
+                         "0.6", "--target", "0", "0", "0", "--lens", "35", "--png", str(png), "--size", "96", "54",
+                         "--samples", "4"])
+    check(code == 0 and png.is_file(), "lookdev exit %s" % code)
+    px = PC.load(str(png))[0][:, :, :3]
+    centre = px[20:34, 40:56].reshape(-1, 3).mean(axis=0)
+    check(centre[0] < centre[1] * 1.5 + 0.05, "the bake's red material rendered, not the maps: %s" % centre)
+    check(ob.material_slots[0].material is red and "lookdev_material" not in bpy.data.materials,
+          "the object's material was not put back")
+
+
 def test_exploded_bake_keeps_close_parts_apart():
     """A body and a lid 3 mm above it, one low with a vertex group per part, each high 1 mm proud of its part and a
     bump 15 mm proud on the body's side (Body_high_bump), so the uniform cage pushes about 16 mm: baked assembled, the
@@ -655,7 +682,7 @@ for fn in (test_bake_normal_ao_curvature, test_ao_ignores_other_objects_unless_a
            test_exploded_bake_keeps_close_parts_apart,
            test_cli_bakes_a_saved_blend,
            test_lookdev_shows_roughness_and_workbench_does_not,
-           test_lookdev_cli_renders_maps):
+           test_lookdev_cli_renders_maps, test_lookdev_maps_on_an_object_from_the_eye):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

@@ -129,8 +129,9 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 3. Seams: `texture_seams.py` on every textured mesh (`seams`, base colour and normal map) and on the placed kit
    (`joints`, each tiling material): any `visible_m` blocks (`references/seamless-textures.md`).
 4. Look-dev: `blender -b --factory-startup --python-exit-code 1 --python lookdev_render.py -- --maps "<textures>/T_<FAMILY>_<Name>_*.png" --png <out>.png`
-   renders the maps under one of Blender's CC0 studio HDRIs. Workbench ignores roughness, metallic and normal maps
-   (measured: a smooth and a rough metal rendered identically): never judge materials in it.
+   renders the maps under one of Blender's CC0 studio HDRIs; then on the piece from the player's eye (`--object <low>
+   --maps ... --eye x y z --target x y z`: a pickup at 0.5 m in the hand). Workbench ignores roughness, metallic and
+   normal maps (measured: a smooth and a rough metal rendered identically): never judge materials in it.
 5. In the engine, on the platform hardest to fit: the import settings and the shader's own multipliers
    (`references/engine-notes.md`).
 
@@ -142,7 +143,7 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | `scripts/texture_seams.py` | Blender | `seams(ob, map, kind)`: the step across every UV seam against the texture's own, colour or normal (object space, MikkTSpace); `joints(objects, map)`: the same where placed pieces meet, collection instances expanded; a CLI, exit 1 when a seam shows |
 | `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
 | `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
-| `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png)` under a bundled CC0 HDRI; a CLI for maps or objects |
+| `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png, eye=, target=)` under a bundled CC0 HDRI; a CLI for maps, objects, or maps on objects from an eye point |
 
 Load a Blender script from the Blender MCP with `exec(open(path, encoding="utf-8").read(), ns)` after setting
 `ns["BAKE_MAPS_NO_MAIN"] = True` or `ns["LOOKDEV_NO_MAIN"] = True`; `pbr_check.py` imports as a module anywhere.
