@@ -15,6 +15,7 @@ Host: Blender 4.2+ (bpy, Cycles; tested on 5.2.2), run from anywhere:
 Builds its fixtures in a temp folder, prints PASS <case> / FAIL <case>: <why>, and raises if any case failed.
 """
 
+import json
 import math
 import os
 import shutil
@@ -250,6 +251,8 @@ def test_cli_bakes_a_saved_blend():
     check(run.returncode == 0, "CLI exit %d: %s" % (run.returncode, run.stdout[-800:] + run.stderr[-800:]))
     png = TMP / "cli" / "out" / "T_TST_Cli_Normal.png"
     check(png.is_file() and PC.png_header(str(png))[:2] == (64, 32), "CLI wrote no 64 x 32 normal map")
+    rep = TMP / "cli" / "out" / "T_TST_Cli_bake.json"
+    check(rep.is_file() and "cage_inside" in json.loads(rep.read_text(encoding="utf-8")), "CLI wrote no bake report")
     bad = subprocess.run(base + ["--low", "nope", "--high", "cube_high"], capture_output=True, text=True,
                          timeout=300)
     check(bad.returncode == 2, "a missing object exits %d, expected 2" % bad.returncode)
@@ -536,7 +539,10 @@ def test_exploded_bake_keeps_close_parts_apart():
     """A body and a lid 3 mm above it, one low with a vertex group per part, each high 1 mm proud of its part and a
     bump 15 mm proud on the body's side (Body_high_bump), so the uniform cage pushes about 16 mm: baked assembled, the
     lid's rays start inside the body's high and hit its top from inside (normals into the surface); bake_exploded
-    moves each part and its highs apart for the normal map, then puts every vertex and object back exactly."""
+    moves each part and its highs apart for every map (AO too: assembled, its rays land in the neighbour's high just
+    the same), then puts every vertex and object back exactly. A vertex group that is no part (Wear) is ignored; a
+    high parented to its part's high (Lid_high_knob) moves with its parent and comes back with it; one parented to
+    another part's high is refused."""
     for ob in list(bpy.data.objects):
         bpy.data.objects.remove(ob, do_unlink=True)
     bm = bmesh.new()
@@ -547,6 +553,7 @@ def test_exploded_bake_keeps_close_parts_apart():
     body, lid = low.vertex_groups.new(name="Body"), low.vertex_groups.new(name="Lid")
     body.add(list(range(n_body)), 1.0, "REPLACE")
     lid.add(list(range(n_body, len(low.data.vertices))), 1.0, "REPLACE")
+    low.vertex_groups.new(name="Wear").add(list(range(0, len(low.data.vertices), 3)), 0.5, "REPLACE")
     bpy.context.view_layer.objects.active = low
     low.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
@@ -565,9 +572,14 @@ def test_exploded_bake_keeps_close_parts_apart():
     bump = object_from_bm("Body_high_bump", bmh)
     bump.location = (0.0, -0.1 + 0.015, 0.07)                                  # stands 15 mm out of the front
     highs.append(bump)
+    bmh = bmesh.new()
+    add_box(bmh, (-0.02, -0.02, 0.181), (0.02, 0.02, 0.19), cuts=1)
+    knob = object_from_bm("Lid_high_knob", bmh)
+    knob.parent = highs[1]                                                     # parented to its own part's high
+    highs.append(knob)
     bpy.context.view_layer.update()
     parts = BAKE["parts_by_name"](low, highs)
-    check(sorted(parts) == ["Body", "Lid"] and parts["Lid"] == [highs[1]] and bump in parts["Body"], parts)
+    check(sorted(parts) == ["Body", "Lid"] and parts["Lid"] == [highs[1], knob] and bump in parts["Body"], parts)
     co0 = [v.co.copy() for v in low.data.vertices]
     mw0 = [h.matrix_world.copy() for h in highs]
     out = TMP / "exploded"
@@ -576,11 +588,18 @@ def test_exploded_bake_keeps_close_parts_apart():
           "assembled, the cage should reach into the other part: %s" % together["report"]["cage_inside"])
     apart = BAKE["bake_exploded"](low, parts, maps=("normal", "ao"), size=128, out_dir=str(out), name="T_TST_Apart")
     rep = apart["report"]
-    check(rep["exploded"]["maps"] == ["normal"] and rep["passes"]["exploded"]["cage_inside"]["neighbour"] == 0,
+    check(rep["exploded"]["maps"] == ["normal", "ao"] and list(rep["passes"]) == ["exploded"]
+          and rep["passes"]["exploded"]["cage_inside"]["neighbour"] == 0,
           "exploded, no ray may start in the other part: %s" % rep)
     check(os.path.isfile(apart["normal"]) and os.path.isfile(apart["ao"]), apart)
     check(all((v.co - c).length == 0.0 for v, c in zip(low.data.vertices, co0)), "low vertices not restored")
     check(all(h.matrix_world == m for h, m in zip(highs, mw0)), "highs not restored")
+    knob.parent = highs[0]                                                     # now under the body's high
+    try:
+        BAKE["bake_exploded"](low, parts, maps=("normal",), size=32, out_dir=str(out), name="T_TST_Cross")
+        raise AssertionError("a high parented to another part's high must be refused")
+    except ValueError as ex:
+        check("Body_high" in str(ex), ex)
     a, _ = PC.load(apart["normal"])
     b, _ = PC.load(together["normal"])
     check(float(np.abs(a[:, :, :3] - b[:, :, :3]).max()) > 0.1, "the exploded normal map should differ")

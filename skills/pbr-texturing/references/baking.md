@@ -140,13 +140,20 @@ under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read dat
 
 A low made of parts close to one another (a lid on its box, a drawer in its carcass, a bracket on a plank) shares one
 cage: where the cage reaches across the gap, rays start inside the other part's high and bake its surface, inverted,
-onto this part. Bake the normal and curvature maps exploded and the AO assembled (it wants the contact shadows):
+onto this part. Bake every map exploded, AO included: assembled, AO's rays land in the neighbour's high just the
+same, and a contact shadow is not worth a wrong surface:
 
 1. One low object, a vertex group per part (`Body`, `Lid`); each high object named `<Part>_high` (floaters
-   `<Part>_high_rivets`): `parts_by_name(low, highs)` pairs them and refuses a high with no group.
+   `<Part>_high_rivets`): `parts_by_name(low, highs)` pairs them and refuses a high with no group. Other vertex
+   groups on the low (a wear mask) are ignored. A high may be parented to its own part's high (it moves with it),
+   never to another part's: clear that parent, keeping the transform, first (the bake refuses it).
 2. `bake_exploded(low, parts, maps=("normal", "ao", "curvature"), size=..., out_dir=..., name=...)`: part k and its
-   highs move k x twice the low's diagonal along +X for the maps in `explode` (normal and curvature by default), the
-   bake runs, every vertex and object goes back exactly; then the rest bake assembled. CLI: `--explode`.
+   highs move k x twice the low's diagonal along +X for the maps in `explode` (all of them by default), the bake
+   runs, every vertex and object goes back exactly; maps left out of `explode` bake assembled. Leave "ao" out for
+   its contact shadows only when that assembled pass reports `cage_inside` neighbour 0 (parts further apart than the
+   cage reaches). CLI: `--explode`, every map exploded.
+3. The command line writes the report to `<out>/<name>_bake.json` beside the maps (from a script, save the returned
+   `report` there): QA reads `cage_inside` in every pass under `passes`.
 
 Measured (Blender 5.2.2, 2026-10-27): a body and a lid 3 mm apart, highs 1 mm proud and a bump elsewhere that made the
 uniform cage 16.5 mm: assembled, 212 of 1,512 traced cage rays started inside the other part's high (`cage_inside`

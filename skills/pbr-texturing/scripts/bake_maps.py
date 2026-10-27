@@ -23,13 +23,15 @@ As a module (Blender MCP or another script):
     paths = ns["bake_exploded"](low, ns["parts_by_name"](low, highs), size=1024, out_dir=...)  # parts close together
 
 Output: <out_dir>/<name>_Normal.png, _AO.png, _Curvature.png; returns {map: path} plus "report" (sizes, seconds, the
-cage push and how far the high polys stand out, the curvature gain used). The low poly bakes as it exports:
+cage push and how far the high polys stand out, cage_inside, the curvature gain used), which the command line also
+writes to <out_dir>/<name>_bake.json. The low poly bakes as it exports:
 modifiers applied (keep its Triangulate on, so the baker and the engine see the same triangles), through its active
 render UV layer unless uv_layer is given. The low and high polys must be in the view layer: an object in an excluded
 or disabled collection is not evaluated, and its matrix_world is stale (identity after a load).
 """
 
 import argparse
+import json
 import os
 import struct
 import sys
@@ -689,15 +691,18 @@ def parts_by_name(low, highs):
     return parts
 
 
-def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("normal", "curvature"), distance=None,
+def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("normal", "ao", "curvature"), distance=None,
                   **kw):
     """Bake a low poly made of parts that sit close together (a lid on a body, brackets on planks) so no part's rays
     catch another part's high poly: parts {low vertex group: [its highs]} (parts_by_name builds it from <Part>_high
-    names). For the maps in `explode`, part k (in name order) and its highs move k x distance along +X (default twice
-    the low's diagonal), bake() runs, and every vertex and object goes back exactly where it was; the other maps (AO
-    by default: it wants the contact shadows between parts) bake with everything assembled. Low vertices in no group
-    stay put with part 0. kw: bake()'s options (size, out_dir, name, cage, ...). Returns bake()'s dict, its report
-    with "exploded" (the maps and the distance) and one report per pass."""
+    names). For the maps in `explode` (all three by default), part k (in name order) and its highs move k x distance
+    along +X (default twice the low's diagonal), bake() runs, and every vertex and object goes back exactly where it
+    was; maps left out of `explode` bake with everything assembled. AO assembled keeps the contact shadows between
+    parts but lets a part's rays land on its neighbour's high, the fault exploding prevents: leave "ao" out only when
+    the assembled pass's cage_inside neighbour count is 0. Low vertices in no part group (or only in other groups)
+    stay put with part 0. Only highs with no high among their parents move (their children follow), and a high
+    parented to another part's high is refused. kw: bake()'s options (size, out_dir, name, cage, ...). Returns
+    bake()'s dict, its report with "exploded" (the maps and the distance) and one report per pass."""
     names = sorted(parts)
     gi = {g.name: g.index for g in low.vertex_groups}
     missing = [n for n in names if n not in gi]
@@ -706,12 +711,24 @@ def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("norm
     highs = [h for n in names for h in parts[n]]
     if len(set(highs)) != len(highs):
         raise ValueError("a high poly is listed under two parts")
+    part_of = {h: k for k, n in enumerate(names) for h in parts[n]}
+    roots = []
+    for h in highs:
+        up = h.parent
+        while up is not None and up not in part_of:
+            up = up.parent
+        if up is None:
+            roots.append(h)
+        elif part_of[up] != part_of[h]:
+            raise ValueError("%s is parented to %s, a high of another part: clear its parent (keep transform) "
+                             "before an exploded bake" % (h.name, up.name))
     me = low.data
+    group_part = {gi[n]: k for k, n in enumerate(names)}
     member = np.full(len(me.vertices), -1, np.int64)
     for v in me.vertices:
         for g in v.groups:
-            if g.weight > 0 and g.group in gi.values():
-                k = names.index(next(n for n in names if gi[n] == g.group))
+            k = group_part.get(g.group)
+            if g.weight > 0 and k is not None:
                 if member[v.index] not in (-1, k):
                     raise ValueError("vertex %d of %s is in two part groups" % (v.index, low.name))
                 member[v.index] = k
@@ -723,7 +740,7 @@ def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("norm
         co = np.empty(len(me.vertices) * 3)
         me.vertices.foreach_get("co", co)
         keep_co = co.copy()
-        keep_mw = {h.name: h.matrix_world.copy() for h in highs}
+        keep_basis = {h.name: h.matrix_basis.copy() for h in roots}
         inv = np.array(low.matrix_world.inverted().to_3x3())
         try:
             shift = np.zeros((len(me.vertices), 3))
@@ -731,18 +748,17 @@ def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("norm
             shift[:, 0] = ks * dist
             me.vertices.foreach_set("co", (co.reshape(-1, 3) + shift @ inv.T).ravel())
             me.update()
-            for k, n in enumerate(names):
-                for h in parts[n]:
-                    m = h.matrix_world.copy()
-                    m.translation.x += k * dist
-                    h.matrix_world = m
+            for h in roots:
+                m = h.matrix_world.copy()
+                m.translation.x += part_of[h] * dist
+                h.matrix_world = m
             bpy.context.view_layer.update()
             r = bake(low, highs, maps=tuple(first), **kw)
         finally:
             me.vertices.foreach_set("co", keep_co)
             me.update()
-            for h in highs:
-                h.matrix_world = keep_mw[h.name]
+            for h in roots:
+                h.matrix_basis = keep_basis[h.name]
             bpy.context.view_layer.update()
         reports["exploded"] = r.pop("report")
         out.update(r)
@@ -774,7 +790,7 @@ def main(argv):
     ap.add_argument("--uv-layer")
     ap.add_argument("--gpu", action="store_true")
     ap.add_argument("--explode", action="store_true", help="parts close together: pair <Part>_high objects with the "
-                    "low's <Part> vertex groups and bake normal and curvature with the parts moved apart (AO assembled)")
+                    "low's <Part> vertex groups and bake every map with the parts moved apart")
     a = ap.parse_args(argv)
     obs = bpy.data.objects
     missing = [n for n in [a.low] + a.high if n not in obs]
@@ -800,7 +816,10 @@ def main(argv):
     for m, p in res.items():
         if m != "report":
             print("[bake] %s -> %s" % (m, p))
-    print("[bake] report %s" % res["report"])
+    rp = os.path.join(a.out, "%s_bake.json" % (a.name or a.low))
+    with open(rp, "w", encoding="utf-8") as f:
+        json.dump(res["report"], f, indent=1)
+    print("[bake] report %s -> %s" % (res["report"], rp))
     return 0
 
 
