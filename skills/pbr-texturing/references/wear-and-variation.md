@@ -54,7 +54,7 @@ another period from another layer.
 
    | Layer | Carries | Where it works |
    |---|---|---|
-   | A unique macro map on the main UV with the tiling detail in the detail slot (main albedo low-resolution, unique; Detail Albedo x2 and Detail Normal tiled) | Large-scale colour, wear and zones over a whole surface | One mesh that is not instanced: terrain, a ground plane, a long wall built as one piece. Unity Standard and VRChat's Standard Lite both have the slots (`references/engine-notes.md`) |
+   | A unique macro map on the main UV with the tiling detail in the detail slot (main albedo low-resolution, unique; Detail Albedo x2 and Detail Normal tiled) | Large-scale colour, wear and zones over a whole surface | One mesh that is not instanced: terrain, a ground plane, a long wall built as one piece. Unity Standard and VRChat's Standard Lite both have the slots (`references/engine-notes.md`); the ground recipe: `references/terrain-and-ground.md` |
    | Piece variants (`_A`, `_B`, `_C`) with different wear, stains or panel layouts | Variation between copies of a kit piece | Every shader; placed by the rule in the kit variation policy below |
    | Decals and props | One-off marks, interrupting long runs | Every shader; at irregular intervals |
    | The baked lightmap and its probes | Light falloff, bounce colour, occlusion | Every lightmapped surface: it already breaks a repeat, so do not flatten the lighting |
