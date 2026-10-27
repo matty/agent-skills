@@ -54,8 +54,10 @@ shading is what lands in the normal map. *Measured* against a reference bake of 
 So:
 
 1. **Shade smooth, with every fold sharp.** Never smooth across a fold (a cap, a panel edge, a boolean rim): the
-   whole face bakes tilted. Never flat-shade a curved part: its facets bake as stripes. Density beyond what the
-   silhouette needs adds nothing to a cleanly shaded surface (16 and 128 sides baked the same).
+   whole face bakes tilted. Never flat-shade a curved part: its facets bake as stripes. For the normal map, density
+   beyond what the silhouette needs adds nothing to a cleanly shaded surface (16 and 128 sides baked the same); a
+   high that also feeds `pbr-texturing`'s Pointiness curvature bake is cut to a grid of about 2 bake texels before
+   its bevels and booleans (sparse, its flat panels read 0.63 instead of 0.5: measured on a crate).
 2. **Voxel remesh leaves stair-step ripple** in the bake. A Smooth modifier (factor 0.5, 10 iterations) roughly halved
    it at 4 mm voxels (p50 0.38 to 0.20 deg); Corrective Smooth and Laplacian Smooth at their defaults changed nothing
    measurable. Remesh only what booleans and bevels cannot do, at a voxel size of about a third of the smallest
@@ -67,7 +69,9 @@ So:
 4. **The high covers every face of the low.** A ray that finds no high leaves the map flat there: a missing back or
    underside bakes as a flat patch with a seam round it.
 5. **Real sizes.** Bolts, rivets, grooves and beads at their real sizes (`real-world-sizes.md`); a groove narrower
-   than 3 texels does not survive the bake.
+   than 3 texels does not survive the bake, and one with square walls and sharp rims bakes flat whatever its width
+   (a 3 mm groove read exactly 0, 0, 1 across: every ray lands on a face parallel to the low). Give grooves and panel
+   lines meant for the normal map walls under about 45 deg (a V or a round section) or rims rounded 3 texels wide.
 
 Check it before baking: a close-up of the high alone under a reflective matcap (`review_render.render`, matcap): no
 ripples, pinches round poles, streaks along long triangles or facets on curves.
@@ -86,10 +90,13 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
    low_outside 2.0 mm.
 2. **Skew.** The cage casts its rays along the low's vertex normals averaged across each face, so on a face whose
    corners lean, projected detail lands shifted by about relief x tan(angle) (15 deg moves 10 mm of relief 2.7 mm).
-   `bake_skew(low)` gives the share of the low's area where the rays lean more than 15 deg. *Measured*: a hard 1 m box
-   93% (up to 54.7 deg at its corners); the same box with a 5 cm, three-segment bevel 3.7%; a 16-sided cylinder none
-   (half its 22.5 deg facet angle). Where baked detail sits on a leaning face, add the chamfer or support loop to the
-   low; keep the share small where it carries detail (*practice*: under 10%).
+   `bake_skew(low, highs=highs, faces=seen)` gives the share of the seen faces' area where a ray leans more than 15
+   deg from the high's surface where it lands (without `highs`, from the low's own face, which fails a correct
+   cylinder: an 8-sided handle read 40% against its faces, 0 against its round high). *Measured* against the low's
+   faces: a hard 1 m box 93% (up to 54.7 deg at its corners); the same box with a 5 cm, three-segment bevel 3.7%.
+   Where baked detail sits on a leaning face, add the chamfer or support loop to the low; keep the share small where
+   it carries detail (*practice*: under 10%). No shells passing into each other inside one low (a hinge leaf through
+   its knuckle): their cage rays start inside each other's high.
 3. **Hard edges and seams.** A hard edge only where the low folds (about 90 deg or more on hard surface), every one of
    them a UV seam (`uv-unwrapping`); an organic low is shaded smooth whole.
 4. **Triangulated as it exports**: a Triangulate modifier (Minimum Vertices 4, Keep Normals) live during the bake, so
@@ -130,11 +137,11 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 
 | Check | Pass |
 | --- | --- |
-| `topology_audit.audit(low)` and `problems()` | clean (no n-gons on the low, no open edges where faces are seen) |
+| `topology_audit.audit_stack(low)` (the low keeps its Triangulate live for the bake; plain `audit()` counts the triangulated chamfer strips as slivers) | clean (no n-gons on the low, no open edges where faces are seen) |
 | A reflective matcap close-up of the high | no ripples, pinches, streaks or facets |
 | `review_render.compare("Body_high", "Chest_low", views, out)` (object names, one high at a time: the part's main high) | silhouettes match from every view the player has (`mismatch` per view) |
-| `high_low_gap(low, highs)` at the nearest distance d | `low_outside_max` at most `min_width_m(d)`; `high_outside_p99` at most `stereo_relief_m(d)` |
-| `bake_skew(low)` | under 10% of the area over 15 deg where detail is baked (*practice*) |
+| `high_low_gap(low, highs)` at the nearest distance d (raise `samples` until fine panel lines are hit: 60,000 found a 3 mm groove on a 2 m box that 8,000 missed) | `low_outside_max` (bulges of the low) at most `min_width_m(d)`; `high_outside_p99` and `recess_max` (grooves and dents of the high the low spans) at most `stereo_relief_m(d)` |
+| `bake_skew(low, highs=highs, faces=seen)` | under 10% of the seen area over 15 deg where detail is baked (*practice*) |
 | After the bake | the bake report (`<name>_bake.json`) has `cage_inside` own and neighbour 0 in every pass; `pbr-texturing`'s seam check on the normal map shows no seam |
 
 **Where the normal map does not draw.** VRChat's Standard Lite (Quest, iOS) does not sample the normal map on a

@@ -530,9 +530,10 @@ def determinism_hash(ob, digits=5):
 
 # ---- high and low poly ---------------------------------------------------------------------------------------------
 
-def _world_mesh(ob, dg):
-    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space.
-    A mirrored object (negative scale) has its triangles' winding reversed so they still face outward."""
+def _world_mesh(ob, dg, with_poly=False):
+    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space,
+    and with_poly each triangle's polygon index. A mirrored object (negative scale) has its triangles' winding
+    reversed so they still face outward."""
     import numpy as np
     ev = ob.evaluated_get(dg)
     me = ev.to_mesh()
@@ -552,6 +553,10 @@ def _world_mesh(ob, dg):
         if np.linalg.det(mw[:3, :3]) < 0:
             tri = tri[:, ::-1].copy()
         area = 0.5 * np.linalg.norm(np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]]), axis=1)
+        if with_poly:
+            tpoly = np.empty(len(me.loop_triangles), np.int64)
+            me.loop_triangles.foreach_get("polygon_index", tpoly)
+            return co, tri, area, vn, tpoly
         return co, tri, area, vn
     finally:
         ev.to_mesh_clear()
@@ -593,10 +598,14 @@ def high_low_gap(low, highs, depsgraph=None, samples=20000, seed=0):
     map, and how far the cage must reach); low_outside, how far the low stands outside every high (a silhouette the
     high does not have). The highs are one surface, sampled by area (`samples` points each side): splitting a high
     into two objects or adding rivets changes nothing. Percentiles (p99, p999) come from the area samples, max from
-    those and every vertex. Judge them at the nearest viewing distance d with detail_scale.py: low_outside_max above
-    min_width_m(d) (2 px) is a bulge the player sees round the silhouette that the texture cannot explain (a 4 cm
-    bump on 0.6% of a low read p99 0); high_outside_p99 above stereo_relief_m(d) is relief that shows depth and
-    belongs in the low's geometry. Raises ValueError for a low or high with no faces. Read-only."""
+    those and every vertex. Where the low stands outside the high, a point whose surroundings on the low (3 x its
+    distance away, at least 2 mm) meet the high again lies over a recess of the high (a groove, a panel line, a dent:
+    relief the bake carries), the rest is a bulge of the low. Judge them at the nearest viewing distance d with
+    detail_scale.py: low_outside_max (bulges only) above min_width_m(d) (2 px) is a silhouette the player sees that
+    the texture cannot explain (a 4 cm bump on 0.6% of a low read p99 0); high_outside_p99 and recess_max above
+    stereo_relief_m(d) are relief that shows depth and belongs in the low's geometry (a crate's 1.5 mm V grooves are
+    recesses, not bulges). low_outside_raw_max is the largest before that split. Raises ValueError for a low or high
+    with no faces. Read-only."""
     import bpy
     import numpy as np
     from mathutils.bvhtree import BVHTree
@@ -614,37 +623,96 @@ def high_low_gap(low, highs, depsgraph=None, samples=20000, seed=0):
     tree = lambda co, tri: BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in tri])
     low_tree, high_tree = tree(lo[0], lo[1]), tree(hco, htri)
     hs = np.maximum(_signed_outside(_surface_samples(hco, htri, harea, samples, seed), [low_tree]), 0.0)
-    ls = np.maximum(_signed_outside(_surface_samples(lo[0], lo[1], lo[2], samples, seed), [high_tree]), 0.0)
+    lpts = _surface_samples(lo[0], lo[1], lo[2], samples, seed)
+    ls = np.maximum(_signed_outside(lpts, [high_tree]), 0.0)
     hv = np.maximum(_signed_outside(hco, [low_tree]), 0.0)
     lv = np.maximum(_signed_outside(lo[0], [high_tree]), 0.0)
+    bulge, recess = _split_recesses(np.vstack([lpts, lo[0]]), np.concatenate([ls, lv]), low_tree, high_tree)
     r = lambda v: round(float(v), 5)
     pct = lambda v, q: r(np.percentile(v, q)) if len(v) else 0.0
     return {"high_outside_max": r(max(hs.max(initial=0.0), hv.max(initial=0.0))),
             "high_outside_p99": pct(hs, 99), "high_outside_p999": pct(hs, 99.9),
-            "low_outside_max": r(max(ls.max(initial=0.0), lv.max(initial=0.0))),
+            "low_outside_max": r(bulge), "recess_max": r(recess),
+            "low_outside_raw_max": r(max(ls.max(initial=0.0), lv.max(initial=0.0))),
             "low_outside_p99": pct(ls, 99), "low_outside_p999": pct(ls, 99.9),
             "points": [int(len(hs) + len(hv)), int(len(ls) + len(lv))]}
 
 
-def bake_skew(low, limit_deg=15.0, depsgraph=None):
+def _split_recesses(points, outside, low_tree, high_tree, cap=4000, floor=1e-4):
+    """(largest bulge, largest recess) among the low points standing outside the high, worst first: around a point
+    at distance d, eight points 3 d away (at least 2 mm) on the low's surface; if any of them lies within d / 4 of the
+    high, the high comes back up there and the point sits over a recess. The first bulge found is the largest; at
+    most `cap` points are classified."""
+    import math
+    import numpy as np
+    from mathutils import Vector
+    order = np.argsort(-outside)
+    recess = 0.0
+    for n, i in enumerate(order):
+        d = float(outside[i])
+        if d <= floor or n >= cap:
+            return (d if n >= cap else 0.0), recess
+        p = Vector(points[i])
+        loc, nrm, _f, _dist = low_tree.find_nearest(p)
+        if loc is None:
+            return d, recess
+        t1 = nrm.orthogonal().normalized()
+        t2 = nrm.cross(t1)
+        rad = max(3.0 * d, 0.002)
+        back = False
+        for k in range(8):
+            a = 2.0 * math.pi * k / 8
+            q = low_tree.find_nearest(loc + rad * (math.cos(a) * t1 + math.sin(a) * t2))[0]
+            h = high_tree.find_nearest(q) if q is not None else (None,)
+            if h[0] is not None and float((q - h[0]).dot(h[1])) < 0.25 * d:
+                back = True
+                break
+        if not back:
+            return d, recess
+        recess = max(recess, d)
+    return 0.0, recess
+
+
+def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None):
     """Where a bake's rays leave a low poly at a slant. A cage built from averaged normals (Blender's Selected to
     Active with a cage, and bake_maps.py) casts each ray along the vertex normals interpolated across the triangle, so
-    at each of 15 barycentric points per triangle this takes the angle between that interpolated normal and the face
+    at each of 15 barycentric points per triangle this takes the angle between that interpolated normal and the
+    surface it lands on: the high's normal at the nearest high point when highs are given (what skews detail: a
+    cylinder low built to the chord rule sends radial rays onto a round high and reads 0), else the low face's own
     normal. Detail projected along a slanted ray lands shifted ("skewed") by about relief x tan(angle): 15 deg moves
-    10 mm of relief 2.7 mm. Returns the share of the low's area over limit_deg, the area-weighted p95 angle and the
-    worst faces' centres. Read-only."""
+    10 mm of relief 2.7 mm. faces: the low's polygon indices to judge (the faces a player sees; default all).
+    Returns the share of the judged area over limit_deg, the area-weighted p95 angle and the worst faces' centres.
+    Read-only."""
     import bpy
     import numpy as np
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
     dg = depsgraph or bpy.context.evaluated_depsgraph_get()
-    co, tri, area, vn = _world_mesh(low, dg)
+    co, tri, area, vn, tpoly = _world_mesh(low, dg, with_poly=True)
+    if faces is not None:
+        keep = np.isin(tpoly, np.asarray(list(faces), np.int64))
+        tri, area = tri[keep], area[keep]
     if not len(tri):
-        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": []}
+        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": [], "against": "none"}
     fn = np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]])
     fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
     bary = np.array([(i / 4.0, j / 4.0, 1.0 - (i + j) / 4.0) for i in range(5) for j in range(5 - i)])
     n = np.einsum("pk,tkc->tpc", bary, vn[tri])                     # (triangles, 15 points, 3)
     n /= np.maximum(np.linalg.norm(n, axis=2, keepdims=True), 1e-12)
-    ang = np.degrees(np.arccos(np.clip((n * fn[:, None, :]).sum(axis=2), -1.0, 1.0)))
+    if highs:
+        hs = [_world_mesh(h, dg) for h in highs]
+        offs = np.cumsum([0] + [len(h[0]) for h in hs])
+        tree = BVHTree.FromPolygons([tuple(c) for c in np.vstack([h[0] for h in hs])],
+                                    [tuple(int(i) for i in t) for t in np.vstack([h[1] + o for h, o in zip(hs, offs)])])
+        pts = np.einsum("pk,tkc->tpc", bary, co[tri])
+        ref = np.empty_like(n)
+        for ti in range(len(tri)):
+            for pi in range(len(bary)):
+                hit = tree.find_nearest(Vector(pts[ti, pi]))
+                ref[ti, pi] = tuple(hit[1]) if hit[0] is not None else fn[ti]
+    else:
+        ref = np.repeat(fn[:, None, :], len(bary), axis=1)
+    ang = np.degrees(np.arccos(np.clip((n * ref).sum(axis=2), -1.0, 1.0)))
     w = np.repeat(area[:, None] / len(bary), len(bary), axis=1)
     flat, wf = ang.ravel(), w.ravel()
     order = np.argsort(flat)
@@ -654,5 +722,6 @@ def bake_skew(low, limit_deg=15.0, depsgraph=None):
     worst = np.argsort(-mean_t)[:5]
     centre = co[tri].mean(axis=1)
     return {"over_share": round(float(wf[flat > limit_deg].sum() / max(wf.sum(), 1e-12)), 4), "p95_deg": round(p95, 2),
-            "limit_deg": limit_deg, "worst": [(round(float(mean_t[i]), 1), [round(float(x), 3) for x in centre[i]])
-                                              for i in worst if mean_t[i] > limit_deg]}
+            "limit_deg": limit_deg, "against": "high" if highs else "low faces",
+            "worst": [(round(float(mean_t[i]), 1), [round(float(x), 3) for x in centre[i]])
+                      for i in worst if mean_t[i] > limit_deg]}

@@ -1076,6 +1076,16 @@ def test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split():
     c = ns["high_low_gap"](flat, [panel], samples=8000)
     d = ns["high_low_gap"](flat, [panel] + rivets, samples=8000)
     check(abs(c["high_outside_p99"] - 0.02) < 1e-3 and abs(d["high_outside_p99"] - 0.02) < 1e-3, (c, d))
+    # a correct low over a high with a panel line: a 3 mm groove 1.5 mm deep in the top is a recess the bake carries,
+    # not a bulge of the low (it read as one, failing a crate lid with more panel lines)
+    grooved = _blocks("grooved_high", [((2, 1, 0.9985), (1, 0.5, 0.49925)),
+                                       ((0.9985, 1, 0.0015), (0.49925, 0.5, 0.99925)),
+                                       ((0.9985, 1, 0.0015), (1.50075, 0.5, 0.99925))])
+    g = ns["high_low_gap"](flat, [grooved], samples=60000)           # enough to land in a 3 mm groove
+    check(g["low_outside_max"] < 2e-4 and 0.0008 < g["recess_max"] <= 0.0015 + 1e-5,    # samples near the walls
+          "a groove is a recess, not a bulge: %s" % g)                                     # read under its 1.5 mm
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.04) < 1e-3, "the bump is still a bulge: %s" % r)
     try:
         ns["high_low_gap"](flat, [object_from_bmesh("faceless", bmesh.new())])
         raise AssertionError("a high with no faces must be refused")
@@ -1102,6 +1112,23 @@ def test_bake_skew_falls_with_a_bevel():
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NOTHING")
     r = ns["bake_skew"](bpy.context.active_object)
     check(r["over_share"] == 0.0 and abs(r["p95_deg"] - 11.25) < 0.05, r)
+    # an 8-sided handle built to the chord rule: against its own faces its rays lean 22.5 deg, but they leave it
+    # radially onto a round high, so against the high it is clean; a hard box still skews onto a box high
+    bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    handle = bpy.context.active_object
+    handle.data.shade_smooth()
+    bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    round_high = bpy.context.active_object
+    own, onto = ns["bake_skew"](handle), ns["bake_skew"](handle, highs=[round_high])
+    check(own["over_share"] > 0.3 and onto["over_share"] < 0.05 and onto["against"] == "high", (own, onto))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(5, 0, 0))
+    hard = bpy.context.active_object
+    bpy.ops.mesh.primitive_cube_add(size=1.002, location=(5, 0, 0))
+    box_high = bpy.context.active_object
+    check(ns["bake_skew"](hard, highs=[box_high])["over_share"] > 0.5, "a hard box still skews onto a box high")
+    top = [p.index for p in hard.data.polygons if p.normal.z > 0.9]
+    part = ns["bake_skew"](hard, faces=top)
+    check(0.5 < part["over_share"] <= 1.0, "the faces mask judges the top face alone: %s" % part)
 
 
 def test_high_poly_routes_run_headless():
