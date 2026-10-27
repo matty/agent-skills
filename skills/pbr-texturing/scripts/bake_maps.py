@@ -15,11 +15,12 @@ Command line (open the .blend that holds the meshes):
             --low PROP_Crate_Free_A --high Crate_high --size 2048 --out blender/substance/PROP/bake
             --name T_PROP_Crate --maps normal,ao,curvature [--size 1024x2048] [--cage fitted] [--supersample 2]
             [--filter-sigma 0.5] [--extrusion 0.02] [--margin 16] [--samples 64] [--ao-distance 0.2] [--bits 16]
-            [--gpu]
+            [--gpu] [--explode]
 As a module (Blender MCP or another script):
     ns = {"BAKE_MAPS_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
     paths = ns["bake"](low, [high], maps=("normal", "ao"), size=1024, out_dir=..., name="T_PROP_Crate")
     paths = ns["bake"](low, highs, size=(1024, 2048), cage="fitted")         # per-vertex cage, a tall map
+    paths = ns["bake_exploded"](low, ns["parts_by_name"](low, highs), size=1024, out_dir=...)  # parts close together
 
 Output: <out_dir>/<name>_Normal.png, _AO.png, _Curvature.png; returns {map: path} plus "report" (sizes, seconds, the
 cage push and how far the high polys stand out, the curvature gain used). The low poly bakes as it exports:
@@ -674,6 +675,85 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
     return out
 
 
+def parts_by_name(low, highs):
+    """{vertex group of low: [highs]} from names: a high called <Part>_high (or <Part>_high.001, <Part>_high_bolts)
+    belongs to the low's vertex group <Part>. Raises on a high with no matching group."""
+    groups = {g.name for g in low.vertex_groups}
+    parts = {}
+    for h in highs:
+        base = h.name.split("_high")[0] if "_high" in h.name else None
+        if base not in groups:
+            raise ValueError("%s: no vertex group %r on %s for it (name highs <Part>_high after the low's part "
+                             "groups)" % (h.name, base, low.name))
+        parts.setdefault(base, []).append(h)
+    return parts
+
+
+def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("normal", "curvature"), distance=None,
+                  **kw):
+    """Bake a low poly made of parts that sit close together (a lid on a body, brackets on planks) so no part's rays
+    catch another part's high poly: parts {low vertex group: [its highs]} (parts_by_name builds it from <Part>_high
+    names). For the maps in `explode`, part k (in name order) and its highs move k x distance along +X (default twice
+    the low's diagonal), bake() runs, and every vertex and object goes back exactly where it was; the other maps (AO
+    by default: it wants the contact shadows between parts) bake with everything assembled. Low vertices in no group
+    stay put with part 0. kw: bake()'s options (size, out_dir, name, cage, ...). Returns bake()'s dict, its report
+    with "exploded" (the maps and the distance) and one report per pass."""
+    names = sorted(parts)
+    gi = {g.name: g.index for g in low.vertex_groups}
+    missing = [n for n in names if n not in gi]
+    if missing:
+        raise ValueError("%s has no vertex groups %s" % (low.name, ", ".join(missing)))
+    highs = [h for n in names for h in parts[n]]
+    if len(set(highs)) != len(highs):
+        raise ValueError("a high poly is listed under two parts")
+    me = low.data
+    member = np.full(len(me.vertices), -1, np.int64)
+    for v in me.vertices:
+        for g in v.groups:
+            if g.weight > 0 and g.group in gi.values():
+                k = names.index(next(n for n in names if gi[n] == g.group))
+                if member[v.index] not in (-1, k):
+                    raise ValueError("vertex %d of %s is in two part groups" % (v.index, low.name))
+                member[v.index] = k
+    dist = float(distance) if distance else 2.0 * max(low.dimensions.length, 1e-3)
+    out, reports = {}, {}
+    first = [m for m in maps if m in explode]
+    rest = [m for m in maps if m not in explode]
+    if first:
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        keep_co = co.copy()
+        keep_mw = {h.name: h.matrix_world.copy() for h in highs}
+        inv = np.array(low.matrix_world.inverted().to_3x3())
+        try:
+            shift = np.zeros((len(me.vertices), 3))
+            ks = np.clip(member, 0, None)
+            shift[:, 0] = ks * dist
+            me.vertices.foreach_set("co", (co.reshape(-1, 3) + shift @ inv.T).ravel())
+            me.update()
+            for k, n in enumerate(names):
+                for h in parts[n]:
+                    m = h.matrix_world.copy()
+                    m.translation.x += k * dist
+                    h.matrix_world = m
+            bpy.context.view_layer.update()
+            r = bake(low, highs, maps=tuple(first), **kw)
+        finally:
+            me.vertices.foreach_set("co", keep_co)
+            me.update()
+            for h in highs:
+                h.matrix_world = keep_mw[h.name]
+            bpy.context.view_layer.update()
+        reports["exploded"] = r.pop("report")
+        out.update(r)
+    if rest:
+        r = bake(low, highs, maps=tuple(rest), **kw)
+        reports["assembled"] = r.pop("report")
+        out.update(r)
+    out["report"] = {"exploded": {"maps": first, "distance": round(dist, 4), "parts": names}, "passes": reports}
+    return out
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="bake_maps.py", description=__doc__.split("\n")[0])
     ap.add_argument("--low", required=True, help="the low-poly object")
@@ -693,6 +773,8 @@ def main(argv):
     ap.add_argument("--bits", type=int, choices=(8, 16), default=16)
     ap.add_argument("--uv-layer")
     ap.add_argument("--gpu", action="store_true")
+    ap.add_argument("--explode", action="store_true", help="parts close together: pair <Part>_high objects with the "
+                    "low's <Part> vertex groups and bake normal and curvature with the parts moved apart (AO assembled)")
     a = ap.parse_args(argv)
     obs = bpy.data.objects
     missing = [n for n in [a.low] + a.high if n not in obs]
@@ -704,10 +786,17 @@ def main(argv):
     except ValueError as ex:
         print("[bake] --size %s: %s" % (a.size, ex))
         return 2
-    res = bake(obs[a.low], [obs[n] for n in a.high], maps=tuple(m.strip() for m in a.maps.split(",") if m.strip()),
-               size=size, out_dir=a.out, name=a.name, supersample=a.supersample, extrusion=a.extrusion,
-               margin=a.margin, samples=a.samples, ao_distance=a.ao_distance, bits=a.bits, uv_layer=a.uv_layer,
-               curvature_gain=a.curvature_gain, gpu=a.gpu, cage=a.cage, filter_sigma=a.filter_sigma)
+    kw = dict(maps=tuple(m.strip() for m in a.maps.split(",") if m.strip()), size=size, out_dir=a.out, name=a.name,
+              supersample=a.supersample, extrusion=a.extrusion, margin=a.margin, samples=a.samples,
+              ao_distance=a.ao_distance, bits=a.bits, uv_layer=a.uv_layer, curvature_gain=a.curvature_gain, gpu=a.gpu,
+              cage=a.cage, filter_sigma=a.filter_sigma)
+    highs = [obs[n] for n in a.high]
+    try:
+        res = (bake_exploded(obs[a.low], parts_by_name(obs[a.low], highs), **kw) if a.explode
+               else bake(obs[a.low], highs, **kw))
+    except ValueError as ex:
+        print("[bake] %s" % ex)
+        return 2
     for m, p in res.items():
         if m != "report":
             print("[bake] %s -> %s" % (m, p))

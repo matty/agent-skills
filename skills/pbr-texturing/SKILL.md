@@ -46,7 +46,9 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
    it exports, so the baker and the engine see the same triangles.
 2. The high poly overlaps the low poly; protruding detail sits inside the cage (the bake reports how far it stands
    out, and how many rays start inside a high: `cage_inside`). Narrow channels, creases and upholstery take a fitted
-   cage (`--cage fitted`); thin cords and chamfers under about 3 texels wide `--filter-sigma 0.8`.
+   cage (`--cage fitted`); thin cords and chamfers under about 3 texels wide `--filter-sigma 0.8`; parts that sit close
+   together (a lid on its box) bake exploded (`--explode`, `references/baking.md`). Building the high and the low:
+   `blender-mesh-topology`.
 3. Bake with one of two measured routes (`references/baking.md`):
 
    | Route | When | Gives |
@@ -136,7 +138,7 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits; for tiling maps (`--tiling`, `--trim`) seam ratios, a windowed seam, tile-scale variation and 3 x 3 composites; exit 1 on a PROBLEM |
 | `scripts/texture_seams.py` | Blender | `seams(ob, map, kind)`: the step across every UV seam against the texture's own, colour or normal (object space, MikkTSpace); `joints(objects, map)`: the same where placed pieces meet, collection instances expanded; a CLI, exit 1 when a seam shows |
 | `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
-| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
+| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png)` under a bundled CC0 HDRI; a CLI for maps or objects |
 
 Load a Blender script from the Blender MCP with `exec(open(path, encoding="utf-8").read(), ns)` after setting

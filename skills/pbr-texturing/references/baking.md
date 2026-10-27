@@ -136,6 +136,23 @@ curvature 0.10 s):
 Blender facts behind it, measured on 5.2.2: `Image.save()` of a float image writes a 16-bit PNG; a 16-bit PNG loaded
 under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read data maps as Non-Color.
 
+## Parts that sit close together: an exploded bake
+
+A low made of parts close to one another (a lid on its box, a drawer in its carcass, a bracket on a plank) shares one
+cage: where the cage reaches across the gap, rays start inside the other part's high and bake its surface, inverted,
+onto this part. Bake the normal and curvature maps exploded and the AO assembled (it wants the contact shadows):
+
+1. One low object, a vertex group per part (`Body`, `Lid`); each high object named `<Part>_high` (floaters
+   `<Part>_high_rivets`): `parts_by_name(low, highs)` pairs them and refuses a high with no group.
+2. `bake_exploded(low, parts, maps=("normal", "ao", "curvature"), size=..., out_dir=..., name=...)`: part k and its
+   highs move k x twice the low's diagonal along +X for the maps in `explode` (normal and curvature by default), the
+   bake runs, every vertex and object goes back exactly; then the rest bake assembled. CLI: `--explode`.
+
+Measured (Blender 5.2.2, 2026-10-27): a body and a lid 3 mm apart, highs 1 mm proud and a bump elsewhere that made the
+uniform cage 16.5 mm: assembled, 212 of 1,512 traced cage rays started inside the other part's high (`cage_inside`
+neighbour); exploded, none, and every vertex and high came back to its exact position. Building the parts and their
+highs: `blender-mesh-topology`.
+
 ## Symptom, cause, fix
 
 | Symptom | Cause | Fix |
@@ -149,4 +166,5 @@ under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read dat
 | X-shaped shading or seams only in the engine | Baker and engine triangulated or computed tangents differently | Triangulate before baking; MikkT tangents on both sides |
 | Colour bleeding at island edges at a distance | Padding smaller than the mips need | `--padding_radius` / `--margin` at least half the island gap |
 | Floating parts cast AO shadows on the surface below | AO rays hit the floaters | Bake AO with name matching (`match_mesh_name`) or without the floaters |
+| One part's surface shows on its neighbour (a lid's underside on the box top, normals pointing in along a gap) | The parts share a cage that reaches across the gap | `bake_exploded`, or the Substance baker's `match_mesh_name` with `_low` / `_high` names |
 | Banding in the normal map's gradients | 8-bit master | 16-bit masters; dithered 8-bit exports |
