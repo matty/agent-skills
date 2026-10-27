@@ -113,12 +113,8 @@ objects, or the odd one out looks blurry or oversharp.
 - Tiling: Cube Projection maps `cube_size` metres to one UV tile in object space, so `cube_size = map_px / px_per_m`
   (2048 / 512 = 4.0, verified on 5.2.2). An unapplied scale of 2 halves the density.
 - Tiling and trim islands then go home: `ua.home_tiling(objs, period=1 / material tiling)` moves each by whole
-  repeats so its lowest corner sits in the first one. It samples the same texels (Wrap Mode Repeat), so it never
-  changes the look; the UV editor shows the islands on its tile, and the UVs stay small where an engine stores them
-  as FP16 (Unity's default Vertex Compression does that to UV0: engine notes). The audit fails tiling and trim UVs
-  that FP16 would round by more than 1 px when moving home would help, and notes an island too long to get there.
-  Islands longer than a repeat still run past it, as they must.
-  Never scale or `pack` a tiling layer to fit 0-1: that changes its density. Never home a unique or lightmap layer.
+  repeats, so it never changes the look and the UVs stay small where an engine stores UV0 as FP16 (the audit fails
+  what FP16 would round by over 1 px: manual). Never home a unique or lightmap layer.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
   mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
   audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.
@@ -197,21 +193,5 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 
 ## Script
 
-`scripts/uv_audit.py` (Blender 4.1+, tested on 5.2.2; no add-ons); purposes, report fields, every issue, accuracy and
-side effects: [references/uv-audit.md](references/uv-audit.md).
-
-```python
-import sys; sys.path.insert(0, r"<skill>/scripts")
-import uv_audit as ua
-st = ua.apply_stack(ob)                                            # from the top; Triangulate off until after layout
-if st["hard_surface"]: ua.seams_by_angle([ob])                     # route A / B: seams by angle, never re-shaded
-ua.seams_from_hard_edges(objs)                                     # a seam on every hard edge
-ua.apply_stack(ob, keep_mirror=False)                              # a Mirror kept live, just before the layout
-ua.layout(objs, map_px=2048, px_per_m=512, bake=True)              # UV0: density, one pack, fits, +1 U copies
-ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
-ua.pack_lightmap(objs, texels_per_m=20)                            # UV2: 2 texels at any scale; LODs at 0.5^n
-ua.audit_selected(texels_per_m=20)                                 # UV2 at its measured footprint
-```
-
-Command line (exit 1 when anything needs a look, 2 for a request it cannot audit; every flag in the manual):
-`blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --td 512`
+`scripts/uv_audit.py` (Blender 4.1+, tested on 5.2.2; no add-ons): the call order of section 2 as code, the command
+line, purposes, report fields, every issue, accuracy and side effects are in [references/uv-audit.md](references/uv-audit.md).

@@ -8,8 +8,27 @@ Every function works on UV0 unless given another layer (an index, a name, or `"a
 the lightmap calls (`pack_lightmap`, `lightmap_footprint`, and `audit` for a lightmap) default to the second map,
 index 1. Every function leaves the active UV map, the selection and the mode as it found them.
 
+## Quick start
+
+```python
+import sys; sys.path.insert(0, r"<skill>/scripts")
+import uv_audit as ua
+st = ua.apply_stack(ob)                                            # from the top; Triangulate off until after layout
+if st["hard_surface"]: ua.seams_by_angle([ob])                     # route A / B: seams by angle, never re-shaded
+ua.seams_from_hard_edges(objs)                                     # a seam on every hard edge
+ua.apply_stack(ob, keep_mirror=False)                              # a Mirror kept live, just before the layout
+ua.layout(objs, map_px=2048, px_per_m=512, bake=True)              # UV0: density, one pack, fits, +1 U copies
+ua.audit_selected(purpose="unique", map_px=2048, px_per_m=512, baking=True, directional=True)
+ua.pack_lightmap(objs, texels_per_m=20)                            # UV2: 2 texels at any scale; LODs at 0.5^n
+ua.audit_selected(texels_per_m=20)                                 # UV2 at its measured footprint
+```
+
+Command line (exit 1 when anything needs a look, 2 for a request it cannot audit; every flag below):
+`blender -b --factory-startup --python-exit-code 1 scene.blend --python uv_audit.py -- --objects "KIT_*" --map 1024 --td 512`
+
 ## Contents
 
+- Quick start
 - Functions
 - Purposes: which checks apply
 - Report fields
