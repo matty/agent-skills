@@ -10,7 +10,7 @@ the shader facts are `references/engine-notes.md`'s.
 
 | Layer | Holds | Where |
 |---|---|---|
-| Main albedo and normal: a unique **macro map** over the whole ground on UV0 (1024-2048) | Zones (grass, dirt, path, wet patches under trees), slow tonal and hue drift, large-scale forms | The main slots, UV0 with the whole ground in 0-1 |
+| Main albedo and normal: a unique **macro map** over the whole ground on UV0 (1024-2048) | Zones (grass, dirt, path, wet patches under trees), slow tonal and hue drift, large-scale forms | The main slots, UV0 with the whole ground in 0-1. A ground that is not square gets a map of its aspect in powers of two (32 x 20 m: 2048 x 1024, 1.6 against 2.0), never squeezed into a square (it measured angular p95 1.60) |
 | **Detail Albedo x2** and **Detail Normal**: a tiling ground texture centred on mid grey | The close-range grain: blades, pebbles, soil | The secondary maps, tiled by the Detail Albedo slot's own tiling on UV0 (`references/engine-notes.md`) |
 | **Detail Mask** (alpha, on the main UV) | Where the detail shows: off on paths, paving and water edges, faded where another material takes over | The main albedo's tiling |
 
@@ -25,6 +25,10 @@ the shader facts are `references/engine-notes.md`'s.
    transitions (below). Check it at its own scale with the look-dev render, not on the sheet.
 4. Keep the detail maps on mobile: they cost a sample, and they are what keeps the ground sharp when the Android and
    iOS overrides halve the macro map.
+5. The detail layer has no smoothness: the stock shaders' secondary maps are albedo and normal only (engine notes),
+   so the sheen between cobbles and mortar comes from the macro map's smoothness alone, at its coarser density. Put
+   the mortar's dark into the detail albedo (multiplied in at x2) and keep the macro smoothness moderate; a ground
+   that must read wet stone up close needs geometry or a custom shader.
 
 ## Several ground materials
 

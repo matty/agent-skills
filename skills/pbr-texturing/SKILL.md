@@ -14,7 +14,7 @@ sources so any map can be remade. Engine-neutral; what an engine reads is in `re
 | Surface | Approach | Notes |
 |---|---|---|
 | Walls, floors, large plain areas | Tiling material | One tile period per family at the family's texel density, dividing the grid step on a kit; variation from another layer (section 5) |
-| Terrain and large ground (tens of metres) | A unique macro map on the main UV with the tiling ground detail in the detail slot and a detail mask | Works with the stock shaders on every platform; several materials, transitions, slopes: `references/terrain-and-ground.md` |
+| Terrain and large ground: any one ground surface a player sees more than about 8 tile periods of in one view (*practice*; a 32 m courtyard of 1.5 m paving) | A unique macro map on the main UV with the tiling ground detail in the detail slot and a detail mask | Works with the stock shaders on every platform; several materials, transitions, slopes: `references/terrain-and-ground.md` |
 | Mouldings, frames, panel edges, pipes, kit edges | Trim sheet | Strips laid out first (`references/trim-sheets.md`); flat geometry reads bevelled from the strip's baked normals |
 | Props, hero pieces, anything with a bake | Unique texture or an atlas of several props | Mesh maps baked from a high poly (section 3); one atlas per room or kit, never global |
 | One-off marks: a plaque, a stain, a sign | Decal | A separate quad with its own small texture, never painted into a tiling map (it would repeat on every bay) |
