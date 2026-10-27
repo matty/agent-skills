@@ -304,7 +304,8 @@ from the command line) to self-check before reporting.
   pieces improved in place), add sockets. QA: A1-A5, M9.
 - `T-DRESS-<ZONE>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
   foliage), within budget. Variants ordered so no two identical ones touch and no sequence repeats; breakers
-  (pilasters, doors, trims, props, decals) at irregular spacing on runs over about four tile periods. QA: A1-A5, M9.
+  (pilasters, doors, downpipes, props, decals) at irregular spacing along any run long enough to show the repeat
+  (*practice*: one every 4-8 m along a facade, never at a fixed interval). QA: A1-A5, M9.
 
 ## 9 - Export (exporter)
 
