@@ -96,7 +96,9 @@ stitching and weave are always texture.
 - Look up any API call you have not used in this Blender version (`references/blender-techniques.md` lists the 4.x-5.x
   traps) instead of falling back to a primitive. Never "fix" a failing call by deleting the step.
 - The modifier stack and normals that make the bevels shade cleanly (Harden Normals or Weighted Normal, Triangulate)
-  are `blender-mesh-topology`'s.
+  are `blender-mesh-topology`'s. A prop that takes a bake (carving, rivets, upholstery folds, a hero piece seen within
+  1 m) is built twice, a high and a low: `blender-mesh-topology`'s high-and-low-poly reference, before any bake. A
+  part that moves (a lid, a door, a drawer) keeps the faces it reveals: an openable inside counts as seen.
 
 ## 5. Verify once
 
