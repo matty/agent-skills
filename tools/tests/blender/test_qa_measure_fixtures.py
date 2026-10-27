@@ -685,7 +685,7 @@ class Runs:
 
     def _master_phase(self):
         return self._ok(self.f["master"], ["--families", '{"TST": {"texturing": "tiling", "map_px": 1024, '
-                                           '"texel_density": 1024}}'], "master_phase")
+                                           '"texel_density": 1024, "scale_range": [0.5, 2.5]}}'], "master_phase")
 
     def _master_textured(self):
         return self._ok(self.f["master"], ["--expect-status", "textured"], "master_textured")
@@ -1155,6 +1155,8 @@ def master_tile_phase(r):
     check(pl["slab_turned"]["tile_phase"]["horizontal"] and has(rep["problems"], "slab_turned", "turned 90"),
           pl["slab_turned"])
     check(not has(rep["problems"], "slab_ok"), "an unturned slab on the grid is clean")
+    check(pl["prop_big"]["scale_band"] == [0.5, 2.5] and not has(rep["problems"], "prop_big", "scaled"),
+          "the family's scale_range lets its Free pieces vary: %s" % pl["prop_big"])
 
 
 @case

@@ -841,8 +841,9 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
             texel_map=None, lightmapper="unity", families=None):
     """Everything qa_measure reports about the open file. sub_module: the grid step for TRIM placements. lightmapper:
     the spec's lighting.baker, unity ("progressive") or bakery, whose footprint lightmap_px is. families: the spec's
-    families ({code: {texturing, map_px, texel_density, tile_phase, turn_symmetry}}): each placement of a tiling
-    family's piece gets its tile_phase against the world grid (U7)."""
+    families ({code: {texturing, map_px, texel_density, tile_phase, turn_symmetry, scale_range}}): each placement of a
+    tiling family's piece gets its tile_phase against the world grid (U7), and a Free piece its family's scale_range
+    (default FREE_SCALE_BAND) as the even scale it may take."""
     lightmapper = lightmapper_name(lightmapper)
     scene = scene or bpy.context.scene
     role = role or file_role(bpy.data.filepath)
@@ -870,6 +871,8 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
             ext = next((p.get("extent_modules") for p in pieces if p["piece"] == coll.name), None)
             tl = (_tiling(families, coll.name, module, [e * module for e in ext] if ext else None)
                   if kind == "grid" else None)
+            fam = (families or {}).get(m.group(1)) if m else None
+            band = fam.get("scale_range") if isinstance(fam, dict) else None
             places.append({
                 "object": ob.name, "asset": coll.name, "kind": kind, "linked": coll.library is not None,
                 "id": ob.get("placement_id"), "pos": [round(v, 4) for v in loc], "rot_z": round(rz, 3),
@@ -883,6 +886,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                 "right_angle": (min(r90, 90.0 - r90) < 1e-2 if kind in ("grid", "asm") else None),
                 "tile_phase": (dict(tile_phase(loc, (rz + 360.0) % 360.0, tl[0], tl[1], module, tl[2], tl[3], tl[4]),
                                     tile_m=round(tl[0], 4), horizontal=tl[3]) if tl else None),
+                "scale_band": (list(band) if band else list(FREE_SCALE_BAND)) if kind in ("free", "asm") else None,
             })
     single = scene.get("kit_layout") == "single"
     owner, layout_problems = _single_layout(scene, local, local_pieces) if single else ({}, [])
@@ -1278,11 +1282,11 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("placement %s (%s) scaled unevenly %s: its texture stretches; scale it evenly or remodel it"
                        % (pl["object"], pl["asset"], pl["scale"]))
         if pl.get("kind") in ("free", "asm") and max(sc) <= min(sc) * (1.0 + 1e-3):
-            lo, hi = FREE_SCALE_BAND
+            lo, hi = pl.get("scale_band") or FREE_SCALE_BAND
             if not lo - 1e-6 <= sc[0] <= hi + 1e-6:
-                out.append("placement %s (%s) scaled %g: its texels per metre are %.2fx the kit's (keep %g-%g): "
-                           "model it at that size, or texture it for it" % (pl["object"], pl["asset"], sc[0],
-                                                                            1.0 / sc[0], lo, hi))
+                out.append("placement %s (%s) scaled %g: its texels per metre are %.2fx the kit's (keep %g-%g, or "
+                           "the family's scale_range): model it at that size, or texture it for it"
+                           % (pl["object"], pl["asset"], sc[0], 1.0 / sc[0], lo, hi))
         if pl.get("kind") != "grid":
             continue                          # Free props and assemblies: data only, compared with the spec (A3)
         tp = pl.get("tile_phase")
