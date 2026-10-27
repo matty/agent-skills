@@ -196,6 +196,17 @@ class BaseColour(unittest.TestCase):
         px[0, :5] = (0.0, 0.0, 0.0, 1.0)                                                      # 0.05% black specks
         self.assertEqual(self.judged(px)["problems"], [])
 
+    def test_bake_background_is_left_out(self):
+        # props sweep: an EMIT bake of a unique layout leaves 15-90% of the map pure black outside its islands
+        px = rgba(0.5, 0.45, 0.4, size=(100, 100))
+        px[:, 40:] = (0.0, 0.0, 0.0, 1.0)
+        r = self.judged(px)
+        self.assertEqual(r["problems"], [])
+        self.assertAlmostEqual(r["base_color"]["background_share"], 0.6)
+        self.assertTrue(any("exactly black" in n for n in r["notes"]), r["notes"])
+        px[:, :40] = (0.06, 0.06, 0.06, 1.0)                                              # dark paint still fails
+        self.assertIn("too dark", self.judged(px)["problems"][0])
+
     def test_saturated_colour_uses_luma(self):
         self.assertEqual(self.judged(rgba(0.85, 0.12, 0.10))["problems"], [])                  # red paint, luma ~67
 
