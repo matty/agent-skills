@@ -46,7 +46,10 @@ The stock shaders have one detail slot, so one ground mesh has one detail textur
 - Hard (paving against grass, a path's edge): geometry covers it (kerbs, edging, a fringe), and the detail mask is off
   under the paving.
 - Rocks, roots and posts meeting the ground: sunk a few centimetres into it, their base darkened by a position mask
-  (`references/wear-and-variation.md`), a decal or a card fringe where a hard line would show (*practice*).
+  (`references/wear-and-variation.md`), a decal or a card fringe where a hard line would show (*practice*). On sloped
+  ground, a fence, a post or a rock is placed where it stands: its height from a ray cast down onto the ground mesh at
+  each placement, its base sunk below the lowest point it covers, never one height for a whole run (posts float
+  downhill and sink uphill). Grid pieces stay on the flat parts; ground-following pieces are Free pieces.
 
 ## Repetition on a large ground
 
