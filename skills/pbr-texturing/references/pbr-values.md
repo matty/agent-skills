@@ -96,6 +96,21 @@ Blender otherwise linearises them: a stored 0.5 reads 0.214, measured on 5.2.2).
 | Normal | Decoded vectors (2c - 1): mean length, share with Z under 0, mean X and Y, and the Y convention | Mean length outside 0.9-1.1 (not a normal map, or colour-converted on export); more than 1% of texels pointing inwards; the convention reads DirectX | Mean X or Y beyond 0.1 (the whole surface leans); convention unclear |
 | Every map | Size | Not a power of two; larger than `--map-px` | |
 | Tiling (`--tiling`) | The mean step across the wrap edges over the mean step inside, per axis | | Ratio over 1: look at the 3 x 3 composite (a smooth gradient whose steepest step lands on the edge legitimately reads about 1.6) |
+| Tiling, windowed seam | Each wrap edge in 16 windows: the worst window's mean step over the p99.9 of the same window statistic between interior pixel pairs, so a seam along a few percent of the edge is not averaged away and the texture's own strong edges (plank gaps, grout) mask a seam no stronger than they are | Over 1.5 | Over 1.0 |
+| Tiling, tile-scale variation | Base colour: blurred with wrap-around at 1/8 of the tile, the RMS OKLab distance from its mean with a and b weighted 2 (`lf`); smoothness: std of the blurred A; normal: RMS tilt of the blurred vectors | Base colour `lf` over 0.011 | `lf` over 0.006; smoothness over 0.01; tilt over 2 deg |
+| Trim sheet (`--trim`) | The same along U only: the U wrap's seams, and each row's variation against that row's own mean (strips differ on purpose) | Windowed U seam over 1.5 | Variation along the strips over 0.011 (not calibrated on trim sheets) |
+
+**Tile-scale variation, calibrated.** A seamless tile still draws a grid when one part of it is lighter, greener or
+rougher than the rest: the patch returns every period. The blur at 1/8 of the tile keeps what varies one to three
+times per tile and drops the detail; colour counts double because the eye is more sensitive to colour than to tone at
+low spatial frequencies (Mullen 1985, "The contrast sensitivity of human colour vision to red-green and blue-yellow
+chromatic gratings", J. Physiol. 359:381-400; the weight 2 is this check's choice). Calibrated 2026-10-27 on 20 Poly
+Haven 1k tiling base colours, each judged by eye in a 3 x 3 composite: the six with an obvious grid (rocks_ground_02,
+cobblestone_floor_04, aerial_grass_rock, medieval_blocks_05, weathered_brown_planks, brown_mud_leaves_01) measured
+0.0118-0.0205; ten with a milder repeat 0.0037-0.0126; four with none 0.0000-0.0088. Without the colour weight,
+brown_mud_leaves_01 (green patches on brown at much the same luma) measured 0.0074 and fell among the mild ones. The
+windowed seam of all 20 measured 0.08-1.06. What it does not see: a distinctive feature repeating (rocks_ground_02's
+large pale rocks, a crack, a plank layout): the composite and a wide view still judge those.
 
 **The Y convention.** A normal map that comes from a surface (a bake, or a height map) is the slope field of a height,
 so its two estimates of the height's mixed derivative agree for the right Y sign and are opposite for the wrong one.

@@ -75,11 +75,17 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
 - Wear goes where the object's life put it: edges (curvature), crevices (AO), tops (world-space normal up: dust),
   the bottom 20-30 cm of walls (position: splash and scuffs), around handles and switches (hand contact). Restraint:
   one story per material, at a scale that reads at the viewing distance.
-- Repetition is the giveaway of a kit: macro variation in the tiling material (low-frequency value and roughness
-  shifts at a different period from the detail), detail maps at a second scale, decals and props to break long runs,
-  and two or three visibly different variants of the most repeated pieces sharing the family material (variants cost
-  meshes, not SetPass calls).
-- Judge repetition in a wide view at eye height, not on a 3 x 3 composite alone.
+- Repetition is the giveaway of a kit. First the tile is even at its own scale: `pbr_check.py --tiling` fails a tile
+  whose patches will draw a grid (a PROBLEM; 6 of 20 Poly Haven tiles failed, each visibly), and
+  `scripts/tile_flatten.py` on the whole map set fixes it while keeping the detail. A distinctive feature inside the
+  tile (one pale stone) is retouched out or becomes a decal. Then variation comes back from another layer at
+  another period: a unique macro map with the tiling detail in the detail slot on one-piece surfaces (terrain), two
+  or three visibly different variants of the most repeated pieces sharing the family material (variants cost meshes,
+  not SetPass calls), decals and props at irregular intervals, and the lightmap.
+- On instanced kit pieces anything periodic longer than the placement step restarts at every joint: uv-unwrapping's
+  joint rule.
+- Judge repetition in a wide view at eye height as well as on the 3 x 3 composite: the check cannot see a repeated
+  distinctive feature.
 
 Detail and the mask recipes: `references/wear-and-variation.md`.
 
@@ -107,8 +113,9 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 1. Values: `python pbr_check.py "<textures>/T_*.png" --map-px <map_px>` (or inside Blender:
    `blender -b --factory-startup --python-exit-code 1 --python pbr_check.py -- "<textures>/T_*.png"`). PROBLEM lines
    block; NOTE lines are advisory. With art-direction targets, add `--targets` or `--spec world/spec.yaml`.
-2. Tiling maps: `--tiling --out <scratch>` adds the seam ratio and writes a 3 x 3 composite per map; at or below about
-   1 passes, above it look at the composite.
+2. Tiling maps: `--tiling --out <scratch>` (`--trim` for a trim sheet) adds the seams (a windowed seam over 1.5
+   blocks), the tile-scale variation (base colour `lf` over 0.011 blocks: `tile_flatten.py`) and a 3 x 3 composite
+   per map to look at for repeated features. Calibration: `references/pbr-values.md`.
 3. Look-dev: `blender -b --factory-startup --python-exit-code 1 --python lookdev_render.py -- --maps "<textures>/T_<FAMILY>_<Name>_*.png" --png <out>.png`
    renders the maps under one of Blender's CC0 studio HDRIs. Workbench ignores roughness, metallic and normal maps
    (measured: a smooth and a rough metal rendered identically): never judge materials in it.
@@ -119,7 +126,8 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 
 | Script | Host | Use |
 |---|---|---|
-| `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits, tiling-seam ratios and 3 x 3 composites; exit 1 on a PROBLEM |
+| `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits; for tiling maps (`--tiling`, `--trim`) seam ratios, a windowed seam, tile-scale variation and 3 x 3 composites; exit 1 on a PROBLEM |
+| `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
 | `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png)` under a bundled CC0 HDRI; a CLI for maps or objects |
 

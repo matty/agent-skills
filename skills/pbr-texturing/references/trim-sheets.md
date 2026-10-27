@@ -41,8 +41,9 @@ allows is `blender-mesh-topology`'s rule); model the chamfer where it shows on t
    above the tallest profile). Strips tile along U, so the profiles must run straight across the full width.
 4. Texture the strips (Designer, Painter or Blender) using the baked maps as masks; keep each strip's material
    consistent with the tiling material it meets (brick wall, stone trim).
-5. Check: `pbr_check.py --tiling` on the sheet: the U seam ratio must pass (strips tile in U); the V ratio does not
-   apply. Render a piece with the sheet applied before handing over (`scripts/lookdev_render.py --object ...`).
+5. Check: `pbr_check.py --trim` on the sheet: the U seams must pass (strips tile in U), the V wrap is not judged, and
+   variation along each strip gets a NOTE (a light patch in a skirting strip returns every period along a corridor).
+   `--tiling` would judge the strips against each other and fail every sheet. Render a piece with the sheet applied before handing over (`scripts/lookdev_render.py --object ...`).
 
 ## Decals beside the sheet
 
