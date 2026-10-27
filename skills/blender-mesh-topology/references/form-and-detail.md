@@ -93,6 +93,11 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
   crease in the shading at every such joint. Set the joint vertices' custom normals to the shared surface normal
   (`me.normals_split_custom_set_from_vertices(normals)`: measured 0 deg after) and check `joint_normals` (under about
   0.5 deg, *practice*).
+- A piece let into another at an angle (an arcade's spandrel or an engaged column against a round tower, a buttress
+  against a wall) is a masonry abutment, not an edge-to-edge joint: it may run a few centimetres into its neighbour,
+  every face it buries hidden, but no face of it may lie in the neighbour's face plane. An engaged column's capital
+  and base stand proud of the wall face or are let into it, never flush (a capital flush with the wall z-fought
+  through the brick, measured in a dry run); QA reports such faces between placements.
 - Openings keep their greybox size; frames and reveals go inside them, the lining flush with the wall face (*practice*).
 
 ## 5. Imperfection without breaking the kit
