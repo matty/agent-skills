@@ -101,12 +101,28 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 - One low object per texture set, a vertex group per part (`Body`, `Lid`, `Bracket_L`), and every high object named
   `<Part>_high` (`Lid_high`, `Body_high_rivets`): floaters belong to the part they lie on.
 - Parts that sit close together (a lid on its box, a drawer in its carcass, a bracket on a plank) bake **exploded**:
-  each part and its highs moved apart for the normal and curvature maps, assembled for AO so the contact shadows stay.
-  `pbr-texturing`'s `bake_exploded(low, parts_by_name(low, highs))` does this and puts everything back. *Measured*: a
+  each part and its highs moved apart for every map, AO included (assembled, its rays land in the neighbour's high
+  too). `pbr-texturing`'s `bake_exploded(low, parts_by_name(low, highs))` does this and puts everything back; a high
+  may be parented to its own part's high, never another part's. *Measured*: a
   body and a lid 3 mm apart, highs 1 mm proud and a 16.5 mm cage (a bump elsewhere): assembled, 212 of 1,512 cage rays
   started inside the other part's high (normals pointing into the lid); exploded, none.
 - Stacked or mirrored parts follow `uv-unwrapping`'s bake layout (one copy in 0-1); copies seen together close up get
   their own UVs so their wear differs.
+- **One scene for the gate and the bake.** Where the highs live in their own file (a kit keeps them out of its kit
+  and master files), open that file and append the current low into it, removing an older appended copy first so
+  the name stays (*measured*, 5.2.2: name, vertex groups, modifiers and UV maps come across):
+
+  ```python
+  old = bpy.data.objects.get(low_name)
+  if old is not None:
+      bpy.data.objects.remove(old, do_unlink=True)
+  with bpy.data.libraries.load(kit_path, link=False) as (src, dst):   # append, never link: the bake edits the low
+      dst.objects = [low_name]
+  bpy.context.scene.collection.objects.link(dst.objects[0])
+  ```
+
+  Gate and bake there, save that file, and never carry the highs or the appended low back into the kit file. Append
+  again whenever the low changes: the bake must see the mesh that ships.
 
 ## 5. Gate before the bake
 
@@ -114,10 +130,10 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 | --- | --- |
 | `topology_audit.audit(low)` and `problems()` | clean (no n-gons on the low, no open edges where faces are seen) |
 | A reflective matcap close-up of the high | no ripples, pinches, streaks or facets |
-| `review_render.compare(high, low, views)` | silhouettes match from every view the player has |
+| `review_render.compare("Body_high", "Chest_low", views, out)` (object names, one high at a time: the part's main high) | silhouettes match from every view the player has (`mismatch` per view) |
 | `high_low_gap(low, highs)` at the nearest distance d | `low_outside_p99` at most `min_width_m(d)`; `high_outside_p99` at most `stereo_relief_m(d)` |
 | `bake_skew(low)` | under 10% of the area over 15 deg where detail is baked (*practice*) |
-| After the bake | the bake report's `cage_inside` own and neighbour both 0; `pbr-texturing`'s seam check on the normal map shows no seam |
+| After the bake | the bake report (`<name>_bake.json`) has `cage_inside` own and neighbour 0 in every pass; `pbr-texturing`'s seam check on the normal map shows no seam |
 
 **Where the normal map does not draw.** VRChat's Standard Lite (Quest, iOS) does not sample the normal map on a
 lightmapped surface with Non-Directional lightmaps, glossy reflections off and no realtime light (`pbr-texturing`'s

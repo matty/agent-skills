@@ -998,6 +998,11 @@ def test_high_low_gap_reads_the_sagitta_and_a_fat_low():
     bpy.context.view_layer.update()
     r = ns["high_low_gap"](low, [high], samples=8000)
     check(abs(r["low_outside_max"] - 0.002) < 2e-4 and r["high_outside_max"] < 1e-4, r)
+    for ob in (low, high):                                      # a mirrored pair (negative scale) reads the same
+        ob.scale.x = -ob.scale.x
+    bpy.context.view_layer.update()
+    m = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(m["low_outside_max"] - r["low_outside_max"]) < 2e-4 and m["high_outside_max"] < 1e-4, (m, r))
 
 
 def test_bake_skew_falls_with_a_bevel():
@@ -1013,6 +1018,10 @@ def test_bake_skew_falls_with_a_bevel():
     bev.width, bev.segments = 0.05, 3
     r = ns["bake_skew"](box)
     check(r["over_share"] < 0.05, r)
+    box.scale.x = -1.0                                          # mirrored: the winding is reversed, same skew
+    bpy.context.view_layer.update()
+    m = ns["bake_skew"](box)
+    check(abs(m["over_share"] - r["over_share"]) < 1e-4 and abs(m["p95_deg"] - r["p95_deg"]) < 0.01, (m, r))
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NOTHING")
     r = ns["bake_skew"](bpy.context.active_object)
     check(r["over_share"] == 0.0 and abs(r["p95_deg"] - 11.25) < 0.05, r)
@@ -1119,6 +1128,45 @@ def test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight():
     check(r["max_deg"] < 0.01, r)
 
 
+
+def test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front():
+    """Closed pieces: a straight slab and a 16-segment quarter-circle wall, 0.2 m thick, folds sharp by angle. At each
+    joint corner the bottom and top match exactly and the end caps face each other; only the front and back lean
+    (half a facet angle). Taking the best pair per position would report 0 deg; each corner matched to its own face,
+    caps left out, gives 2.81 deg both ways round."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    straight = bpy.context.active_object
+    straight.scale = (1.0, 0.2, 3.0)
+    straight.location = (-0.5, 0.1, 1.5)
+    bpy.ops.object.transform_apply(location=True, scale=True)
+    bm = bmesh.new()
+    cols = []
+    for i in range(17):
+        a = (math.pi / 2) * i / 16
+        ring = []
+        for r in (1.0, 0.8):                                    # front (radius 1), back (0.8): both centred on (0, 1)
+            for z in (0.0, 3.0):
+                ring.append(bm.verts.new((r * math.sin(a), 1 - r * math.cos(a), z)))
+        cols.append(ring)                                       # front bottom, front top, back bottom, back top
+    for p, q in zip(cols, cols[1:]):
+        bm.faces.new((p[0], q[0], q[1], p[1]))                  # front
+        bm.faces.new((p[2], p[3], q[3], q[2]))                  # back
+        bm.faces.new((p[0], p[2], q[2], q[0]))                  # bottom
+        bm.faces.new((p[1], q[1], q[3], p[3]))                  # top
+    bm.faces.new((cols[0][0], cols[0][1], cols[0][3], cols[0][2]))
+    bm.faces.new((cols[-1][0], cols[-1][2], cols[-1][3], cols[-1][1]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    curved = object_from_bmesh("curved_closed", bm)
+    for ob in (straight, curved):
+        ob.data.set_sharp_from_angle(angle=math.radians(30))
+        ob.data.shade_smooth()
+    at_joint = lambda co: abs(co.x) < 1e-4
+    for pair in ((straight, curved), (curved, straight)):
+        r = ns["joint_normals"](*pair, at_joint)
+        check(r["positions"] == 4 and abs(r["max_deg"] - 90.0 / 16 / 2) < 0.01, r)
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1137,7 +1185,8 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
-           test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight):
+           test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
+           test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:

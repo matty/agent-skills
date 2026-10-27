@@ -469,12 +469,13 @@ def joint_match(a, b, select, digits=5, matrix_a=None, matrix_b=None):
     return pa - pb, pb - pa, pa & pb
 
 
-def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None):
+def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None, skip_deg=45.0):
     """Does the shading carry on across a joint? At each joint position the two pieces share (as joint_match finds
-    them, in one frame through matrix_a / matrix_b), the corner normals of the evaluated meshes are paired by the
-    smallest angle (each piece's visible face against its neighbour's, never the end caps pressed together) and the
-    worst pairing is reported. A smooth curved piece ending against a straight one leans its end vertices by half a
-    facet angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true
+    them, in one frame through matrix_a / matrix_b), each corner normal of either evaluated mesh is matched to the
+    nearest corner normal of the other piece there (its front against the neighbour's front, its top against the
+    top); a corner with no match within skip_deg is an end cap pressed against the neighbour and is left out. The worst
+    match, both ways, is reported. A smooth curved piece ending against a straight one leans its end vertices by half
+    a facet angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true
     surface normal put it right. Returns {"positions": shared positions compared, "max_deg", "worst": [(deg,
     position), ...]}."""
     import bpy
@@ -500,11 +501,15 @@ def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None):
         finally:
             ev.to_mesh_clear()
     ca, cb = corners(a, matrix_a), corners(b, matrix_b)
-    worst = []
-    for key in set(ca) & set(cb):
-        best = min(math.degrees(na.angle(nb, 0.0)) for na in ca[key] for nb in cb[key])
-        worst.append((round(best, 3), list(key)))
-    worst.sort(key=lambda w: -w[0])
+    shared = set(ca) & set(cb)
+    per = {key: 0.0 for key in shared}
+    for x, y in ((ca, cb), (cb, ca)):
+        for key in shared:
+            for n in x[key]:
+                best = min(math.degrees(n.angle(m, 0.0)) for m in y[key])
+                if best <= skip_deg:
+                    per[key] = max(per[key], best)
+    worst = sorted(((round(d, 3), list(key)) for key, d in per.items()), key=lambda w: -w[0])
     return {"positions": len(worst), "max_deg": worst[0][0] if worst else 0.0, "worst": worst[:5]}
 
 
@@ -525,7 +530,8 @@ def determinism_hash(ob, digits=5):
 # ---- high and low poly ---------------------------------------------------------------------------------------------
 
 def _world_mesh(ob, dg):
-    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space."""
+    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space.
+    A mirrored object (negative scale) has its triangles' winding reversed so they still face outward."""
     import numpy as np
     ev = ob.evaluated_get(dg)
     me = ev.to_mesh()
@@ -542,6 +548,8 @@ def _world_mesh(ob, dg):
         tri = np.empty(len(me.loop_triangles) * 3, np.int64)
         me.loop_triangles.foreach_get("vertices", tri)
         tri = tri.reshape(-1, 3)
+        if np.linalg.det(mw[:3, :3]) < 0:
+            tri = tri[:, ::-1].copy()
         area = 0.5 * np.linalg.norm(np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]]), axis=1)
         return co, tri, area, vn
     finally:

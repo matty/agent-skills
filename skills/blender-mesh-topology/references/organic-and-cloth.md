@@ -44,8 +44,8 @@ Rules (*practice* unless marked):
   (`high-and-low-poly.md`). Voxel steps show in the bake: smooth them (Smooth modifier) before the displacement.
 - **Variants differ in their primary form**, not in a noise seed: a slab, a tall block, a split pair, a rounded
   boulder. Moving the seed empty changes the noise only (*measured*: 7.8 mm mean height change on the block above,
-  invisible at 3 m). Compare variants with `review_render.compare(rock_a, rock_b, views)`: their silhouettes must
-  differ from the player's views.
+  invisible at 3 m). Compare variants with `review_render.compare("ROCK_A", "ROCK_B", views, out)` (object names):
+  their silhouettes must differ from the player's views (a high `mismatch`).
 - **Ground contact.** Sink rocks and roots into the ground by a few centimetres (*practice*) and let the texture's
   position mask darken the base (`pbr-texturing` wear reference): a rock resting on its lowest point floats.
 
