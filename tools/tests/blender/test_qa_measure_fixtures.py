@@ -487,6 +487,10 @@ def build(d):
     instance("wall_twin", wall_l, (1, 1, 0), parent=zone)              # on top of wall_ok: every face z-fights
     instance("pair_a", wall_l, (50, 1, 0), parent=zone)                # side by side: end caps pressed together
     instance("pair_b", wall_l, (52, 1, 0), parent=zone)                # face apart, hidden, never counted
+    instance("stage_a", wall_l, (60, 1, 0.15), parent=zone)            # a raised stage's walls meet only each
+    instance("stage_b", wall_l, (62, 1, 0.15), parent=zone)            # other: their courses start at 0.15 m
+    instance("wall_engaged", wall_l, (70, 1, 0), parent=zone)          # a block let into a wall: only their feet
+    instance("col_engaged", kit["TST_Bevel_1x1x1_A"], (70.5, 0.6, 0), parent=zone)   # share a plane, on the ground
     shadow = bpy.data.collections.new("TST_Bevel_1x1x1_A")         # same name as the linked piece (names are
     bpy.context.scene.collection.children.link(shadow)             # unique per library, so it keeps the name)
     f["shadow_name"] = shadow.name
@@ -1134,6 +1138,10 @@ def master_placements(r):
     check(over.get(("wall_ok", "wall_twin"), 0) > 0 and has(rep["problems"], "wall_ok and wall_twin", "z-fight"),
           "two placements in one place z-fight: %s" % rep["placement_overlaps"])
     check(("pair_a", "pair_b") not in over, "end caps pressed together at a joint are not z-fighting: %s" % over)
+    check(("col_engaged", "wall_engaged") not in over, "feet on the ground are not z-fighting: %s" % over)
+    check(pl["asm_mirrored"]["mirrored"] and pl["asm_mirrored"]["rot_xy_ok"]
+          and not has(rep["problems"], "asm_mirrored", "tilted")
+          and has(rep["notes"], "asm_mirrored", "is mirrored"), "a mirror is a note, not a tilt: %s" % pl["asm_mirrored"])
     check(("asm_mirrored", "asm_squashed") in over, "the two booths placed over each other: %s" % over)
 
 
@@ -1144,19 +1152,56 @@ def master_tile_phase(r):
     its pattern; the grid walls and the unturned slab are clean."""
     rep = r.get("master_phase")
     pl = {p["object"]: p for p in rep["placements"]}
-    check(pl["wall_ok"]["tile_phase"] == {"u_px": 0.0, "v_px": 0.0, "turn_deg": 0.0, "tile_m": 1.0,
-                                          "horizontal": False}, pl["wall_ok"])
+    tp = pl["wall_ok"]["tile_phase"]
+    check({k: tp[k] for k in ("u_px", "v_px", "turn_deg", "tile_m", "horizontal")} ==
+          {"u_px": 0.0, "v_px": 0.0, "turn_deg": 0.0, "tile_m": 1.0, "horizontal": False}, pl["wall_ok"])
     check(not has(rep["problems"], "wall_ok", "tile grid") and not has(rep["problems"], "wall_west", "tile grid"),
           rep["problems"])
     check(abs(pl["wall_jog"]["tile_phase"]["u_px"] - 1.95) < 0.02 and has(rep["problems"], "wall_jog", "tile grid"),
           pl["wall_jog"])
-    check(abs(pl["wall_step"]["tile_phase"]["v_px"] - 30.72) < 0.02 and has(rep["problems"], "wall_step", "up"),
-          pl["wall_step"])
+    check(abs(pl["wall_step"]["tile_phase"]["v_px"] - 30.72) < 0.02 and pl["wall_step"]["tile_phase"]["v_against"]
+          == ["wall_jog"] and has(rep["problems"], "wall_step", "courses 30.7 px off", "wall_jog"), pl["wall_step"])
+    for name in ("stage_a", "stage_b"):         # 0.15 m up, 154 px off world z, but they touch only each other
+        tp = pl[name]["tile_phase"]
+        check(tp["v_px"] == 0.0 and abs(tp["v_abs_px"] - 153.6) < 0.02 and not has(rep["problems"], name),
+              pl[name])
     check(pl["slab_turned"]["tile_phase"]["horizontal"] and has(rep["problems"], "slab_turned", "turned 90"),
           pl["slab_turned"])
     check(not has(rep["problems"], "slab_ok"), "an unturned slab on the grid is clean")
     check(pl["prop_big"]["scale_band"] == [0.5, 2.5] and not has(rep["problems"], "prop_big", "scaled"),
           "the family's scale_range lets its Free pieces vary: %s" % pl["prop_big"])
+
+
+@case
+def tile_phase_shapes(r):
+    """Arch sweep: a kerb (thin, 0.3 m deep) turns like a wall, not a floor; a floor's phase variant k = kx + n x ky
+    along its own +X and +Y; a floor: true family's two-number Size is X by Y, with a terrain chunk's relief (over a
+    module, below its pivot) left out of the size and pivot checks."""
+    ns = {}
+    exec(compile(QA.read_text(encoding="utf-8"), str(QA), "exec"), ns)
+    fams = {"TST": {"texturing": "tiling", "map_px": 2048, "texel_density": 1024}, "TER": {
+        "texturing": "tiling", "map_px": 2048, "texel_density": 1024, "floor": True}}
+    check(ns["_tiling"](fams, "TST_Kerb_1_A", 1.0, [1.0, 0.3, 0.15])[3] is False, "a kerb read as a floor")
+    check(ns["_tiling"](fams, "TST_Slab_2x2_A", 1.0, [2.0, 2.0, 0.1])[3] is True, "a slab not read as a floor")
+    check(ns["_tiling"](fams, "TER_Chunk_4x4_A", 1.0, None)[3] is True, "a floor: true Size not read as a floor")
+    tp = ns["tile_phase"]
+    for k, pos, ok in ((0, (2, 2, 0), True), (1, (3, 2, 0), True), (2, (2, 3, 0), True), (3, (3, 3, 0), True),
+                       (0, (2, 3, 0), False), (1, (2, 2, 0), False)):
+        res = tp(pos, 0.0, 2.0, 1024.0, 1.0, k, True)
+        check((max(res["u_px"], res["v_px"]) < 0.5) is ok, "floor variant P%d at %s: %s" % (k, pos, res))
+    me = bpy.data.meshes.new("ter")
+    me.from_pydata([(x, y, 0.4 * math.sin(x + y) - 0.5) for y in range(5) for x in range(5)], [],
+                   [(j * 5 + i, j * 5 + i + 1, (j + 1) * 5 + i + 1, (j + 1) * 5 + i) for j in range(4) for i in range(4)])
+    coll = bpy.data.collections.new("TER_Chunk_4x4_A")
+    bpy.context.scene.collection.children.link(coll)
+    coll.objects.link(bpy.data.objects.new("TER_Chunk_4x4_A", me))
+    me.vertices[0].co.z = 0.62                                  # relief over a module in all: 1.3 m
+    dg = bpy.context.evaluated_depsgraph_get()
+    rep = ns["measure_piece"](coll, 1.0, dg, families=fams)
+    check(rep["size_ok"] and rep["pivot_ok"], "terrain chunk: %s" % {k: rep.get(k) for k in ("extent_modules",
+                                                                                          "bounds_m")})
+    rep = ns["measure_piece"](coll, 1.0, dg)
+    check(not rep["size_ok"], "without floor: true its relief counts as a third axis: %s" % rep["extent_modules"])
 
 
 @case
