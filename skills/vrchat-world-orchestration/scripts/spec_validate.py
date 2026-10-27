@@ -693,11 +693,16 @@ def check_tile_phase(code, fam, module, storey, f):
     if phase == "grid":
         bad = [(n, v) for n, v in steps if not whole_steps(v, tile)]
         if bad:
+            fits = [m for m in (4096, 2048, 1024, 512, 256, 128)
+                    if all(whole_steps(v, m / float(td)) for _n, v in steps)]
             f.error("family %s: its %g m tile (map_px %g / texel_density %g) does not divide %s, so the pattern "
-                    "jumps at joints between instanced pieces (uv-unwrapping, tile_project); use a tile that divides "
-                    "every step (at %g px/m: %s px), or tile_phase: variants or world_uv"
-                    % (code, tile, mp, td, " and ".join("%s %g m" % b for b in bad), td,
-                       " or ".join(str(int(td * module / k)) for k in (1, 2, 4) if (td * module / k) >= 64)))
+                    "jumps at joints between instanced pieces (uv-unwrapping, tile_project); %s, or tile_phase: "
+                    "variants or world_uv"
+                    % (code, tile, mp, td, " and ".join("%s %g m" % b for b in bad),
+                       ("use a map whose tile divides every step (at %g px/m: map_px %s)"
+                        % (td, " or ".join(str(m) for m in fits[:3]))) if fits else
+                       ("no power-of-two map at %g px/m has a tile that divides every step: change texel_density or "
+                        "the steps" % td)))
     elif phase == "variants":
         if not (module and whole_steps(tile, module)) or (number(storey) and storey > 0
                                                           and not whole_steps(storey, tile)):

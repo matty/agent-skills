@@ -172,8 +172,18 @@ class SpecChecks(unittest.TestCase):
         errors = messages(run(spec)[0], "ERROR")
         self.assertTrue(any("family INT: its 2 m tile" in m and "grid.module 1 m" in m and "storey_height 3 m" in m
                             for m in errors), errors)
+        self.assertTrue(any("family INT: its 2 m tile" in m and "map_px 512 or 256 or 128" in m for m in errors),
+                        errors)
         spec["families"]["INT"]["map_px"] = 256                           # 0.5 m divides both
         self.assertEqual(run(spec)[0].errors, 0)
+        spec["families"]["INT"]["map_px"] = 1024
+        spec["grid"]["storey_height"] = 3.5                               # a 1 m tile no longer divides the storey
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("family INT: its 2 m tile" in m and "map_px 256 or 128)" in m for m in errors), errors)
+        spec["grid"]["storey_height"] = 2.8                               # no power-of-two tile divides 2.8 m
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("family INT" in m and "no power-of-two map" in m for m in errors), errors)
+        spec["grid"]["storey_height"] = 3.0
         spec["families"]["INT"]["map_px"] = 1024
         spec["grid"]["storey_height"] = 4.0
         spec["families"]["INT"]["tile_phase"] = "variants"                # a 2 m tile: 2 variants on a 1 m grid
