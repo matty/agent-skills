@@ -91,6 +91,9 @@ run along V.
 | `notes` | worth a look but not a failure: a lightmap footprint under 64 px (checked as packed for 64 px: probe-light a Free prop, a Free-sized PROP or FOL piece; a LOD follows its piece; else raise its Scale In Lightmap), or at 64 px or more, charts filling under half their box (the empty space costs atlas texels: pack them to fill it, at any aspect ratio) |
 | `faces`, `islands` | counts; an island is faces joined across edges whose UVs match |
 | `angular_p95`, `angular_p99`, `angular_max`, `area_p95` | the distortion gate (SKILL.md section 4) |
+| `islands_distorted`, `worst_islands` | islands holding at least 0.5% of the area (`ISLAND_MIN_SHARE`) whose own angular p95 or area p95 is over the limit, worst first (`island`, `area_share`, `angular_p95`, `area_p95`): a small label stretched 1.45x passes the object's numbers |
+| `text_angular_p95` | angular p95 over the faces marked `uv_text` together (None without them): over 1.15 the letters read squashed, whatever `text=` says |
+| `area_max` | log2 of the worst non-sliver face's density against its island's (`uv_low_density` faces left out): over 2.0 a patch reads blurred or oversharp (a label shrunk to 1/8 inside its panel measured 6.0 while slivers round it took the stretch) |
 | `tile_phase` | with `tile_m`: `tile_m`, `faces`, `phase_px_max` (the worst face's distance from tile_project's UVs after whole tiles, in texels, counting a corner whose offset differs from the face's first corner), `off_faces`, `mirrored_faces` |
 | `folded_faces` | faces flipped inside an otherwise unflipped island: always a fault |
 | `mirrored_islands` | whole islands flipped: mirrored geometry, fine for painting; text on them reads backwards |

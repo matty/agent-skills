@@ -170,9 +170,11 @@ factors on U and V stretch it). Where the art needs a period longer than the ste
 
 1. Place that family only on multiples of the tile (the world spec's placements, checked by the validator), or
 2. phase variants: one mesh per offset (`_P0`, `_P1`, ...: `tile_project(..., offset=(k * module, 0, 0))`, projected
-   as if the piece stood k modules along), each placed where k = (x mod tile) / module; they share the material and
-   batch (audit each with `tile_offset=`, CLI `--tile-offset`, and `--steps <tile>,<storey>`: a variant family's
-   pieces repeat at the tile, not at the module), or
+   as if the piece stood k modules along), each placed where k = (s mod tile) / module, s the pivot's distance along
+   the piece's own +X: s = x at rot 0, -x at 180, y at 90, -y at 270 (`x mod tile` alone is right only for walls
+   facing -Y: measured, it put a +Y-facing run half a tile off at every joint). They share the material and batch
+   (audit each with `tile_offset=`, CLI `--tile-offset`, and `--steps <tile>,<storey>`: a variant family's pieces
+   repeat at the tile, not at the module); QA checks every placement's phase against the world grid, or
 3. a world-space UV shader (UVs from the world position in the vertex shader): a custom shader, allowed in VRChat
    worlds on every platform; measure it on the mobile device. Untested here.
 

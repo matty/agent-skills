@@ -50,7 +50,13 @@ except ImportError:          # plain Python: measure() and the helpers work, the
 
 PURPOSES = ("unique", "tiling", "trim", "lightmap")
 # The gate. This skill owns these numbers; rizomuv-uv-pipeline and vrchat-world-qa state the same values.
-LIMITS = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "texel_cv": 0.15}
+LIMITS = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0,
+          "texel_cv": 0.15}
+# The whole-object percentiles hide a small island: a label on 2.5% of a crate stretched 1.45x passed p95 and p99, and
+# one on 0.83% stretched 1.95x passed everything but a max that skips slivers. So every island holding at least this
+# share of the area (and the uv_text faces together) must meet the p95 limits on its own; area_max (log2, non-sliver
+# faces) catches a patch at 2x or 1/2 its island's texel density, which slivers round it had absorbed (measured 5.2.2).
+ISLAND_MIN_SHARE = 0.005
 # Texel density against a target, as a factor: shared materials (tiling, trim) within 10%, unique and atlas textures
 # within 0.8-1.25x of their class; checked on the mean and on every island not marked low-density (a lightmap: the
 # mean only). Evenness inside a piece is texel_cv.
@@ -672,6 +678,9 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     lightmap_scale = planned_scale * lod_factor(lod, lightmapper)
     text = bool(text) and purpose != "lightmap"              # lightmaps carry no text
     npoly = len(d["ls"])
+    bad_uv = ~np.isfinite(np.asarray(d["uv"], float)).all(axis=1) if len(d["uv"]) else np.zeros(0, bool)
+    if bad_uv.any():                                         # NaN or inf (a broken import or script): measured as 0,
+        d = dict(d, uv=np.where(bad_uv[:, None], 0.0, d["uv"]))   # reported, and the other objects still audited
     tmark = d.get("text")
     tmark = np.asarray(tmark, bool) if tmark is not None and len(tmark) == npoly else np.zeros(npoly, bool)
     if text and not tmark.any():
@@ -736,6 +745,24 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
         lo_b, hi_b = TEXEL_BAND[purpose]
         f = td_isl / float(px_per_m)
         off_density = int(np.count_nonzero((wi > 0) & ((f < lo_b - 1e-6) | (f > hi_b + 1e-6))))
+    # each island on its own, and the text faces together: the gate's p95 limits per group (ISLAND_MIN_SHARE)
+    tot_w = float(wg.sum())
+    island_rows = []
+    if n_isl and tot_w > 0:
+        order = np.argsort(isl_tri, kind="stable")
+        cuts = np.searchsorted(isl_tri[order], np.arange(n_isl + 1))
+        for i in np.flatnonzero(tot_area >= ISLAND_MIN_SHARE * tot_w):
+            m = order[cuts[i]:cuts[i + 1]]
+            m = m[good[m]]
+            a95 = _wpct(ang[m], w3[m], 0.95)
+            d95 = _wpct(area_dev[m], w3[m], 0.95)
+            if a95 > LIMITS["angular_p95"] or d95 > LIMITS["area_p95"]:
+                island_rows.append((int(i), float(tot_area[i]) / tot_w, a95, d95))
+    island_rows.sort(key=lambda r: -max(r[2] / LIMITS["angular_p95"], 1.0 + r[3]))
+    tg = good & tmark[d["tpoly"]]
+    text_p95 = _wpct(ang[tg], w3[tg], 0.95) if tg.any() else None
+    even = shaped & ~low
+    area_max = float(area_dev[even].max()) if even.any() else 0.0
     # text and decals, on the faces marked uv_text only: per island, where the letters' up (uv_text_up, default world
     # +Z) goes in UV (+V within 45 deg passes), and whether the marked faces are mirrored
     text_isl = np.bincount(isl_poly, weights=tmark.astype(float), minlength=n_isl) > 0
@@ -794,6 +821,11 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
            "angular_max": round(float(ang[shaped].max()) if shaped.any() else
                                 (float(ang[good].max()) if good.any() else float("nan")), 2),
            "area_p95": round(_wpct(area_dev[good], w3[good], 0.95), 3),
+           "area_max": round(area_max, 3),
+           "islands_distorted": len(island_rows),
+           "worst_islands": [{"island": i, "area_share": round(sh, 4), "angular_p95": round(a, 3),
+                              "area_p95": round(dv, 3)} for i, sh, a, dv in island_rows[:5]],
+           "text_angular_p95": None if text_p95 is None else round(text_p95, 3),
            "folded_faces": int(len(np.unique(d["tpoly"][fold]))), "mirrored_islands": int(mirrored.sum()),
            "mirror_stacks": int(mirror_stacks),
            "zero_area_uv_faces": int(len(np.unique(d["tpoly"][zero_uv]))),
@@ -872,6 +904,10 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
             rep["padding_ok"] = gap is None
             rep["min_gap_px"] = None if gap is None else round(gap / k, 2)
     rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text)
+    if not npoly:
+        rep["issues"].insert(0, "no faces: nothing to audit (an empty or vertex-only mesh)")
+    if bad_uv.any():
+        rep["issues"].insert(0, "%d UV corners are not numbers (NaN or inf): re-unwrap" % int(bad_uv.sum()))
     if low_density:
         rep["issues"].append(low_density)
     return rep
@@ -886,6 +922,17 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
                      ("area_p95", "uneven density inside islands (area p95 %.2f)")):
         if r[key] == r[key] and r[key] > LIMITS[key]:
             out.append(msg % r[key])
+    if r.get("area_max", 0) > LIMITS["area_max"]:
+        out.append("a patch at %.1fx or 1/%.1f its island's texel density (area max %.2f): it reads blurred or "
+                   "oversharp against the rest" % (2 ** (r["area_max"] / 2), 2 ** (r["area_max"] / 2), r["area_max"]))
+    if r.get("islands_distorted"):
+        w = r["worst_islands"][0]
+        out.append("%d island(s) stretched on their own, which the whole-object numbers hide (worst: island %d, %.1f%% "
+                   "of the area, angular p95 %.2f, area p95 %.2f)" % (r["islands_distorted"], w["island"],
+                                                                      100 * w["area_share"], w["angular_p95"],
+                                                                      w["area_p95"]))
+    if r.get("text_angular_p95") is not None and r["text_angular_p95"] > LIMITS["angular_p95"]:
+        out.append("text faces stretched (angular p95 %.2f): letters read squashed" % r["text_angular_p95"])
     if r["folded_faces"]:
         out.append("%d folded faces" % r["folded_faces"])
     if r["zero_area_uv_faces"]:

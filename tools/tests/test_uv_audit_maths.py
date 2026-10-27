@@ -118,7 +118,8 @@ class UvAuditMaths(unittest.TestCase):
     def test_canonical_numbers(self):
         ua = self.ua
         self.assertEqual(ua.LIMITS, {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20,
-                                     "texel_cv": 0.15})
+                                     "area_max": 2.0, "texel_cv": 0.15})
+        self.assertEqual(ua.ISLAND_MIN_SHARE, 0.005)
         self.assertEqual(ua.TEXEL_BAND["unique"], (0.8, 1.25))
         self.assertEqual(ua.TEXEL_BAND["tiling"], (0.9, 1.1))
         self.assertEqual(ua.TEXEL_BAND["trim"], (0.9, 1.1))
@@ -186,6 +187,73 @@ class UvAuditMaths(unittest.TestCase):
         r = self.m(strip(us, width=0.1), map_px=1024)
         self.assertEqual(r["zero_area_uv_faces"], 1)
         self.assertTrue(any("zero UV area" in i for i in r["issues"]))
+
+    def test_small_stretched_island_fails_on_its_own(self):
+        """A 15 cm label (2.2% of the area) stretched 1.45x in its own island: the object's p95 is 1.0 and its p99 and
+        max stay under 1.5 and 2.0, so only the per-island gate sees it; marked as text, the text gate too."""
+        k, s = 0.5, math.sqrt(1.45)
+        verts = quad(0, 0, 1, 1) + quad(2, 0, 2.15, 0.15)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)]
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs)
+        r = self.m(d, map_px=1024)
+        self.assertEqual((r["angular_p95"], r["islands_distorted"]), (1.0, 1))
+        self.assertLess(r["angular_p99"], 1.5)
+        self.assertAlmostEqual(r["worst_islands"][0]["angular_p95"], 1.45, places=2)
+        self.assertTrue(any("stretched on their own" in i for i in r["issues"]), r["issues"])
+        d["text"] = np.array([False, True])
+        r = self.m(d, map_px=1024)
+        self.assertTrue(any("text faces stretched" in i for i in r["issues"]), r["issues"])
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], [uvs[0], square_uv(0.6, 0.6, 0.15 * k)])
+        r = self.m(d, map_px=1024)
+        self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
+
+    def test_area_max_finds_a_blurred_patch_slivers_absorbed(self):
+        """A label inside its panel's island, a 2 mm ring of slivers round it, the label's UVs shrunk to 1/8: the
+        slivers take the distortion and are left out of angular_max, the label is 99% of nothing in p95; area_max
+        (log2 of the label's density against its island's) is 6."""
+        xs, zs, e, f = [0, 0.25, 0.75, 1], [0, 0.35, 0.65, 1], 0.002, 1.0 / 8
+        verts, idx = [], {}
+
+        def v(x, y):
+            if (x, y) not in idx:
+                idx[(x, y)] = len(verts)
+                verts.append((x, y, 0.0))
+            return idx[(x, y)]
+        uv_of = lambda x, y: (0.05 + 0.5 * x, 0.05 + 0.5 * y)
+        cx, cy = uv_of(0.5, 0.5)
+        shrink = lambda x, y: (cx + (uv_of(x, y)[0] - cx) * f, cy + (uv_of(x, y)[1] - cy) * f)
+        faces, uvs = [], []
+        for i in range(3):
+            for j in range(3):
+                if (i, j) != (1, 1):
+                    c = [(xs[i], zs[j]), (xs[i + 1], zs[j]), (xs[i + 1], zs[j + 1]), (xs[i], zs[j + 1])]
+                    faces.append([v(*p) for p in c])
+                    uvs.append([uv_of(*p) for p in c])
+        outer = [(0.25, 0.35), (0.75, 0.35), (0.75, 0.65), (0.25, 0.65)]
+        inner = [(0.25 + e, 0.35 + e), (0.75 - e, 0.35 + e), (0.75 - e, 0.65 - e), (0.25 + e, 0.65 - e)]
+        for q in range(4):
+            a, b = outer[q], outer[(q + 1) % 4]
+            c, dd = inner[(q + 1) % 4], inner[q]
+            faces.append([v(*a), v(*b), v(*c), v(*dd)])
+            uvs.append([uv_of(*a), uv_of(*b), shrink(*c), shrink(*dd)])
+        faces.append([v(*p) for p in inner])
+        uvs.append([shrink(*p) for p in inner])
+        r = self.m(mesh(verts, faces, uvs), map_px=1024)
+        self.assertLessEqual(r["angular_p95"], 1.15)
+        self.assertLessEqual(r["angular_max"], 2.0)
+        self.assertAlmostEqual(r["area_max"], 6.0, places=1)
+        self.assertTrue(any("texel density (area max" in i for i in r["issues"]), r["issues"])
+
+    def test_nan_uvs_and_empty_meshes_are_issues_not_crashes(self):
+        d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
+        d["uv"][1] = np.nan
+        r = self.m(d, map_px=1024)
+        self.assertTrue(r["issues"][0].startswith("1 UV corners are not numbers"), r["issues"])
+        empty = {"co": np.zeros((3, 3)), "lv": np.zeros(0, int), "ls": np.zeros(0, int), "lt": np.zeros(0, int),
+                 "uv": np.zeros((0, 2)), "cn": np.zeros((0, 3)), "tri": np.zeros((0, 3), int),
+                 "tpoly": np.zeros(0, int), "layer": "UVMap", "layers": ["UVMap"], "low": None}
+        r = self.m(empty, map_px=1024)
+        self.assertTrue(r["issues"] and r["issues"][0].startswith("no faces"), r["issues"])
 
     def test_small_faces_at_lightmap_scale_are_not_collapsed(self):
         # a 5 x 5 mm chamfer corner next to a 1 m face, mapped at the same density on a 12 px lightmap footprint:
