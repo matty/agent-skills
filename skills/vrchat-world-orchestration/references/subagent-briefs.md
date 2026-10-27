@@ -164,7 +164,8 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
    1.5 m (blender-mesh-topology's detail_scale.py) is geometry, shallower relief is left to the textures; chamfer
    every edge players see, never a face that meets the next bay. A piece the spec marks bake: true also gets its
    high poly in blender/bake/EXT_high.blend (<Part>_high objects, one vertex group per part on the low), built and
-   checked by blender-mesh-topology's high-and-low-poly reference; none of these three is marked.
+   checked there with its low appended from the work file (high-and-low-poly reference, one scene for the gate and
+   the bake); none of these three is marked.
 4. Assign M_EXT_Brick and M_EXT_Stone only. Apply transforms. Set coll["kit_status"] = "modelled". Save the work
    file. Render each piece from eye height at 1.5 m and close up, beside its references, for your report.
 5. Through the MCP: integrate(r"//work/T-MOD-EXT/KIT_EXT.blend", [the EXT pieces]). If it refuses, the user edited

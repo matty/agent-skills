@@ -222,7 +222,9 @@ from the command line) to self-check before reporting.
 - A piece with `bake: true` (ornament, carving, rivets, sculpted or cloth forms) also gets its high poly here, in
   `blender/bake/<FAMILY>_high.blend` (`<Part>_high` objects, one vertex group per part on the low), never in MASTER or
   a KIT file: built and gated by `blender-mesh-topology`'s high-and-low-poly reference (shading that bakes clean, the
-  low's outline within 2 px, carving seen close keeping its depth step in the low).
+  low's outline within 2 px, carving seen close keeping its depth step in the low). Gate and bake in that file with
+  the piece's current low appended into it from the work file (never linked; an older copy removed first), and
+  append again after any change to the low.
 - Budget: `budgets.piece_tris.<FAMILY>`, or the piece's `tris`.
 - QA: M1-M8, M10 (M10 only for `bake: true` pieces).
 - `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): spot-check the greybox
@@ -292,7 +294,8 @@ from the command line) to self-check before reporting.
 - Seams and repetition: every signal of a unique map comes from 3D space (bakes, Object-coordinate procedurals,
   Box-projected images, tri-planar fills), so no UV seam shows; tiling maps are even at tile scale (`pbr_check.py
   --tiling`; `tile_flatten.py` when they fail) and carry no stand-out feature; `bake: true` pieces are baked from their
-  highs, exploded where parts sit close, with the bake report kept beside the maps (`pbr-texturing`).
+  highs in `blender/bake/<FAMILY>_high.blend` with the low as modelled appended into it, exploded where parts sit
+  close, with the bake report kept beside the maps (`pbr-texturing`).
 - QA: `T-TEX-TRIM-LAYOUT` X6; `T-TEX-<FAMILY>` X1-X5 and X7-X10.
 
 ## 8 - Assemblies and dressing (integrator)
