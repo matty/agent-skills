@@ -90,9 +90,22 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
   `joint_match` (`validation.md`).
 - A curved piece meeting a straight one (a curved wall, an apse, a round corner): its smooth end vertices lean half a
   facet angle off the straight neighbour (measured, Blender 5.2.2: 2.81 deg for 16 segments per quarter turn), a
-  crease in the shading at every such joint. Set the joint vertices' custom normals to the shared surface normal
-  (`me.normals_split_custom_set_from_vertices(normals)`: measured 0 deg after) and check `joint_normals` (under about
-  0.5 deg, *practice*).
+  crease in the shading at every such joint. Set the custom normal of the wall faces' corners at the joint to the
+  shared surface normal, corner by corner, keeping every other corner as it is:
+
+  ```python
+  cur = [tuple(c.vector) for c in me.corner_normals]
+  ln = []
+  for p in me.polygons:
+      for li in p.loop_indices:
+          w = joint_normal(me.vertices[me.loops[li].vertex_index].co)   # the straight face's normal there, or None
+          ln.append(tuple(w) if w is not None and p.normal.dot(w) > 0.5 else cur[li])   # caps keep their own
+  me.normals_split_custom_set(ln)    # 0.000 deg on a closed 16-segment quarter wall, flat or smooth caps (5.2.2)
+  ```
+
+  Never `normals_split_custom_set_from_vertices` on a closed piece: it gives the joint vertex's flat top, bottom and
+  end-cap corners the same normal (90 deg at the joint, measured). Check `joint_normals` (under about 0.5 deg,
+  *practice*).
 - A piece let into another at an angle (an arcade's spandrel or an engaged column against a round tower, a buttress
   against a wall) is a masonry abutment, not an edge-to-edge joint: it may run a few centimetres into its neighbour,
   every face it buries hidden, but no face of it may lie in the neighbour's face plane. An engaged column's capital
