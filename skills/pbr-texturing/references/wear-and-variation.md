@@ -76,8 +76,8 @@ another period from another layer.
   instances or batches with its own copies.
 - A variant must differ at the viewing distance; a near-duplicate is a draw call for nothing.
 - Placement (*practice*): no two identical variants side by side, no sequence that repeats (A B C A B C reads as a
-  longer tile), and on a run longer than about four tile periods a breaker (a pilaster, a door, a trim, a prop) at an
-  irregular spacing.
+  longer tile), and along any run long enough to show the repeat, breakers (a pilaster, a door, a downpipe, a prop)
+  at irregular spacing: one every 4-8 m along a facade, never at a fixed interval.
 - Vertex colour as a cheap tint varies copies only where every target shader reads it: VRChat's mobile Standard Lite
   multiplies albedo by vertex colour while Unity's Standard ignores it (`references/engine-notes.md`), so a world on
   both looks different on each.
