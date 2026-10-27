@@ -76,6 +76,19 @@ class Measures(unittest.TestCase):
         self.assertAlmostEqual(r["coverage"], 0.25, places=2)
         self.assertEqual(self.um.grade(r), [])
 
+    def test_small_stretched_island_fails_on_its_own(self):
+        """A 15 cm label (2.2% of the area) stretched 1.45x in its own island passes the whole-object p95, p99 and
+        max; the per-island p95 fails it."""
+        s = 1.45 ** 0.5
+        lab = [(5, 0, 0), (5.15, 0, 0), (5.15, 0.15, 0), (5, 0.15, 0)]
+        u = [(0.6, 0.6), (0.6 + 0.075 * s, 0.6), (0.6 + 0.075 * s, 0.6 + 0.075 / s), (0.6, 0.6 + 0.075 / s)]
+        r = self.report(quads([A, lab], [sq(0.05, 0.05, 0.5), u]))
+        d = r["distortion"]
+        self.assertEqual(d["angular_p95"], 1.0)
+        self.assertLess(d["angular_p99"], 1.5)
+        self.assertAlmostEqual(d["island_angular_p95"], 1.45, places=2)
+        self.assertTrue(any(f.startswith("island_angular_p95") for f in self.um.grade(r)), self.um.grade(r))
+
     def test_two_to_one_stretch_reads_angular_two(self):
         m = quads([A], [[(0.1, 0.1), (0.5, 0.1), (0.5, 0.3), (0.1, 0.3)]])
         d = self.um.distortion(m, m["uvw_ids"], m["uvw"])
@@ -170,6 +183,7 @@ class Padding(unittest.TestCase):
 @unittest.skipUnless(np is not None, "numpy is not installed")
 class Gate(unittest.TestCase):
     BAD = {"angular_p95": 1.10, "angular_p99": 9.0, "angular_max": 40.0, "area_local_p95": 0.9,
+           "island_angular_p95": 1.10, "island_area_local_p95": 0.0, "area_local_max": 0.0,
            "area_global_mean": 0.6, "islands": 80, "faces": 100, "islands_per_100_faces": 80.0, "finite": True}
 
     @classmethod
@@ -178,8 +192,10 @@ class Gate(unittest.TestCase):
 
     def test_canonical_values(self):
         self.assertEqual(self.um.GATE, {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0,
-                                        "area_local_p95": 0.20, "area_global_mean": 0.05,
-                                        "islands_per_100_faces": 25.0})
+                                        "area_local_p95": 0.20, "island_angular_p95": 1.15,
+                                        "island_area_local_p95": 0.20, "area_local_max": 2.0,
+                                        "area_global_mean": 0.05, "islands_per_100_faces": 25.0})
+        self.assertEqual(self.um.ISLAND_MIN_SHARE, 0.005)
         self.assertEqual(self.um.FRAGMENT_FREE_ISLANDS, 12)
 
     def test_partial_gate_merges_over_the_defaults(self):

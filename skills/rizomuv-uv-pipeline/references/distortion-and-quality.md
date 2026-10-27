@@ -250,7 +250,9 @@ staircase line; with the panels marked it was one unbroken checker.
 `uv_metrics.grade(report)` is the one verdict, for every attempt and every written layer:
 
 - **Distortion gate** (`uv_metrics.GATE`, the `uv-unwrapping` skill's values): angular p95 <= 1.15, p99 <= 1.5,
-  max <= 2.0 (non-sliver triangles), area local p95 <= 0.20; this grader also keeps area global mean <= 0.05 and
+  max <= 2.0 (non-sliver triangles), area local p95 <= 0.20, the two p95 limits again on every island holding 0.5%
+  of the area (`island_angular_p95`, `island_area_local_p95`: the whole-object numbers hide a small stretched label),
+  area local max <= 2.0 (`area_local_max`, non-sliver faces); this grader also keeps area global mean <= 0.05 and
   islands per 100 faces <= 25 for its retries; non-finite UVs fail. Fragmentation counts per connected shell
   against its planar regions: only a shell cut into more than 12 islands and into more islands than it has regions
   counts. A crate of 19 planks (6 islands per box), a mitred window frame (16 islands, 16 regions) and a 5-step stair
