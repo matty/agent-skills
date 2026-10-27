@@ -1749,6 +1749,112 @@ def home_tiling(objects, layer=0, period=1.0, material=None):
     return out
 
 
+def place_like(P, Q, scale=1.0, mirror=False):
+    """P scaled by scale about its centre, then turned and moved to fit Q best by least squares over corresponding
+    points (2D Umeyama): the same centre as Q, and the rotation that best matches Q. mirror=True fits the best
+    reflection instead, for a Q that is a mirrored copy. P and Q: (n, 2), listed in the same order."""
+    P, Q = np.asarray(P, float), np.asarray(Q, float)
+    mp, mq = P.mean(0), Q.mean(0)
+    X, Y = P - mp, Q - mq
+    U, _S, Vt = np.linalg.svd(Y.T @ X)
+    d = np.sign(np.linalg.det(U @ Vt)) or 1.0
+    R = U @ np.diag([1.0, -d if mirror else d]) @ Vt              # q = R p for column vectors
+    return scale * (X @ R.T) + mq
+
+
+def reunwrap_in_place(objects, layer=0, map_px=1024, units_per_m=None, material=None, method="ANGLE_BASED"):
+    """Fix stretch without moving the texture: unwrap each existing island again inside its own borders, then put it
+    back where it was. Seams go on the island borders only (the mesh's own seams are restored afterwards), Blender's
+    unwrap runs on the layer, and each new island is scaled back and fitted to its old one by a rotation and a move
+    (place_like), mirrored if the old one was. So it keeps its position, its direction (grain) and its density, while
+    the shape inside it is the unwrap's. units_per_m: scale each island to that many UV units per metre of surface
+    (1.0 for a tiling map at 1 unit/m); None keeps each island's own UV area. map_px: the map's shape, so a non-square
+    sheet ("2048x1024") is fitted in square pixels. material: only those faces; the others keep their UVs.
+    method: "ANGLE_BASED" or "CONFORMAL". Returns per object islands, mirrored and moved_max (the furthest any
+    corner moved, in UV units). Audit afterwards: a closed or folded island needs a new seam, not this."""
+    w, h = map_size(map_px)
+    aspect = np.array([w, h], float) / max(w, h)
+    objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for o in objects:
+        lay = _layer(o.data, layer)
+        if lay is None:
+            raise ValueError("%s has no UV layer %r" % (o.name, layer))
+        keep = _keep_faces(o, material)
+        if keep is not None and not keep.any():
+            continue
+        name = lay.name                                              # Edit Mode below invalidates lay
+        full = _arrays(o, name, evaluated=False)
+        d = _subset(full, keep) if keep is not None else full
+        pa, pb, uv_split, _hard, key = _edges(d)
+        old_au = _triangles(d, aspect)["au"]
+        old_isl, _split, _flipped = _island_ids(d, pa, pb, uv_split, old_au)
+        me = o.data
+        seams = np.zeros(len(me.edges), bool)
+        me.edges.foreach_get("use_seam", seams)
+        prev_layer, prev, hidden = me.uv_layers.active_index, None, None
+        try:
+            _mark_seams(me, _edge_index(me, key[old_isl[pa] != old_isl[pb]]), clear=True)
+            _set_active_layer(o, name)
+            if keep is not None:
+                hidden = _hide_others(o, keep)
+            prev = _edit([o])
+            bpy.ops.uv.unwrap(method=method, margin=UNWRAP_MARGIN)
+        finally:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            if hidden is not None:
+                _unhide(o, hidden)
+            me.edges.foreach_set("use_seam", seams)
+            me.update()
+            if prev is not None:
+                _restore(prev)
+                if bpy.context.mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode="OBJECT")
+            me.uv_layers.active_index = prev_layer
+        lay = _layer(me, name)
+        n2 = _arrays(o, name, evaluated=False)
+        n2 = _subset(n2, keep) if keep is not None else n2
+        pa2, pb2, split2, _h2, _k2 = _edges(n2)
+        new_isl = _islands(len(n2["ls"]), pa2, pb2, ~split2)
+        _, grp = np.unique(old_isl * (int(new_isl.max()) + 1) + new_isl, return_inverse=True)  # old and new island
+        ng = int(grp.max()) + 1
+        tr_new = _triangles(n2)
+        tg = grp[n2["tpoly"]]
+        a3 = np.bincount(tg, weights=tr_new["a3"], minlength=ng)
+        a_new = np.bincount(tg, weights=tr_new["au"], minlength=ng)
+        a_old = np.bincount(tg, weights=old_au, minlength=ng)
+        if units_per_m is None and np.abs(a_old).sum() <= 1e-12:
+            raise ValueError("%s: the old islands have no UV area to keep; pass units_per_m" % o.name)
+        dens = np.abs(a_old).sum() / max(a3.sum(), 1e-30)            # for an island collapsed to nothing
+        loop_g = np.repeat(grp, d["lt"])
+        old_p, new_p = d["uv"] * aspect, n2["uv"]                   # the unwrap's shape is square in its own units
+        res = np.empty_like(old_p)
+        mirrored = 0
+        for g in range(ng):
+            m = loop_g == g
+            if abs(a_new[g]) <= 1e-30:
+                res[m] = old_p[m]
+                continue
+            if units_per_m is not None:
+                want = (units_per_m * aspect[0]) ** 2 * a3[g]
+            else:
+                want = abs(a_old[g]) if abs(a_old[g]) > 1e-12 * max(a3[g], 1e-30) else dens * a3[g]
+            flip = a_old[g] * a_new[g] < 0
+            mirrored += int(flip)
+            res[m] = place_like(new_p[m], old_p[m], math.sqrt(want / abs(a_new[g])), flip)
+        uv = res / aspect
+        _write_uv(o, lay, uv, keep)
+        out[o.name] = {"islands": ng, "mirrored": mirrored,
+                       "moved_max": float(np.linalg.norm(uv - d["uv"], axis=1).max()) if len(uv) else 0.0}
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
 def _island_boxes(ob, lay, keep=None):
     """Islands of the mesh's own layer: id per corner, bounding boxes, unsigned and signed UV areas, UVs. keep: per
     polygon, only those faces (the corners and UVs returned are theirs; write back with _write_uv)."""

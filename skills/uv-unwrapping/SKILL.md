@@ -77,6 +77,11 @@ Measure, do not eyeball. The gate (this skill owns the numbers; `rizomuv-uv-pipe
 | Area p95 (log2 of the density change inside an island) | <= 0.20 | 0 = even density inside each island |
 
 Fix with seams first; keep a `uv.minimize_stretch` result only if the audit improves (sphere p95 1.06 to 1.23, 5.2.2).
+When the texture's placement must stay (a shipped look, directional fabric, a bake UV derived from it):
+`ua.reunwrap_in_place(objs, units_per_m=1.0)` (tiling at 1 unit/m; leave it out to keep each island's UV area)
+unwraps each island inside its own borders, then fits it back to its old position and direction, mirrored if it was.
+A bent 120 deg patch went from p95 1.64 to 1.00 with its centre, grain and density kept (5.2.2). Never a re-unwrap or
+`align_rotation` for this: both move and turn the islands.
 
 ## 5. Straighten and orient
 
@@ -182,6 +187,7 @@ resolution and bake settings belong to the engine's lighting setup (`vrchat-ligh
 | Symptom | Cause | Fix |
 |---|---|---|
 | Checker squares stretched into rectangles or diamonds | too few seams, or a projection on a curved form | seams on the curve's back line, `unwrap(method="ANGLE_BASED")`, audit |
+| Stretch fails the gate but the texture must stay where it is | islands unwrapped or projected badly, then textured | `ua.reunwrap_in_place(objs)` (section 4), then audit; a folded or closed island needs a new seam first |
 | Blurry here, crisp there | uneven texel density inside or between objects | `layout(px_per_m=...)`, the same px/m for neighbours |
 | A line across a flat surface | seam in view, or seam pixels not padded | move the seam to a hard edge or hidden side; pad the gap (section 7) |
 | Normal-map line along a hard edge, light leaking at corners | hard edge without a UV seam, or a bake without a cage | a seam on every hard edge (`baking=True` audit), bake with an averaged cage |

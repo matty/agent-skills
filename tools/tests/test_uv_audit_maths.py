@@ -664,6 +664,20 @@ class UvAuditMaths(unittest.TestCase):
         self.assertGreater(self.ua.corner_misfit(P, Q2).max(), 1e-3)
         self.assertGreater(self.ua.corner_misfit(P, P * np.array([-1, 1, 1])).max(), 1e-3)   # a mirror image
 
+    def test_place_like(self):
+        rng = np.random.default_rng(2)
+        P = rng.random((15, 2))
+        a = 2.4                                                      # past 90 deg: no small-angle shortcut
+        R = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+        mp = P.mean(0)
+        Q = 0.3 * (P - mp) @ R.T + np.array([7.0, -2.0])            # scaled, turned, moved
+        self.assertLess(np.abs(self.ua.place_like(P, Q, 0.3) - Q).max(), 1e-9)
+        M = Q * np.array([-1.0, 1.0])                                # its mirror image
+        self.assertLess(np.abs(self.ua.place_like(P, M, 0.3, mirror=True) - M).max(), 1e-9)
+        self.assertGreater(np.abs(self.ua.place_like(P, M, 0.3) - M).max(), 1e-3)   # no reflection unless asked
+        noisy = Q + rng.normal(0, 1e-3, Q.shape)                    # a stretched old island: centre kept exactly
+        self.assertLess(np.abs(self.ua.place_like(P, noisy, 0.3).mean(0) - noisy.mean(0)).max(), 1e-12)
+
     # ---- seams vs hard edges
     def test_hard_edges_not_seams(self):
         verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (1, 1, 1), (0, 1, 1)]
