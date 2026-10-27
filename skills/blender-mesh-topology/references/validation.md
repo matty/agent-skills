@@ -55,7 +55,9 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
 `joint_normals(a, b, select, matrix_a=None, matrix_b=None)` takes the same arguments and compares the shading normals
 there, paired face to face, faces lying wholly in the joint (end caps) left out: a curved piece ending against a
 straight one shows half its facet angle (fix: custom normals on the joint vertices, `form-and-detail.md` section 4);
-a piece shaded smooth across its folds against a hard-shaded one shows 54.7 deg.
+a piece shaded smooth across its folds against a hard-shaded one shows 54.7 deg. It is for joints meant to shade on
+smoothly; at a crease built on purpose (a mitred pipe joint reads its 90 deg, a corner piece its fold) compare
+`max_deg` with the angle you built rather than with 0.
 
 `joint_match(a, b, select, matrix_a=None, matrix_b=None)` compares the vertices two pieces have on a joint, in one
 frame: kit pieces pivot at the origin, so pass `matrix_b=Matrix.Translation((2, 0, 0))` to set a 2 m wall's
