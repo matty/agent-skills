@@ -229,6 +229,30 @@ def kit_joints_through_collection_instances():
     check(r["visible_m"] > 5 and r["issues"], "cube-projected 2 m piece must show at its joints: %s" % r)
 
 
+
+def mirrored_piece_joins_its_neighbour():
+    """A piece placed with a negative scale has its faces' winding reversed in world space; its joint with an
+    unmirrored neighbour is still a joint (the faces face the same way), so it is paired and checked."""
+    path = os.path.join(TMP, "T_EXT_Brick_BaseColor.png")
+    img = bpy.data.images.new("brick", 256, 256)
+    img.pixels.foreach_set(brick_tile().ravel())
+    img.filepath_raw, img.file_format = path, "PNG"
+    img.save()
+    col = bpy.data.collections.new("KIT_WALL_1m")
+    bpy.context.scene.collection.children.link(col)
+    col.objects.link(wall_piece("WALL_1m", 1.0))
+    bpy.context.view_layer.layer_collection.children["KIT_WALL_1m"].exclude = True
+    placed = []
+    for name, x, sx in (("P0", 0.0, 1.0), ("P1_mirrored", 2.0, -1.0)):           # P1 covers x 1-2, mirrored
+        e = bpy.data.objects.new(name, None)
+        e.instance_type, e.instance_collection = "COLLECTION", col
+        e.location, e.scale = (x, 0, 0), (sx, 1, 1)
+        bpy.context.scene.collection.objects.link(e)
+        placed.append(e)
+    bpy.context.view_layer.update()
+    r = NS["joints"](placed, path)
+    check(len(r["pairs"]) == 1 and r["seam_m"] > 5, "the mirrored piece's joint must be paired: %s" % r)
+
 def maths_without_meshes():
     img = np.zeros((4, 4, 3))
     img[:, 0] = 1.0                                        # column 0 bright: wraps onto column 3's right edge
@@ -248,7 +272,7 @@ def maths_without_meshes():
 
 
 CASES = [maths_without_meshes, noise_from_uv_shows_from_object_does_not, normal_bake_clean_until_an_island_moves,
-         kit_joints_through_collection_instances]
+         kit_joints_through_collection_instances, mirrored_piece_joins_its_neighbour]
 
 
 def main():

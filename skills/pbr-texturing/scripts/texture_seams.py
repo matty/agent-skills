@@ -238,7 +238,8 @@ def _mesh_arrays(ev, mw, uv_layer=None, normals=False, material=None):
         inv_t = np.linalg.inv(nm).T
         cn = cn.reshape(-1, 3) @ inv_t.T
         cn /= np.maximum(np.linalg.norm(cn, axis=1, keepdims=True), 1e-12)
-        d = {"co": co, "lv": lv, "ls": ls, "lt": lt, "uv": uv.reshape(-1, 2), "cn": cn}
+        d = {"co": co, "lv": lv, "ls": ls, "lt": lt, "uv": uv.reshape(-1, 2), "cn": cn,
+             "flip": -1.0 if np.linalg.det(nm) < 0 else 1.0}                   # a mirror reverses the winding
         if normals:
             if max(lt) > 4:
                 raise ValueError("%s has n-gons: MikkTSpace tangents need triangles or quads (triangulate it as it "
@@ -289,7 +290,7 @@ def _face_centre(d, f):
 def _face_normal(d, f):
     s, n = int(d["ls"][f]), int(d["lt"][f])
     p = d["co"][d["lv"][s:s + n]]
-    c = np.cross(p, np.roll(p, -1, axis=0)).sum(axis=0)
+    c = np.cross(p, np.roll(p, -1, axis=0)).sum(axis=0) * d.get("flip", 1.0)
     return c / max(np.linalg.norm(c), 1e-12)
 
 
