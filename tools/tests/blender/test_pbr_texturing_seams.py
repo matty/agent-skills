@@ -155,9 +155,10 @@ def normal_bake_clean_until_an_island_moves():
 
 
 def hard_edges_crease_is_not_a_seam():
-    """Arch sweep FP 2: a chamfered box with hard edges (and a UV seam on each, as uv-unwrapping requires) under a flat
-    normal map: its shading creases at every chamfer are the mesh's, so no seam shows; one face's island painted 20
-    deg off still shows along its border."""
+    """Arch and props sweeps: a chamfered box with hard edges (and a UV seam on each, as uv-unwrapping requires) under a
+    flat normal map, and the same with one face's island tilted 20 deg (as a bake of a creased high tilts one side): a
+    normal map's seams on hard edges are folds the low makes on purpose, reported in folds_m and not judged; with
+    hard_deg 180 they are judged and the tilt shows. A NaN UV is an issue, not a silent pass."""
     bpy.ops.mesh.primitive_cube_add(size=1.0)
     ob = bpy.context.active_object
     bev = ob.modifiers.new("Bevel", "BEVEL")
@@ -177,7 +178,7 @@ def hard_edges_crease_is_not_a_seam():
     img.colorspace_settings.name = "Non-Color"
     img.pixels.foreach_set(px.ravel())
     r = NS["seams"](ob, save(img, "T_flat_Normal.png"), kind="normal")
-    check(r["seam_m"] > 1 and r["visible_m"] == 0, "flat map on hard edges: %s" % r)
+    check(r["folds_m"] > 1 and r["visible_m"] == 0, "flat map on hard edges: %s" % r)
     me = ob.data                                               # the biggest face's island, tilted 20 deg about V
     big = max(me.polygons, key=lambda p: p.area)
     uv = np.array([me.uv_layers.active.data[li].uv[:] for li in big.loop_indices])
@@ -185,8 +186,15 @@ def hard_edges_crease_is_not_a_seam():
     tilt = math.radians(20)
     px[max(y0, 0):y1, max(x0, 0):x1, :3] = (0.5 + 0.5 * math.sin(tilt), 0.5, 0.5 + 0.5 * math.cos(tilt))
     img.pixels.foreach_set(px.ravel())
-    r = NS["seams"](ob, save(img, "T_tilt_Normal.png"), kind="normal")
-    check(r["visible_m"] > 1.0, "a tilted island must show at its border: %s" % r)
+    path = save(img, "T_tilt_Normal.png")
+    r = NS["seams"](ob, path, kind="normal")
+    check(r["visible_m"] == 0, "a hard edge's seam is a fold: %s" % r)
+    r = NS["seams"](ob, path, kind="normal", limits=dict(NS["LIMITS"], hard_deg=180.0))
+    check(r["visible_m"] > 1.0, "judged as seams, the tilted island shows: %s" % r)
+    lay = me.uv_layers.active
+    lay.data[0].uv = (float("nan"), 0.0)
+    r = NS["seams"](ob, path, kind="normal")
+    check(r["issues"] and "not numbers" in r["issues"][0], "NaN UVs: %s" % r)
 
 
 def brick_tile(n=256, seed=4):
