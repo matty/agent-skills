@@ -797,10 +797,10 @@ def _evaluated(colls):
 def placement_overlaps(depsgraph, scene=None):
     """Faces of two different placements that lie in one plane, overlap with area and face the same way: z-fighting
     between placed pieces (an engaged capital flush with the wall it stands against), which no per-piece check sees.
-    End caps pressed together at a joint face opposite ways, are hidden, and are not counted; so are faces pressed
-    against a third placement's face (an engaged column's foot and the wall's both on the floor slab) and faces down
-    at the lowest level of the layout (both on the ground). LOD0 render meshes of every collection instance in the
-    scene, in world space. Returns [[placement, placement, face pairs]]."""
+    End caps pressed together at a joint face opposite ways, are hidden, and are not counted; so are two faces both
+    pressed against one third placement's face (an engaged column's foot and the wall's on the floor slab) and faces
+    down at the lowest level of the layout (both on the ground). LOD0 render meshes of every collection instance in
+    the scene, in world space. Returns [[placement, placement, face pairs]]."""
     scene = scene or bpy.context.scene
     faces, normals = [], {}
     for inst in depsgraph.object_instances:
@@ -826,8 +826,8 @@ def placement_overlaps(depsgraph, scene=None):
     for a, b in pairs:
         if a[0] == b[0] or normals[a].dot(normals[b]) <= 0:
             continue
-        if (pressed.get(a, set()) | pressed.get(b, set())) - {a[0], b[0]}:
-            continue                               # both against a third placement's face: hidden
+        if (pressed.get(a, set()) & pressed.get(b, set())) - {a[0], b[0]}:
+            continue                               # both against one third placement's face: hidden
         if normals[a].z < -0.99 and abs(lowest[a] - ground) < GRID_TOL_M and abs(lowest[b] - ground) < GRID_TOL_M:
             continue                               # feet on the ground
         key = tuple(sorted((a[0], b[0])))
