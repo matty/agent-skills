@@ -111,9 +111,9 @@ Arguments of `unwrap_objects` and `unwrap_selected` (passed on to `unwrap_object
 bodies, revolved parts and props with no obvious seams (Auto settings, sweep: `references/distortion-and-quality.md`).
 
 Every attempt is graded by `uv_metrics.grade()`: the distortion gate (angular p95 <= 1.15, p99 <= 1.5, max <= 2.0 over
-non-sliver triangles, area p95 <= 0.20, the p95 limits per island over 0.5% of the area, area max <= 2.0, plus this
-grader's global area mean <= 0.05 and islands beyond a shell's planar regions <= 25 per 100 faces, on shells cut into
-more than 12 islands), the layout (inside 0-1, no overlap, padding and margin as asked, no flipped polygons) and, for
+non-sliver triangles, area p95 <= 0.20, each island over 0.5% of the area at angular p95 <= 1.25 and area p95 <= 0.50,
+area max <= 2.0, plus this grader's global area mean <= 0.05 and islands beyond a shell's planar regions <= 25 per 100
+faces, on shells cut into more than 12 islands), the layout (inside 0-1, no overlap, padding and margin as asked, no flipped polygons) and, for
 a filled UV0 of up to 100 islands, coverage >= 0.35, lowered for long thin pieces to 0.8 x what their shape allows (3D
 area / the largest connected shell's bounding-box diagonal squared; a 3 m beam 0.16). On a failure the unwrap is
 retried with `Quality` 0.85, then Mosaic 0.9; a `hard` pack that covers too little or does not fit goes straight to

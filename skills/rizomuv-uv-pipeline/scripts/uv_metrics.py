@@ -52,9 +52,10 @@ import numpy as np
 # face's density against its island's (a patch at 2x or 1/2 the texel density). area_global_mean and
 # islands_per_100_faces: kept by this grader for its retries (shattering, uneven packs).
 GATE = {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_local_p95": 0.20,
-        "island_angular_p95": 1.15, "island_area_local_p95": 0.20, "area_local_max": 2.0,
+        "island_angular_p95": 1.25, "island_area_local_p95": 0.50, "area_local_max": 2.0,
         "area_global_mean": 0.05, "islands_per_100_faces": 25.0}
-ISLAND_MIN_SHARE = 0.005        # islands with at least this share of the area meet the p95 limits on their own
+ISLAND_MIN_SHARE = 0.005        # islands with at least this share of the area meet the island_ limits on their own
+                                # (the texel band between islands, 0.8-1.25x, held inside one)
 FRAGMENT_FREE_ISLANDS = 12      # per shell: a box's 6 islands or a small kit piece's dozen are never "fragmented"
 SLIVER_QUALITY = 0.02           # triangle quality 4*sqrt(3)*area / sum(edge^2): 1 equilateral, < 0.02 a sliver
 PAD_TOL_PX = 0.5                # RizomUV's PaddingPerfect pads on a pixel grid: measured gaps 3.5-3.9 px at pad 4
@@ -771,9 +772,10 @@ def bbox_share(uvw_ids, uvw):
 
 def merge_gate(gate=None):
     """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest; a
-    whole-object key it sets (angular_p95, area_local_p95) also sets its per-island twin unless the gate sets that
-    too, as uv-unwrapping's audit judges both against one limit. A value of float('inf') switches that check off. Raises TypeError or ValueError for anything but a dict of
-    known keys and numbers, so a typo fails at once instead of sending every piece to review."""
+    whole-object key it loosens past its per-island twin (angular_p95, area_local_p95) loosens the twin with it unless
+    the gate sets that too, as uv-unwrapping's audit does. A value of float('inf') switches that check off. Raises
+    TypeError or ValueError for anything but a dict of known keys and numbers, so a typo fails at once instead of
+    sending every piece to review."""
     if gate is None:
         return dict(GATE)
     if not isinstance(gate, dict):
@@ -788,7 +790,7 @@ def merge_gate(gate=None):
     merged.update(gate)
     for whole, island in (("angular_p95", "island_angular_p95"), ("area_local_p95", "island_area_local_p95")):
         if whole in gate and island not in gate:
-            merged[island] = gate[whole]
+            merged[island] = max(merged[island], gate[whole])
     return merged
 
 

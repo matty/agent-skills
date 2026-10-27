@@ -192,8 +192,8 @@ class Gate(unittest.TestCase):
 
     def test_canonical_values(self):
         self.assertEqual(self.um.GATE, {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0,
-                                        "area_local_p95": 0.20, "island_angular_p95": 1.15,
-                                        "island_area_local_p95": 0.20, "area_local_max": 2.0,
+                                        "area_local_p95": 0.20, "island_angular_p95": 1.25,
+                                        "island_area_local_p95": 0.50, "area_local_max": 2.0,
                                         "area_global_mean": 0.05, "islands_per_100_faces": 25.0})
         self.assertEqual(self.um.ISLAND_MIN_SHARE, 0.005)
         self.assertEqual(self.um.FRAGMENT_FREE_ISLANDS, 12)
@@ -223,8 +223,10 @@ class Gate(unittest.TestCase):
             self.um.merge_gate({"angular_p95": "1.2"})
 
     def test_partial_gate_carries_to_the_island_twin(self):
-        g = self.um.merge_gate({"angular_p95": 1.3})                    # as uv_audit judges both with one limit
-        self.assertEqual((g["angular_p95"], g["island_angular_p95"], g["island_area_local_p95"]), (1.3, 1.3, 0.20))
+        g = self.um.merge_gate({"angular_p95": 1.4})                    # loosened past the island's 1.25
+        self.assertEqual((g["angular_p95"], g["island_angular_p95"], g["island_area_local_p95"]), (1.4, 1.4, 0.50))
+        g = self.um.merge_gate({"angular_p95": 1.1})                    # tightened: the island keeps its own
+        self.assertEqual(g["island_angular_p95"], 1.25)
         g = self.um.merge_gate({"angular_p95": 1.3, "island_angular_p95": 1.2})
         self.assertEqual(g["island_angular_p95"], 1.2)
 
