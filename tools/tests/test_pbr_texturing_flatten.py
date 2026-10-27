@@ -113,6 +113,12 @@ class Flatten(unittest.TestCase):
                 self.assertEqual(tf.main([os.path.join(d, "T_*.png"), "--out", out]), 0)
             self.assertEqual(tf.pc.png_header(os.path.join(out, "T_EXT_Ground_Height.png"))[2:4], (16, 0))
             self.assertEqual(tf.pc.png_header(os.path.join(out, "T_EXT_Ground_BaseColor.png"))[2:4], (8, 2))
+            tga = os.path.join(d, "T_EXT_Ground_Roughness.tga")                  # PNG data, another extension
+            tf.write_png(tga, px, channels=1)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(tf.main([tga, "--out", out]), 0)
+            self.assertTrue(os.path.isfile(os.path.join(out, "T_EXT_Ground_Roughness.png")))
+            self.assertFalse(os.path.exists(os.path.join(out, "T_EXT_Ground_Roughness.tga")))
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 self.assertEqual(tf.main([src, "--out", d]), 1)                  # never over its own source

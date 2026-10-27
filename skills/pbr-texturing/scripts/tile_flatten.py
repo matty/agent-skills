@@ -26,8 +26,9 @@ Roles come from the file name's last word: BaseColor / Albedo / Diffuse (sRGB co
 channel in linear light, so the detail keeps its contrast and colour patches go as well as tone), Roughness /
 Smoothness / AO / Height / Displacement and other grey maps (an offset on channel 0), MetallicSmoothness (an offset
 on the smoothness in A; metallic stays binary), Normal / NormalGL / NormalDX (the low-harmonic tilt removed,
-vectors renormalised). Flatten every map of a set together, or a patch stays in the maps left alone. Each output keeps its
-source's channel count and bit depth. The names in --out are the source names.
+vectors renormalised). Flatten every map of a set together, or a patch stays in the maps left alone. Each output keeps
+its source's channel count and bit depth and is a PNG: the names in --out are the source names with .png (a .jpg or
+.tga source, read through Blender or Pillow, comes out as <name>.png).
 
 As a module: flatten(px, role, cycles=2.0, keep=0.0) returns the new float (height, width, 4) array; role_of(path).
 """
@@ -165,8 +166,8 @@ def main(argv):
     os.makedirs(args.out, exist_ok=True)
     bad = 0
     for path in paths:
-        dst = os.path.join(args.out, os.path.basename(path))
-        if os.path.abspath(dst) == os.path.abspath(path):
+        dst = os.path.join(args.out, os.path.splitext(os.path.basename(path))[0] + ".png")
+        if os.path.abspath(args.out) == os.path.dirname(os.path.abspath(path)):
             print("PROBLEM %s: --out is the source folder; refusing to overwrite" % path)
             bad += 1
             continue

@@ -107,10 +107,11 @@ low spatial frequencies (Mullen 1985, "The contrast sensitivity of human colour 
 chromatic gratings", J. Physiol. 359:381-400; the weight 2 is this check's choice). Calibrated 2026-10-27 on 20 Poly
 Haven 1k tiling base colours, each judged by eye in a 3 x 3 composite: the six with an obvious grid (rocks_ground_02,
 cobblestone_floor_04, aerial_grass_rock, medieval_blocks_05, weathered_brown_planks, brown_mud_leaves_01) measured
-0.0118-0.0205; ten with a milder repeat 0.0037-0.0126; four with none 0.0000-0.0088. Without the colour weight,
-brown_mud_leaves_01 (green patches on brown at much the same luma) measured 0.0074 and fell among the mild ones. The
-windowed seam of all 20 measured 0.08-1.06. What it does not see: a distinctive feature repeating (rocks_ground_02's
-large pale rocks, a crack, a plank layout): the composite and a wide view still judge those.
+0.0118-0.0205; ten with a milder repeat 0.0012-0.0126; four with none 0.0000-0.0088. The PROBLEM limit, 0.011, fails
+seven: the six, and ganges_river_pebbles (0.0126), judged milder by eye; the limit errs towards flattening. Without
+the colour weight, brown_mud_leaves_01 (green patches on brown at much the same luma) measured 0.0074 and fell among
+the mild ones. The windowed seam of all 20 measured 0.08-1.06. What it does not see: a distinctive feature repeating
+(rocks_ground_02's large pale rocks, a crack, a plank layout): the composite and a wide view still judge those.
 
 **The Y convention.** A normal map that comes from a surface (a bake, or a height map) is the slope field of a height,
 so its two estimates of the height's mixed derivative agree for the right Y sign and are opposite for the wrong one.

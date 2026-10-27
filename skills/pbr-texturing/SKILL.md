@@ -84,7 +84,7 @@ runs along each board in 3D. Routes and the check: `references/seamless-textures
   the bottom 20-30 cm of walls (position: splash and scuffs), around handles and switches (hand contact). Restraint:
   one story per material, at a scale that reads at the viewing distance.
 - Repetition is the giveaway of a kit. First the tile is even at its own scale: `pbr_check.py --tiling` fails a tile
-  whose patches will draw a grid (a PROBLEM; 6 of 20 Poly Haven tiles failed, each visibly), and
+  whose patches will draw a grid (a PROBLEM; 7 of 20 Poly Haven tiles failed, 6 with an obvious grid), and
   `scripts/tile_flatten.py` on the whole map set fixes it while keeping the detail. A distinctive feature inside the
   tile (one pale stone) is retouched out or becomes a decal. Then variation comes back from another layer at
   another period: a unique macro map with the tiling detail in the detail slot on one-piece surfaces (terrain), two

@@ -40,7 +40,7 @@ Two separate jobs, in this order: make the tile itself even at its own scale (th
 another period from another layer.
 
 1. **The tile is even at tile scale.** `pbr_check.py --tiling` measures it (`lf`, a PROBLEM over 0.011; calibration:
-   `references/pbr-values.md`). Six of 20 Poly Haven library tiles failed it, every one with an obvious grid in a
+   `references/pbr-values.md`). Seven of 20 Poly Haven library tiles failed it, six of them with an obvious grid in a
    3 x 3 composite: a library or scanned material is not even by default. Fix a PROBLEM with
    `scripts/tile_flatten.py` on every map of the set together (colour, roughness, height, AO, normal), so no patch
    survives in the maps left alone; it removes the tile's lowest harmonics and keeps the detail
