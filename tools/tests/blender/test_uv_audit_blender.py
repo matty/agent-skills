@@ -1513,7 +1513,38 @@ def layout_cuts_long_islands():
     print("INFO layout_cuts_long_islands: %.0f px/m whole, %.0f px/m cut" % (cov_whole, r["texel_px_per_m"]))
 
 
-CASES = [pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
+def tiling_islands_moved_home():
+    """home_tiling moves tiling islands by whole repeats only: each lands with its lowest corner in the first repeat,
+    the texture it samples is unchanged (UV mod period), sizes are kept. The tiling audit flags UVs that FP16 would
+    round by over 1 px when homing fixes it, and only notes an island too long to bring under it."""
+    q3 = [quad(0, 0, 0.45, 0.45), quad(1, 0, 2.75, 0.3), quad(3, 0, 3.5, 0.5)]
+    uvs = [sq(20.3, -7.6, 0.45), sq(-3.2, 30.1, 1.75, 0.3), sq(0.2, 0.2, 0.5)]
+    ob = make("TILES", q3, uvs)
+    before = np.concatenate(face_uvs(ob))
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(any("home_tiling" in i for i in r["issues"]), "far UVs not flagged: %s" % r["issues"])
+    moved = ua.home_tiling([ob])[ob.name]
+    after = np.concatenate(face_uvs(ob))
+    check(moved == 2, "moved %d islands, expected 2" % moved)
+    check(np.allclose(np.mod(after, 1.0), np.mod(before, 1.0), atol=1e-4), "the texture under an island changed")
+    lows = [f.min(0) for f in face_uvs(ob)]
+    check(all((lo >= -1e-6).all() and (lo < 1).all() for lo in lows), "island corners not home: %s" % lows)
+    check(np.allclose(np.ptp(after.reshape(3, 4, 2), 1), np.ptp(before.reshape(3, 4, 2), 1), atol=1e-5),
+          "an island changed size")
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(r["uv_far"] < 2.8 and not r["issues"] and not r["notes"], "after home: %s / %s" % (r["issues"], r["notes"]))
+    reset()
+    ob = make("TILES2", [quad(0, 0, 0.5, 0.5)], [sq(3.25, 0.25, 0.5)])
+    ua.home_tiling([ob], period=2.0)
+    check(abs(face_uvs(ob)[0].min(0)[0] - 1.25) < 1e-5, "period 2 moved by %s" % face_uvs(ob)[0].min(0))
+    reset()
+    ob = make("FLOOR", [quad(0, 0, 20, 1)], [sq(0.0, 0.0, 20.0, 1.0)])     # 20 m at 1 unit/m: cannot come home
+    r = ua.audit(ob, purpose="tiling", map_px=1024)
+    check(not r["issues"] and any("FP16" in n for n in r["notes"]), "long floor: %s / %s" % (r["issues"],
+                                                                                            r["notes"]))
+
+
+CASES = [tiling_islands_moved_home, pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
          stack_added_triangulate, seams_by_angle_matches_select_sharp, text_up_attribute_in_world_space,
          trim_sheet_2048x1024, material_filter_and_command_line, stack_faces_names_the_causes,
          lightmap_lods_at_their_own_footprint, hard_edges_route_a_boolean, modular_wall_mixed_materials,

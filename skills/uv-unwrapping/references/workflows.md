@@ -105,7 +105,8 @@ Why this order (Blender 5.2.2, measured 2026-10-17 on `blender-mesh-topology`'s 
 2. One material per kind of surface: tiling (walls, floors) and trim (mouldings, frames, edges, pipes). Every audit
    below takes `material=` so each part is judged by its own rule.
 3. Tiling surfaces: `bpy.ops.uv.cube_project(cube_size=map_px / px_per_m, correct_aspect=False)`; one UV tile is
-   `cube_size` metres in object space (2048 / 512 = 4.0). Leave the UVs outside 0-1: they tile.
+   `cube_size` metres in object space (2048 / 512 = 4.0). Never scale them into 0-1: they tile. Move them home by
+   whole tiles, `ua.home_tiling([ob], material="M_Wall")` (`period=` 1 / the material's tiling when it is not 1).
 4. Trim surfaces, on a sheet of w x h px (2048x1024 below). Neither this skill nor `rizomuv-uv-pipeline` automates
    trim matching; do it by hand:
    - Give the trim material the sheet before unwrapping: an Image Texture node holding an image of the sheet's size,

@@ -77,6 +77,15 @@ BAKERY_INSET_TEXELS = 3      # Bakery's Default atlas packer insets each rect th
 EFFECTIVE_DENSITY_MIN = 0.5  # Bakery: an issue when the charts get under this share of the planned texels per metre
 UNWRAP_MARGIN = 0.001       # unwrap with this margin: at 0, islands that land touching along a seam fuse into one
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
+UV_HALF_ERR_PX = 1.0         # the most a 16-bit (FP16) UV0 may be rounded, in texels of the map: Unity's default
+                             # Vertex Compression stores UV0 as FP16 (engine notes), which rounds a UV of v to within
+                             # map_px x 2^(floor(log2 v) - 11) px, so far-out tiling UVs swim off their place
+
+
+def half_error_px(v, map_px):
+    """The most an FP16 UV of magnitude v is rounded, in pixels of a map_px texture (half its step there)."""
+    v = abs(float(v))
+    return 0.0 if v < 2.0 ** -14 else float(map_px) * 2.0 ** (math.floor(math.log2(v)) - 11)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
 TEXT_UP_ATTR = "uv_text_up"  # optional face vector: the 3D direction the letters' up points to (default world +Z)
@@ -763,6 +772,10 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     margin = (round(min(float(uv[hl, 0].min()) * w, float(1 - uv[hl, 0].max()) * w,
                         float(uv[hl, 1].min()) * h, float(1 - uv[hl, 1].max()) * h), 2) + 0.0
               if hl.any() else None)
+    # how far from 0 the UVs reach, as they are and with every island moved home by whole tiles (home_tiling)
+    uv_far = round(float(np.abs(uv).max()), 3) if len(uv) else 0.0
+    uv_far_home = round(float((hi - np.floor(lo + UV_EPS)).max()), 3) if n_isl else 0.0
+    half_err, half_err_home = half_error_px(uv_far, max(w, h)), half_error_px(uv_far_home, max(w, h))
     # strip direction and trim rows; islands holding text faces follow the text rule instead of the grain rule
     elong, along_v = _orientation(d, isl_poly, n_isl, aspect)
     along_v = along_v & ~text_isl
@@ -793,6 +806,8 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
            "mirror_stacks": int(mirror_stacks),
            "zero_area_uv_faces": int(len(np.unique(d["tpoly"][zero_uv]))),
            "outside_0_1": round(outside, 4), "islands_off_tile": int(off_tile),
+           "uv_far": uv_far, "uv_far_home": uv_far_home, "half_error_px": round(half_err, 3),
+           "half_error_px_home": round(half_err_home, 3),
            "texel_px_per_m": round(td_mean, 1), "texel_cv": round(td_cv, 3),
            "texel_island_range": ([round(float(td_isl[wi > 0].min()), 1), round(float(td_isl[wi > 0].max()), 1)]
                                   if (wi > 0).any() else None),
@@ -815,6 +830,11 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     if lightmap_fp:
         rep.update(lightmap_fp)
     rep["notes"] = []
+    if purpose in ("tiling", "trim") and half_err_home > UV_HALF_ERR_PX:
+        rep["notes"].append("an island reaches %.1f tiles from 0 even moved home, where an FP16 UV0 (Unity's default "
+                            "Vertex Compression) rounds up to %.0f px: split the surface, use a lower texel density "
+                            "with a detail map, or take Tex Coord 0 out of Vertex Compression"
+                            % (uv_far_home, half_err_home))
     low_density = None
     if purpose == "lightmap":
         # a lightmapper packs the charts' bounding box: empty space inside it costs texels (Unity 2022.3, measured;
@@ -889,6 +909,11 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
         out.append("UVs outside 0-1")
     if purpose == "unique" and r["islands_off_tile"]:
         out.append("%d islands leave the 0-1 tile (they do not fit)" % r["islands_off_tile"])
+    if (purpose in ("tiling", "trim") and r["half_error_px"] > UV_HALF_ERR_PX
+            and r["half_error_px_home"] < r["half_error_px"]):
+        out.append("UVs reach %.1f tiles from 0, where an FP16 UV0 rounds up to %.1f px (over %g): move the islands "
+                   "home by whole tiles, home_tiling(); it never changes the look"
+                   % (r["uv_far"], r["half_error_px"], UV_HALF_ERR_PX))
     if r.get("overlapping_island_pairs"):
         out.append("%d island pairs partly overlap" % r["overlapping_island_pairs"])
     if purpose == "lightmap" and r.get("stacked_island_pairs"):
@@ -1686,6 +1711,39 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
             ob.data.uv_layers.active_index = prev
     if pack_after:
         pack(objects, map_px=(w, h), pad_px=pad_px, layer=layer, scale=False, keep_stacks=keep_stacks, rotate=rotate)
+    if was_edit and bpy.context.view_layer.objects.active is not None:
+        bpy.ops.object.mode_set(mode="EDIT")
+    return out
+
+
+def home_tiling(objects, layer=0, period=1.0, material=None):
+    """Tiling and trim layers only: move every island by whole repeats so its lowest corner lands in the first one
+    (0 to period), never scaling or turning it. The texture samples the same texels after the move (Wrap Mode
+    Repeat), the UV editor shows the islands on its tile, and small UVs keep their precision where an engine stores
+    them as 16-bit floats. period: the texture's repeat in UV units, 1 / the material's tiling (tiling 0.5: period
+    2; shifting by 1 there would move the pattern half a texture). Islands longer than one repeat still reach past
+    it, as they must. Never on a unique or lightmap layer: it would fold +1 U bake copies onto their originals.
+    material: only those faces. Returns {object name: islands moved}."""
+    if period <= 0:
+        raise ValueError("home_tiling(period=%r): the repeat must be positive" % period)
+    objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    out = {}
+    for o in objects:
+        lay = _layer(o.data, layer)
+        if lay is None:
+            raise ValueError("%s has no UV layer %r" % (o.name, layer))
+        keep = _keep_faces(o, material)
+        if keep is not None and not keep.any():
+            continue
+        isl_loop, lo, _hi, _area, _signed, uv = _island_boxes(o, lay, keep)
+        shift = -np.floor(lo / period + UV_EPS) * period
+        moved = int(np.count_nonzero(np.abs(shift).max(1) > 0)) if len(shift) else 0
+        if moved:
+            _write_uv(o, lay, uv + shift[isl_loop], keep)
+        out[o.name] = moved
     if was_edit and bpy.context.view_layer.objects.active is not None:
         bpy.ops.object.mode_set(mode="EDIT")
     return out

@@ -18,7 +18,7 @@ mesh and drops the Triangulate and Weighted Normal: 12.59 deg off after export).
 
 | Surface | `purpose` | UVs |
 |---|---|---|
-| Walls, floors, terrain, large plain surfaces | `tiling` | world scale, may run far outside 0-1 (Cube Projection, section 6) |
+| Walls, floors, terrain, large plain surfaces | `tiling` | world scale, never scaled or packed to fit 0-1; then `ua.home_tiling(objs)` moves each island home by whole tiles (section 6) |
 | Mouldings, frames, pipes, trims, kit edges | `trim` | straightened strips on the trim sheet's rows, U free along the strip |
 | Props and hero pieces with their own texture or a bake; objects sharing an atlas | `unique` | the order of work below, inside 0-1 |
 | Every render mesh of a kit (LODs and probe-lit props too, not `_COL`) | `lightmap` | the second UV map; its gaps and bends matter where it is lightmapped (section 9) |
@@ -110,6 +110,13 @@ objects, or the odd one out looks blurry or oversharp.
   or on a non-square trim sheet, which `layout` refuses, `ua.set_texel_density(..., pack_after=False)` (workflows).
 - Tiling: Cube Projection maps `cube_size` metres to one UV tile in object space, so `cube_size = map_px / px_per_m`
   (2048 / 512 = 4.0, verified on 5.2.2). An unapplied scale of 2 halves the density.
+- Tiling and trim islands then go home: `ua.home_tiling(objs, period=1 / material tiling)` moves each by whole
+  repeats so its lowest corner sits in the first one. It samples the same texels (Wrap Mode Repeat), so it never
+  changes the look; the UV editor shows the islands on its tile, and the UVs stay small where an engine stores them
+  as FP16 (Unity's default Vertex Compression does that to UV0: engine notes). The audit fails tiling and trim UVs
+  that FP16 would round by more than 1 px when moving home would help, and notes an island too long to get there.
+  Islands longer than a repeat still run past it, as they must.
+  Never scale or `pack` a tiling layer to fit 0-1: that changes its density. Never home a unique or lightmap layer.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
   mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
   audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.

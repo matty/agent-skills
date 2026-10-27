@@ -134,6 +134,32 @@ class UvAuditMaths(unittest.TestCase):
         self.assertEqual(ua.map_size("165.2"), (165, 165))          # the validator prints fractional footprints
         self.assertEqual(ua.map_size(165.9), (165, 165))
 
+    def test_half_error_bounds_real_fp16_rounding(self):
+        # half_error_px is the worst FP16 rounding of a UV, in texels: check it against numpy's float16 over a sweep
+        ua = self.ua
+        for v in np.linspace(0.01, 40.0, 4001):
+            err = abs(float(np.float16(v)) - v) * 1024
+            self.assertLessEqual(err, ua.half_error_px(v, 1024) + 1e-9, v)
+        self.assertEqual(ua.half_error_px(0.5, 1024), 0.25)
+        self.assertEqual(ua.half_error_px(1.5, 1024), 0.5)
+        self.assertEqual(ua.half_error_px(2.75, 1024), 1.0)       # a 1.75 m strip moved home: at the gate, passes
+        self.assertEqual(ua.half_error_px(20.0, 1024), 8.0)       # a 20 m floor at 1 unit/m
+        self.assertEqual(ua.half_error_px(0.0, 1024), 0.0)
+
+    def test_tiling_far_from_home_is_an_issue_and_a_long_island_a_note(self):
+        ua = self.ua
+        far = self.m(mesh([(0, 0, 0), (0.5, 0, 0), (0.5, 0.5, 0), (0, 0.5, 0)], [[0, 1, 2, 3]],
+                          [[(30.0, 1.0), (30.5, 1.0), (30.5, 1.5), (30.0, 1.5)]]), purpose="tiling")
+        self.assertTrue(any("home_tiling" in i for i in far["issues"]), far["issues"])
+        self.assertAlmostEqual(far["uv_far_home"], 0.5, places=6)
+        long_ = self.m(mesh([(0, 0, 0), (20, 0, 0), (20, 1, 0), (0, 1, 0)], [[0, 1, 2, 3]],
+                            [[(0.0, 0.0), (20.0, 0.0), (20.0, 1.0), (0.0, 1.0)]]), purpose="tiling")
+        self.assertFalse(long_["issues"], long_["issues"])
+        self.assertTrue(any("FP16" in n for n in long_["notes"]), long_["notes"])
+        uniq = self.m(mesh([(0, 0, 0), (0.5, 0, 0), (0.5, 0.5, 0), (0, 0.5, 0)], [[0, 1, 2, 3]],
+                           [[(30.0, 1.0), (30.5, 1.0), (30.5, 1.5), (30.0, 1.5)]]), purpose="unique")
+        self.assertFalse(any("home_tiling" in i for i in uniq["issues"]), uniq["issues"])
+
     def test_footprint_formula(self):
         # measured in Unity 2022.3 on 2026-10-16: a 2 x 3 x 0.2 m wall (14 m2, UV2 box share b 0.850) at 60 texels/m
         # got a 242.8 px square
