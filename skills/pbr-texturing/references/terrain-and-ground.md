@@ -61,8 +61,9 @@ for the area: a larger period, or a second detail scale through a custom shader.
 
 ## Slopes, cliffs and chunks
 
-- A top-down projection stretches a slope by 1 / cos(slope): ground over about 25 deg is a separate mesh (a bank, a
-  cliff, rocks) with its own unwrap at the family's density (`uv-unwrapping`, slopes and terrain).
+- A top-down projection stretches a slope by 1 / cos(slope) (the UV distortion gate fails above 29.6 deg): ground over
+  about 25 deg is a separate mesh (a bank, a cliff, rocks) with its own unwrap at the family's density
+  (`uv-unwrapping`, slopes and terrain).
 - A terrain cut into chunks keeps one projection origin so the macro and detail UVs continue across chunk edges, its
   normals computed before the cut and its chunk borders welded; the lightmap side (one renderer where it fits) is
   `vrchat-lighting-and-baking`'s.
