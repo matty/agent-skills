@@ -74,6 +74,16 @@ class Rules(unittest.TestCase):
         s = table()
         part(s, "leg")["attach_to"] = "top"
         self.assertIn("floating_part", failing(s))     # nothing reaches the floor any more
+        for holder in ("ceiling", "free"):             # a pendant lamp; a pickup carried or set down anywhere
+            s = table()
+            for p in s["parts"]:
+                if p["attach_to"] == "floor":
+                    p["attach_to"] = holder
+            self.assertNotIn("floating_part", failing(s), holder)
+        s = table()
+        part(s, "leg")["attach_to"] = "free"
+        part(s, "leg")["edges"] = [{"where": "corners", "tier": "secondary"}]
+        self.assertNotIn("warn_no_sharp_edge", keys(s))   # a pickup's base is seen and takes its tier
 
     def test_primitive_box(self):
         s = table()

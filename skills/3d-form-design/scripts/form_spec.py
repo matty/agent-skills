@@ -13,7 +13,7 @@ run in this repo's tests).
 
 The spec format and every rule are in references/form-spec.md. In short: a piece has a type, a viewing distance,
 bevel tiers in mm and a list of parts; each part has a name, role, size [x, y, z] in mm, made (material/process),
-build (method), attach_to (another part, "floor" or "wall"), optional shape (taper, splay, rake, crown) and an edge
+build (method), attach_to (another part, "floor", "wall", "ceiling" or "free"), optional shape (taper, splay, rake, crown) and an edge
 list in which every edge is a tier or "sharp".
 """
 
@@ -29,6 +29,7 @@ MATERIAL_MAX_MM = {          # the largest believable game bevel per material (r
 }
 BUILDS = {"box", "extrude", "revolve", "sweep", "loft", "subd", "cloth", "sculpt", "boolean", "skin", "array"}
 SOFT = {"upholstery", "fabric"}
+HOLDERS = ("floor", "wall", "ceiling", "free")   # free: a pickup, carried or set down anywhere (its base is seen)
 TIER_NAMES = ("primary", "secondary", "small")
 DISPLAY_MM_PER_PX_PER_M = {"vr20": 1000.0 / 1150.0, "vr25": 1000.0 / 1437.5,
                            "screen1080": 2 * math.tan(math.radians(30)) / 1080 * 1000.0}
@@ -129,10 +130,10 @@ def validate(spec):
         if build not in BUILDS:
             bad("part_build", "%s: build %r is not one of %s" % (n, build, sorted(BUILDS)))
         att = p.get("attach_to")
-        if att in ("floor", "wall"):
-            grounded = grounded or att == "floor"
+        if att in HOLDERS:
+            grounded = True
         elif att not in names or att == n:
-            bad("floating_part", "%s: attach_to %r is not another part, 'floor' or 'wall'" % (n, att))
+            bad("floating_part", "%s: attach_to %r is not another part or one of %s" % (n, att, ", ".join(HOLDERS)))
         sd = sorted(size)
         shape = p.get("shape", {})
         if build == "box" and sd[0] > BOARD * sd[1] and not (shape.get("taper") or shape.get("box_ok")):
@@ -182,10 +183,10 @@ def validate(spec):
             if fl and w < fl:
                 bad("warn_under_floor", "%s / %s: %.1f mm is under 2 px (%.1f mm) at %.1f m: widen it, or make it "
                     "sharp and leave the highlight to the texture" % (n, where, w, fl, view.get("usual_m", 0)))
-        if all(e.get("tier") != "sharp" for e in edges):
+        if att != "free" and all(e.get("tier") != "sharp" for e in edges):
             bad("warn_no_sharp_edge", "%s: every edge bevelled; which rest on something or meet a neighbour?" % n)
-    if not grounded and not any(p.get("attach_to") == "wall" for p in parts):
-        bad("floating_part", "no part attaches to the floor or a wall")
+    if not grounded:
+        bad("floating_part", "no part attaches to the floor, a wall or the ceiling, or is free (a pickup)")
 
     rules = TYPE_RULES.get(spec["type"])
     if rules is None:

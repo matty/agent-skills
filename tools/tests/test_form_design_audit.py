@@ -1,7 +1,8 @@
 """Plain-Python tests for 3d-form-design's scripts/form_audit.py on extruded profiles built here: a plain box, a small
 chamfer, an oversized chamfer (the soap-bar case), a 3-segment round merged into one section, a cylinder's facets
-and a plank's sides not taken for bevels, chamfers on the bottom contact face, one bevel width on parts of very
-different size, a floating part, size tiers, silhouettes, the OBJ reader and the CLI's exit code.
+and a plank's sides not taken for bevels, profile rounds, marked rounds and sliver flanks left unjudged, chamfers on
+the bottom contact face, one bevel width on parts of very different size, a floating part, size tiers, silhouettes,
+the OBJ reader and the CLI's exit code.
 
 Host: plain Python 3.9+, standard library. Run from the repo root:
     python -B -m unittest discover -s tools/tests -p "test_form_design_*.py"
@@ -169,6 +170,33 @@ class Bevels(unittest.TestCase):
         self.assertEqual(r["bevels"], [])
         r = fa.audit(*extrude(rect_profile(1.0, 0.02), 1.0))
         self.assertEqual(r["bevels"], [])
+
+    def test_profile_round_is_not_a_bevel(self):
+        # hero prop F15: a bracket's R15 tombstone arch reads 47 mm of "bevel" against 35 mm of flat; it is the profile
+        r = 0.015
+        pts = [(-r, 0), (r, 0)] + [(r * math.cos(math.pi * k / 12), 0.035 + r * math.sin(math.pi * k / 12))
+                                   for k in range(13)]
+        rep = fa.audit(*extrude(pts, 0.05), silhouettes=False)
+        arch = [s for s in rep["bevels"] if s["width"] > 0.04]
+        self.assertEqual([s["kind"] for s in arch], ["round"])
+        self.assertNotIn("over_bevelled", keys(rep))
+        self.assertEqual(rep["rounds"], 1)
+
+    def test_marked_round_and_sliver_flank(self):
+        # a corner bumper the design calls round: marked faces are reported, never judged
+        v, f = extrude(rect_profile(0.05, 0.05, 0.02), 0.5)
+        secs = fa.bevel_sections(v, f)
+        rep = fa.audit(v, f, silhouettes=False, rounds=secs[0]["faces"])
+        self.assertEqual(sorted(s["kind"] for s in rep["bevels"]), ["bevel"] * 3 + ["marked"])
+        rep = fa.audit(v, f, silhouettes=False, rounds=[i for s in secs for i in s["faces"]])
+        self.assertNotIn("over_bevelled", keys(rep))
+        # a 0.02 mm step between a chamfer and the flat (a Boolean union's sliver): no flat to measure against
+        p = rect_profile(0.4, 0.4, 0.01)
+        p = [p[0], p[1], (0.20002, 0.01), (0.20002, 0.39)] + p[3:]
+        rep = fa.audit(*extrude(p, 1.0), silhouettes=False)
+        self.assertIn("sliver", [s["kind"] for s in rep["bevels"]])
+        self.assertNotIn("over_bevelled", keys(rep))
+        self.assertIn("warn_sliver_flanks", keys(rep))
 
     def test_contact_bevel(self):
         r = fa.audit(*extrude(rect_profile(0.4, 0.4, 0.01), 1.0))
