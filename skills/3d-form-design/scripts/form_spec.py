@@ -19,6 +19,7 @@ list in which every edge is a tier or "sharp".
 
 import json
 import math
+import re
 import sys
 
 MATERIAL_MAX_MM = {          # the largest believable game bevel per material (references/bevels.md section 2)
@@ -205,14 +206,20 @@ def validate(spec):
     return out
 
 
+def is_part(obj_name, part):
+    """True when an object is the part or a copy of it: part, part.001, part_1, part_low, part_low.001. Never another
+    part that starts with the same word (handle_bracket is not a handle) or a bake high (part_high...)."""
+    return re.fullmatch(re.escape(part) + r"(?:_low)?(?:[._]\d+)?", obj_name) is not None
+
+
 def check_build(spec, measured, tol_mm=BUILD_TOL_MM, tol=BUILD_TOL):
     """[(key, evidence)] comparing built part sizes (name -> (x, y, z) mm, in the part's own axes) with the spec.
-    A part with count N is matched as name, name.001 ... or name_1 ... (any of them may be given). Sizes are compared
+    A part with count N is matched as name, name.001 ... or name_1 ... (any of them may be given; is_part). Sizes are compared
     sorted, so a part modelled lying another way round still matches; its orientation is the renders' job."""
     out = []
     for p in spec["parts"]:
         n = p["name"]
-        hits = {k: v for k, v in measured.items() if k == n or k.startswith(n + ".") or k.startswith(n + "_")}
+        hits = {k: v for k, v in measured.items() if is_part(k, n)}
         want = int(p.get("count", 1))
         if not hits:
             out.append(("part_missing", "%s: not built" % n))
@@ -237,8 +244,7 @@ def measure_parts(spec):
     out = {}
     names = [p["name"] for p in spec["parts"]]
     for ob in bpy.data.objects:
-        if ob.type != "MESH" or not any(ob.name == n or ob.name.startswith(n + ".") or ob.name.startswith(n + "_")
-                                        for n in names):
+        if ob.type != "MESH" or not any(is_part(ob.name, n) for n in names):
             continue
         ev = ob.evaluated_get(deps)
         me = ev.to_mesh()

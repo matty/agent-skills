@@ -94,8 +94,9 @@ length, door widths against the carcass): add those up yourself and write the su
 
 ## Building from the spec
 
-- One Blender object per part, named exactly as the part (`front_leg`, `front_leg.001` for its copies), so
-  `check_build(spec, measure_parts(spec))` can find them. Join them for export only after the check.
+- One Blender object per part, named exactly as the part (`front_leg`; copies `front_leg.001` or `front_leg_1`; a
+  baked low may end `_low`), so `check_build(spec, measure_parts(spec))` can find them; `front_leg_brace` and
+  `front_leg_high` are never read as a front leg. Join them for export only after the check.
 - Build each part completely once, in this order: its profile and build method, its shape (taper, splay, crown,
   dish) as part of the construction rather than a later fix, its edges by tier (bevel weights per tier from the
   edge list, `blender-techniques.md`), then place it against what it attaches to.
