@@ -2147,6 +2147,13 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
                     uv = uv - t0
                     _write_uv(o, lay, uv, keep)
             out[o.name]["fits"] = bool(not len(uv) or (uv.min() >= -UV_EPS and uv.max() <= 1 + UV_EPS))
+            edge = (default_pad(size) if pad_px is None else float(pad_px)) / 2.0
+            margin = float(min(uv.min(), 1.0 - uv.max())) * size if len(uv) else None
+            out[o.name]["margin_px"] = None if margin is None else round(margin, 2)
+            if margin is not None and out[o.name]["fits"] and margin < edge - EDGE_SLACK_PX:
+                out[o.name]["fits"] = False             # inside the tile, but closer to its edge than the audit allows
+                out[o.name]["fit_problem"] = ("%.2f px from the tile edge (< %g): lower px_per_m about 1%% or raise "
+                                              "pad_px, and lay out again" % (margin, edge))
             _isl_loop, lo, hi, area, _signed, _uv = _island_boxes(o, lay, keep)
             stacks, _t = _stack_groups(lo, hi, area)
             moved, halves = _bake_offsets(o, lay, keep) if bake else (0, 0)

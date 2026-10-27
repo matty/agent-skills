@@ -37,8 +37,8 @@ per asset type as runnable Python: [references/workflows.md](references/workflow
    normals) is never shaded by angle again: seam it by angle, `ua.seams_by_angle(objs)` (`edges_select_sharp` at 30
    deg, then Mark Seam), keeping its sharp edges. A plain piece whose sharp edges nobody set (`not
    st["shading_designed"]`): `ob.data.set_sharp_from_angle(angle=math.radians(30))`, `ob.data.shade_smooth()` (this
-   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object). An organic baked low (rock,
-   root, sculpt) is shaded smooth whole: an angle split turns every ridge of a decimated rock into a seam.
+   mesh only: `bpy.ops.object.shade_smooth_by_angle` re-shades every selected object); a baked low
+   `radians(60)`, hard only at folds (30 cut a chamfered crate into 220 seams); organic (rock, sculpt) smooth whole.
 3. Seams (section 3); a baked piece starts with `ua.seams_from_hard_edges(objs)`.
 4. Unwrap UV0: `ob.data.uv_layers.active_index = 0`, then `bpy.ops.uv.unwrap(method="ANGLE_BASED", margin=0.001)`.
    Without `method` it reuses the last one; at margin 0, islands that land touching along a seam fuse into one.
@@ -142,7 +142,7 @@ long shell caps the scale ([manual](references/uv-audit.md)).
 |---|---|
 | Tiling and trim UV0 | yes, freely |
 | Unique UV0, painted, no bake | stack identical parts and mirrored halves exactly; mirrored islands print text backwards |
-| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently, and copies seen together within about 1 m (identical wear on four brackets reads as a stamp) |
+| Unique UV0 that takes a baked normal map or AO | stack, but at bake time one copy inside 0-1 and the others exactly +1 in U (`layout(bake=True)`); unstack parts that are occluded differently, copies seen together within about 1 m (identical wear on four brackets reads as a stamp), and copies whose texture signals come from 3D space with a smooth seam (the copy shows the other's texels there: 1.08 m of visible seam on a stacked box end) |
 | Lightmap UV | never |
 
 - Stack by face correspondence, before triangulating: `ua.stack_faces(ob, src_faces, copy_faces)` copies UVs corner by

@@ -204,6 +204,17 @@ def off_tile_island_is_reported():
           "spill not reported: %s" % r["issues"])
 
 
+def edge_margin_is_reported():
+    """Hero prop F7: an island that fits the tile but sits closer to its edge than half the gap is not a fit (the audit
+    of the same layout fails it); a smaller density that leaves the gap fits."""
+    for ppm, fits in ((508, False), (448, True)):
+        ob = make("EDGE%d" % ppm, [quad(0, 0, 1, 1)], [sq(0.1, 0.1, 0.5)])
+        res = ua.layout([ob], map_px=512, px_per_m=ppm)[ob.name]          # default gap 8 px: 4 px to the edge
+        check(res["fits"] is fits, "%d px/m: fits %s, expected %s: %s" % (ppm, res["fits"], fits, res))
+        check(fits or "tile edge" in res.get("fit_problem", ""), "no fit_problem: %s" % res)
+        check(res["margin_px"] is not None and (res["margin_px"] >= 4 - 1e-3) is fits, "margin_px %s" % res)
+
+
 def active_layer_restored():
     q3 = [quad(2 * i, 0, 2 * i + 1, 1) for i in range(3)]
     ob = make("LAYERS", q3, [sq(0.05, 0.05, 0.1), sq(0.3, 0.05, 0.2), sq(0.6, 0.05, 0.3)], layers=("UVMap", "UV2"))
@@ -1646,7 +1657,7 @@ CASES = [tiling_kit_continues_across_joints, pack_one_material, layout_cuts_long
          text_check_follows_align_rotation,
          lightmap_uv2_seams_not_smart_project, lightmap_flags_on_the_command_line, bevel_stack_order_of_work,
          stack_faces_checks_corner_order,
-         layout_atlas_together, off_tile_island_is_reported, crate_grain_by_axis_across, merged_mirror_halves_bake,
+         layout_atlas_together, off_tile_island_is_reported, edge_margin_is_reported, crate_grain_by_axis_across, merged_mirror_halves_bake,
          unwrap_margin_keeps_seams, lightmap_charts_cut_at_corners, uv0_is_the_default_layer,
          trim_strip_band_and_rows, stacking_tools, lightmap_pack_and_measured_footprint, lightmap_pack_for_bakery,
          active_layer_restored,

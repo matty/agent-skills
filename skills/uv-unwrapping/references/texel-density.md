@@ -78,6 +78,9 @@ leaves about 545 px/m. In this order:
 3. Close-range sharpness on the mobile build from a detail map on the largest material (wood grain, leather grain) at
    its own tiling: it costs a small map and holds the class where the override halves the main one.
 4. Report the class each set reaches on each platform; never let a set fall under 0.8x its class silently.
+5. Still short after 1-4 (a few large rectangles: Blender's packer stops near coverage 0.6, where a shelf of the same
+   rectangles fits): lay the largest islands in rows by hand, then `layout` the rest around them; or give the one
+   surface seen closest its own 4096 on PC; or accept the class it reaches and say so in the report.
 
 ## Lightmaps are a different density
 
