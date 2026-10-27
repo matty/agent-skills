@@ -246,7 +246,7 @@ re-place them: placement sync then sees new pieces and conflicts (the `blender-k
 |---|---|
 | Unit | 1 Blender unit = 1 m |
 | Grid pivot | Bottom-left corner: the piece extends into +X, +Y, +Z from its origin |
-| Free pivot | Floor centre (props), hinge (doors), base of trunk (trees), back-face centre (wall-mounted: switches, sconces, frames), top centre (ceiling-mounted: lamps). Front faces -Y at rot 0 |
+| Free pivot | Floor centre (props; round pieces such as towers and apses, which never have a whole-module diameter, are Free pieces pivoted here too), hinge (doors), base of trunk (trees), back-face centre (wall-mounted: switches, sconces, frames), top centre (ceiling-mounted: lamps). Front faces -Y at rot 0 |
 | In the piece collection | Objects at identity transform, `collection.instance_offset` zero |
 | Walls | Run along X; thickness in +Y, constant per family (`families.<F>.thickness`) |
 | Placement | Grid pieces on whole modules (`TRIM` pieces on `sub_module`), rotated in 90-degree steps: the validator errors otherwise, as QA blocks on it. Free pieces and assemblies are exempt. Trims sit on wall faces, so a family's `thickness` should be a multiple of `sub_module` (the validator warns) |
