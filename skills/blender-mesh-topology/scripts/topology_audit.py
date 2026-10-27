@@ -11,6 +11,8 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/topology_audit.py", encod
     ns["audit_many"]([o for o in bpy.data.objects if o.name.startswith("SK_")])
     ns["joint_match"](obj_a, obj_b, lambda co: abs(co.x) < 1e-4)   # do two pieces share their joint vertices?
     ns["determinism_hash"](obj)                               # compare across two builds: vertices and faces
+    ns["high_low_gap"](low, [high])                          # how far high and low part (relief, silhouette), metres
+    ns["bake_skew"](low)                                     # how slanted the bake's rays leave the low's faces
 
 audit_stack and normals_snapshot switch Triangulate modifiers off or on for a reading and restore them; nothing else
 is changed.
@@ -478,3 +480,122 @@ def determinism_hash(ob, digits=5):
         faces.append(tuple(corners[k:] + corners[:k]))
     key = repr((sorted(pos), sorted(faces))).encode()
     return hashlib.md5(key).hexdigest()[:12]
+
+
+# ---- high and low poly ---------------------------------------------------------------------------------------------
+
+def _world_mesh(ob, dg):
+    """(vertices (n, 3), triangles (m, 3), triangle areas, vertex normals (n, 3)) of ob as evaluated, in world space."""
+    import numpy as np
+    ev = ob.evaluated_get(dg)
+    me = ev.to_mesh()
+    try:
+        mw = np.array(ev.matrix_world)
+        co = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3) @ mw[:3, :3].T + mw[:3, 3]
+        vn = np.empty(len(me.vertices) * 3)
+        me.vertices.foreach_get("normal", vn)
+        vn = vn.reshape(-1, 3) @ np.linalg.inv(mw[:3, :3])
+        vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
+        me.calc_loop_triangles()
+        tri = np.empty(len(me.loop_triangles) * 3, np.int64)
+        me.loop_triangles.foreach_get("vertices", tri)
+        tri = tri.reshape(-1, 3)
+        area = 0.5 * np.linalg.norm(np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]]), axis=1)
+        return co, tri, area, vn
+    finally:
+        ev.to_mesh_clear()
+
+
+def _surface_samples(co, tri, area, n, seed=0):
+    """The vertices plus n points spread over the triangles by area."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    if n <= 0 or area.sum() <= 0:
+        return co
+    pick = rng.choice(len(tri), size=n, p=area / area.sum())
+    a, b = rng.random(n), rng.random(n)
+    flip = a + b > 1
+    a[flip], b[flip] = 1 - a[flip], 1 - b[flip]
+    t = tri[pick]
+    pts = co[t[:, 0]] + a[:, None] * (co[t[:, 1]] - co[t[:, 0]]) + b[:, None] * (co[t[:, 2]] - co[t[:, 0]])
+    return np.vstack([co, pts])
+
+
+def _signed_outside(points, trees):
+    """Per point: its signed distance outside the nearest surface among trees (positive: on the side its normal
+    points to)."""
+    import numpy as np
+    from mathutils import Vector
+    out = np.empty(len(points))
+    for i, p in enumerate(points):
+        best = None
+        for t in trees:
+            loc, nrm, _idx, dist = t.find_nearest(Vector(p))
+            if loc is not None and (best is None or dist < best[0]):
+                best = (dist, loc, nrm)
+        out[i] = 0.0 if best is None else float(np.dot(np.asarray(p) - np.asarray(best[1]), np.asarray(best[2])))
+    return out
+
+
+def high_low_gap(low, highs, depsgraph=None, samples=20000, seed=0):
+    """How far a low poly and its high polys part, in metres, both evaluated in world space (closed meshes with
+    outward normals): high_outside, how far the high stands outside the low (the relief the bake turns into a normal
+    map, and how far the cage must reach); low_outside, how far the low stands outside every high (a silhouette the
+    high does not have). Each as max and p99 over the vertices plus `samples` points spread by area. Judge them at
+    the nearest viewing distance d with detail_scale.py: high_outside_p99 above stereo_relief_m(d) is relief that
+    shows depth and belongs in the low's geometry; low_outside_p99 above min_width_m(d) (2 px) is a silhouette the
+    player sees that the texture cannot explain. Read-only."""
+    import bpy
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    dg = depsgraph or bpy.context.evaluated_depsgraph_get()
+
+    def tree(ob):
+        co, tri, _area, _vn = _world_mesh(ob, dg)
+        return BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in tri])
+
+    lo = _world_mesh(low, dg)
+    hi = [_world_mesh(h, dg) for h in highs]
+    per = max(1, samples // max(1, len(hi)))
+    hp = np.vstack([_surface_samples(co, tri, area, per, seed) for co, tri, area, _vn in hi])
+    lp = _surface_samples(lo[0], lo[1], lo[2], samples, seed)
+    h_out = np.maximum(_signed_outside(hp, [tree(low)]), 0.0)
+    l_out = np.maximum(_signed_outside(lp, [tree(h) for h in highs]), 0.0)
+    r = lambda v: round(float(v), 5)
+    return {"high_outside_max": r(h_out.max()), "high_outside_p99": r(np.percentile(h_out, 99)),
+            "low_outside_max": r(l_out.max()), "low_outside_p99": r(np.percentile(l_out, 99)),
+            "points": [int(len(hp)), int(len(lp))]}
+
+
+def bake_skew(low, limit_deg=15.0, depsgraph=None):
+    """Where a bake's rays leave a low poly at a slant. A cage built from averaged normals (Blender's Selected to
+    Active with a cage, and bake_maps.py) casts each ray along the vertex normals interpolated across the triangle, so
+    at each of 15 barycentric points per triangle this takes the angle between that interpolated normal and the face
+    normal. Detail projected along a slanted ray lands shifted ("skewed") by about relief x tan(angle): 15 deg moves
+    10 mm of relief 2.7 mm. Returns the share of the low's area over limit_deg, the area-weighted p95 angle and the
+    worst faces' centres. Read-only."""
+    import bpy
+    import numpy as np
+    dg = depsgraph or bpy.context.evaluated_depsgraph_get()
+    co, tri, area, vn = _world_mesh(low, dg)
+    if not len(tri):
+        return {"over_share": 0.0, "p95_deg": 0.0, "limit_deg": limit_deg, "worst": []}
+    fn = np.cross(co[tri[:, 1]] - co[tri[:, 0]], co[tri[:, 2]] - co[tri[:, 0]])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
+    bary = np.array([(i / 4.0, j / 4.0, 1.0 - (i + j) / 4.0) for i in range(5) for j in range(5 - i)])
+    n = np.einsum("pk,tkc->tpc", bary, vn[tri])                     # (triangles, 15 points, 3)
+    n /= np.maximum(np.linalg.norm(n, axis=2, keepdims=True), 1e-12)
+    ang = np.degrees(np.arccos(np.clip((n * fn[:, None, :]).sum(axis=2), -1.0, 1.0)))
+    w = np.repeat(area[:, None] / len(bary), len(bary), axis=1)
+    flat, wf = ang.ravel(), w.ravel()
+    order = np.argsort(flat)
+    cum = np.cumsum(wf[order])
+    p95 = float(flat[order][min(len(order) - 1, np.searchsorted(cum, 0.95 * cum[-1]))])
+    mean_t = ang.mean(axis=1)
+    worst = np.argsort(-mean_t)[:5]
+    centre = co[tri].mean(axis=1)
+    return {"over_share": round(float(wf[flat > limit_deg].sum() / max(wf.sum(), 1e-12)), 4), "p95_deg": round(p95, 2),
+            "limit_deg": limit_deg, "worst": [(round(float(mean_t[i]), 1), [round(float(x), 3) for x in centre[i]])
+                                              for i in worst if mean_t[i] > limit_deg]}

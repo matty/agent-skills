@@ -105,9 +105,9 @@ across, usually seen from 3 m (2 px is 5.2 mm): geometry, fine. A 5 mm chamfer o
 | Piece | Route |
 | --- | --- |
 | Hard-surface kit pieces, furniture, frames | Mid-poly: real chamfers with custom normals (`hard-surface.md`); texture from tiling or trim materials, no bake needed |
-| Ornament, carving, cast or worn detail | A high-poly baked onto the low-poly; the low-poly keeps the silhouette (section 3). The bake is the `pbr-texturing` skill's |
-| Organic props (rocks, roots, food) | Sculpt, remesh with Quad Remesher (`quad-remesher.md`, section 4 of SKILL.md), UVs, bake the sculpt onto it. Untested here |
-| Cloth props (curtains, tablecloths, cushions) | A cloth simulator (Marvelous Designer through its MCP when connected), then Quad Remesher with the border frozen where it meets a rail or edge, UVs, and a bake of the simulated folds onto the low-poly. Untested here |
+| Ornament, carving, cast or worn detail | A high-poly baked onto the low-poly; the low-poly keeps the silhouette and any relief past the stereo threshold (section 3: carving seen close keeps its depth step in the low). Building the pair: `high-and-low-poly.md`; the bake is the `pbr-texturing` skill's |
+| Organic props (rocks, roots, food) | A modifier-stack sculpt (brush strokes do not run headless), a QuadriFlow or decimated low, UVs, the sculpt baked onto it: `organic-and-cloth.md` |
+| Cloth props (curtains, tablecloths, cushions) | Blender's cloth simulation stepped and applied (or Marvelous Designer through its MCP when connected), a low with its border kept where it meets a rail or edge, UVs, the simulated folds baked onto it: `organic-and-cloth.md` |
 | Foliage cards | The `pbr-texturing` skill |
 
 ## 7. Review

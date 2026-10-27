@@ -1,6 +1,6 @@
 ---
 name: blender-mesh-topology
-description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading from the mesh, too many triangles, edge flow; a greybox piece that looks plain, boxy or too clean, what to model, at what size. 3-to-1 reduction grids, Quad Remesher, hard-surface chamfers, weighted normals, audit and review renders. Wins for topology and kit-piece finishing; blocky or over-bevelled props and furniture 3d-form-design, textures pbr-texturing.
+description: Retopology, clean low-count topology and finishing pieces in Blender - messy, fanned or pinched topology, n-gons, poles, faceted shading, too many triangles; a greybox piece that looks plain or too clean, what to model at what size; a high and low poly for baking, sculpted rocks or bark, cloth. Reduction grids, Quad Remesher, chamfers, weighted normals, audits and review renders. Wins for topology and kit-piece finishing; blocky props and furniture 3d-form-design, textures pbr-texturing.
 ---
 
 # Clean topology for generated and hard-surface meshes
@@ -18,6 +18,7 @@ engine does with the result is in `references/engine-notes.md`.
 | A prop or piece that looks blocky or over-bevelled, or furniture: its form, proportions and bevel sizes | Load the `3d-form-design` skill, then come back for the stack and validation | - |
 | A greybox piece to finish, or one that looks plain, boxy or too clean | Detail at real sizes, geometry or normal map by viewing distance, joints (section 5) | `references/form-and-detail.md`, `references/real-world-sizes.md`, `scripts/detail_scale.py` |
 | A hand-modelled static hard-surface piece (kit walls, door surrounds, trims, furniture) | Chamfers, custom normals, flat-face rules (section 6) | `references/hard-surface.md` |
+| A piece that takes a bake: building the high poly and the low it bakes onto, pairing parts, the pre-bake gate | Shading that bakes clean, edge widths in texels, silhouette and skew measured (section 5) | `references/high-and-low-poly.md`; rocks, bark, sculpts and cloth headless: `references/organic-and-cloth.md` |
 | Any of them, before calling it done | Validate (section 7) | `references/validation.md`, `scripts/topology_audit.py`, `scripts/review_render.py` |
 
 A remesher never fixes a shape, and on engineered surfaces fixed on every side it leaves knots at the borders: when
@@ -82,7 +83,9 @@ validates and retries other targets. Engine, settings, a worked call and the fai
   make a groove at every joint. A profile that runs across pieces is identical at both ends.
 - Imperfection (sag, chipped corners, uneven boards) goes on the body only, never on joint faces; variants differ in it.
 - Mid-poly with custom normals for hard-surface kit pieces; a high-poly bake for ornament and organic or cloth props
-  (the bake is `pbr-texturing`'s).
+  (the bake is `pbr-texturing`'s). The high is shaded smooth with every fold sharp (smoothing across a fold baked 41
+  deg off); the low holds the silhouette (`high_low_gap`) and leans its rays little (`bake_skew`); carving close up
+  keeps its depth step in the low: `references/high-and-low-poly.md`.
 - Review from eye height (1.6-1.7 m) at the nearest walkable and the usual distance, beside the reference, and report
   every detail item with its measured size.
 
@@ -144,7 +147,7 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | `scripts/grid_topology.py` | `zone_stations`, `arc_segments`, `blend_error`, `grid_faces`, `step_reduce` / `step_3to1` with `mid_along` / `mid_between`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights`, `grid_triangles` |
 | `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run, `weld_layout()`, `mirror_half()`, `find_engine()` |
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
-| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)` |
+| `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `determinism_hash(obj)`, `high_low_gap(low, highs)` (how far high and low part, both ways), `bake_skew(low)` (how far the bake's rays lean) |
 | `scripts/review_render.py` | `render(path, eye, target, ...)` live or headless, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)` |
 | `scripts/detail_scale.py` | Plain Python, no Blender: `px_per_m(d)`, `texel_class(d)`, `stereo_relief_m(d)`, `min_width_m(d, px=2)`, each with `ppd=20` (25 for Quest 3); `python detail_scale.py 0.5 1 2 [--ppd 25]` prints the table |
 

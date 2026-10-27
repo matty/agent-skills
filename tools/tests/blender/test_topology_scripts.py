@@ -6,8 +6,9 @@ hard_surface.py's Smooth by Angle and hand-off functions with their
 refusals, audit_stack with the Triangulate live, off, applied or missing, routes from enabled modifiers only, a late
 Smooth by Angle, flat shading, and normals_snapshot across UV work and scale), grid_topology in bmesh
 (PointCache.weld, flat_fill, step_reduce), quad_remesh's patch_input, weld_layout and mirror_half (and a real engine
-run when Quad Remesher is installed), and review_render's headless wire over a mirrored mesh with the scene restored
-afterwards.
+run when Quad Remesher is installed), review_render's headless wire over a mirrored mesh with the scene restored
+afterwards, high_low_gap against a known sagitta, bake_skew with and without a bevel, and the high-poly routes the
+high-and-low-poly reference calls verified headless (and brush sculpting, which is not).
 
 Host: Blender 4.2+ (bpy, bmesh; tested on 5.2.2), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_topology_scripts.py
@@ -981,6 +982,111 @@ def test_review_compare_frames_each_object_alone():
     check(len(bpy.data.objects) == 4, "temporary objects left behind")
 
 
+def test_high_low_gap_reads_the_sagitta_and_a_fat_low():
+    """A 16-sided low cylinder against a 128-sided high of the same radius: the high stands out by the low's sagitta,
+    r (1 - cos(pi / 16)) = 1.92 mm, and the low nowhere outside it; the high shrunk 2% (2 mm) puts the low 2 mm out."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NGON")
+    low = bpy.context.active_object
+    bpy.ops.mesh.primitive_cylinder_add(vertices=128, radius=0.1, depth=0.3, end_fill_type="NGON")
+    high = bpy.context.active_object
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    sag = 0.1 * (1 - math.cos(math.pi / 16))
+    check(abs(r["high_outside_max"] - sag) < 2e-4 and r["low_outside_max"] < 1e-4, (r, sag))
+    high.scale = (0.98, 0.98, 1.0)
+    bpy.context.view_layer.update()
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.002) < 2e-4 and r["high_outside_max"] < 1e-4, r)
+
+
+def test_bake_skew_falls_with_a_bevel():
+    """A hard box's averaged normals lean up to 54.7 deg off its faces (most of its area over 15 deg); a 5 cm bevel
+    of three segments on a 1 m box brings that under 5%; a 16-sided cylinder leans at most half its facet angle."""
+    fresh()
+    ns = AUDIT
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    box = bpy.context.active_object
+    r = ns["bake_skew"](box)
+    check(r["over_share"] > 0.9 and abs(r["p95_deg"] - 54.74) < 0.1 and r["worst"], r)
+    bev = box.modifiers.new("Bevel", "BEVEL")
+    bev.width, bev.segments = 0.05, 3
+    r = ns["bake_skew"](box)
+    check(r["over_share"] < 0.05, r)
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.3, end_fill_type="NOTHING")
+    r = ns["bake_skew"](bpy.context.active_object)
+    check(r["over_share"] == 0.0 and abs(r["p95_deg"] - 11.25) < 0.05, r)
+
+
+def test_high_poly_routes_run_headless():
+    """What references/high-and-low-poly.md calls verified on 5.2.2 under blender -b: the crease_edge attribute drives
+    a Subdivision Surface, voxel remesh (operator and modifier), Multires subdivision, QuadriFlow on a closed mesh,
+    Decimate, and a cloth simulation stepped frame by frame and applied; sculpt brush strokes need a 3D viewport and
+    refuse to run headless (the headless sculpt is modifiers: Displace on Multires or a subdivided mesh)."""
+    fresh()
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    ob = bpy.context.active_object
+    sub = ob.modifiers.new("Sub", "SUBSURF")
+    sub.levels = 3
+
+    def half_width():
+        ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        me = ev.to_mesh()
+        w = max(abs(v.co.x) for v in me.vertices if abs(v.co.z) < 1e-4)
+        ev.to_mesh_clear()
+        return w
+    soft = half_width()
+    att = ob.data.attributes.new("crease_edge", "FLOAT", "EDGE")
+    att.data.foreach_set("value", [1.0] * len(ob.data.edges))
+    ob.data.update()
+    check(soft < 0.43 and abs(half_width() - 0.5) < 1e-4, "crease_edge 1 keeps the subdivided corners square")
+    fresh()
+    bpy.ops.mesh.primitive_cube_add(size=1.0)
+    ob = bpy.context.active_object
+    ob.data.remesh_voxel_size = 0.05
+    check(bpy.ops.object.voxel_remesh() == {"FINISHED"} and len(ob.data.polygons) > 2000, "voxel remesh headless")
+    mr = ob.modifiers.new("Multires", "MULTIRES")
+    check(bpy.ops.object.multires_subdivide(modifier="Multires", mode="CATMULL_CLARK") == {"FINISHED"}
+          and mr.total_levels == 1, "multires subdivide headless")
+    try:
+        bpy.ops.object.mode_set(mode="SCULPT")
+        bpy.ops.sculpt.brush_stroke(stroke=[{"name": "s", "location": (0, 0, 0.5), "mouse": (0, 0),
+                                             "mouse_event": (0, 0), "pen_flip": False, "is_start": True,
+                                             "pressure": 1.0, "size": 50, "time": 0, "x_tilt": 0, "y_tilt": 0}])
+        stroked = True
+    except RuntimeError:
+        stroked = False
+    finally:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    check(not stroked, "a sculpt brush stroke ran headless: references/high-and-low-poly.md says it cannot")
+    fresh()
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=4)
+    ob = bpy.context.active_object
+    check(bpy.ops.object.quadriflow_remesh(target_faces=400, seed=0) == {"FINISHED"}
+          and all(len(p.vertices) == 4 for p in ob.data.polygons) and 300 < len(ob.data.polygons) < 500,
+          "QuadriFlow on a closed mesh")
+    dec = ob.modifiers.new("D", "DECIMATE")
+    dec.ratio = 0.25
+    ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    check(len(ev.data.polygons) < 0.6 * len(ob.data.polygons), "Decimate collapse")
+    fresh()
+    bpy.ops.mesh.primitive_plane_add(size=2, location=(0, 0, 1.0))
+    cloth = bpy.context.active_object
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.subdivide(number_cuts=20)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.4))
+    bpy.context.active_object.modifiers.new("Collision", "COLLISION")
+    cm = cloth.modifiers.new("Cloth", "CLOTH")
+    cm.point_cache.frame_end = 40
+    for f in range(1, 41):
+        bpy.context.scene.frame_set(f)
+    bpy.context.view_layer.objects.active = cloth
+    check(bpy.ops.object.modifier_apply(modifier="Cloth") == {"FINISHED"}, "cloth applied at the last frame")
+    zmin = min((cloth.matrix_world @ v.co).z for v in cloth.data.vertices)
+    check(zmin < 0.8, "the cloth should drape below the table top (0.9): lowest %.3f" % zmin)
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -997,7 +1103,9 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
-           test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone):
+           test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
+           test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
+           test_high_poly_routes_run_headless):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:
