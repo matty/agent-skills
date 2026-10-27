@@ -66,7 +66,8 @@ CANON = {
     # gets a note instead).
     "lightmap": {"coverage": 0.85, "plan": 0.65, "max": 0.80, "min_footprint_px": 64, "gap_texels": 2},
     # UV distortion gate shared by uv-unwrapping's audit and the RizomUV grader, and the texel-density bands
-    "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0},
+    "uv_gate": {"angular_p95": 1.15, "angular_p99": 1.5, "angular_max": 2.0, "area_p95": 0.20, "area_max": 2.0,
+                "island_angular_p95": 1.25, "island_area_p95": 0.50},
     "uv_island_min_share": 0.005,
     "tile_phase_texels": 0.5,
     "free_scale_band": (0.8, 1.25),   # the even scale a Free piece may be placed at without its own scale_range
@@ -557,7 +558,8 @@ def check_uv_gate():
     """uv-unwrapping's LIMITS and RizomUV's GATE carry the same distortion gate; uv_audit's TEXEL_BAND the bands."""
     for rel, name, rename in (("uv-unwrapping/scripts/uv_audit.py", "LIMITS", {}),
                               ("rizomuv-uv-pipeline/scripts/uv_metrics.py", "GATE",
-                               {"area_p95": "area_local_p95", "area_max": "area_local_max"})):
+                               {"area_p95": "area_local_p95", "area_max": "area_local_max",
+                                "island_area_p95": "island_area_local_p95"})):
         got = module_constant(rel, name)
         if got is MISSING:
             fail(rel, "no %s dict" % name)
@@ -568,10 +570,6 @@ def check_uv_gate():
         if module_constant(rel, "ISLAND_MIN_SHARE") != CANON["uv_island_min_share"]:
             fail(rel, "ISLAND_MIN_SHARE is %r, canon %r" % (module_constant(rel, "ISLAND_MIN_SHARE"),
                                                            CANON["uv_island_min_share"]))
-        if name == "GATE":                    # the grader applies the p95 limits per island under its own keys
-            for k, base in (("island_angular_p95", "angular_p95"), ("island_area_local_p95", "area_p95")):
-                if got.get(k) != CANON["uv_gate"][base]:
-                    fail(rel, "GATE[%r] is %r, canon %r" % (k, got.get(k), CANON["uv_gate"][base]))
     rel = "uv-unwrapping/scripts/uv_audit.py"
     bands = module_constant(rel, "TEXEL_BAND")
     for purpose, want in CANON["texel_band"].items():
