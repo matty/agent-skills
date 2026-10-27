@@ -92,8 +92,9 @@ LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
 STRIP_ATTR = "uv_strip"      # boolean face attribute: tiling faces unwrapped as a strip along a curve (a tower ring, an
                              # arch soffit, a stair rail), judged by their seams' continuity, not tile_project's phase
-SEAM_CONTINUES_DEG = 30.0    # a UV seam between faces meeting at under this angle lies inside a continuing surface:
-                             # on a tiling layout it must open by whole tiles (a ring that closes, a strip on whole tiles)
+SEAM_CONTINUES_DEG = 30.0    # a UV seam between faces meeting at under this angle lies inside a continuing
+                             # surface: on a tiling layout it must open by whole tiles (a ring that closes, a strip
+                             # on whole tiles)
 TEXT_UP_ATTR = "uv_text_up"  # optional face vector: the 3D direction the letters' up points to (default world +Z)
 SEAM_ANGLE = 30.0            # seams_by_angle: an edge whose faces meet at more than this (deg), like Smooth by Angle
 # Modifier types that change topology. Before seams, apply_stack applies the stack from the top down to and including
@@ -671,15 +672,37 @@ def _stacked(n, pa_px, pb_px):
     return n / small > 0.9 and abs(int(pa_px) - int(pb_px)) <= 0.1 * small
 
 
+def gate(limits=None):
+    """The audit's limits with `limits` (a dict of some of them) merged over the defaults: LIMITS, island_min_share
+    (ISLAND_MIN_SHARE), tile_phase_px (TILE_PHASE_PX) and seam_continues_deg (SEAM_CONTINUES_DEG). float("inf")
+    switches a check off (island_min_share: inf leaves the per-island check out). An unknown key or a value that is
+    not a number raises, so a typo cannot pass every piece. Every report records the overrides it ran with."""
+    base = dict(LIMITS, island_min_share=ISLAND_MIN_SHARE, tile_phase_px=TILE_PHASE_PX,
+                seam_continues_deg=SEAM_CONTINUES_DEG)
+    if limits is None:
+        return base
+    if not isinstance(limits, dict):
+        raise TypeError("limits is a dict such as {'angular_p95': 1.2}, not %r" % (limits,))
+    unknown = sorted(set(limits) - set(base))
+    if unknown:
+        raise ValueError("unknown limit(s) %s: use %s" % (unknown, ", ".join(sorted(base))))
+    for k, v in limits.items():
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise TypeError("limits[%r] must be a number, not %r" % (k, v))
+    base.update({k: float(v) for k, v in limits.items()})
+    return base
+
+
 def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="unique", baking=False, raster=True,
             directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, lod=0,
-            lightmapper="unity"):
+            lightmapper="unity", limits=None):
     """Measure one UV layer given as flat arrays (what _arrays returns: co, lv, ls, lt, uv, cn, tri, tpoly, and
     optionally layer, layers, low, text, text_up). No bpy. map_px None: 1024 for a texture; for a lightmap, the
     footprint of its measured UV2 bounding box at texels_per_m x lightmap_scale x LOD_SCALE^lod (lightmapper
     "bakery": Bakery's footprint, see footprint_px). text=True checks the faces marked as text (d["text"]) and
     raises when none is. Returns a report dict whose "issues" list is empty when nothing needs a look and whose
-    "notes" are worth a look; references/uv-audit.md lists every field."""
+    "notes" are worth a look; references/uv-audit.md lists every field. limits: overrides of the gate (gate())."""
+    lim = gate(limits)
     purpose = _purpose(purpose, texels_per_m=texels_per_m)
     lightmapper = lightmapper_name(lightmapper)
     planned_scale = float(lightmap_scale)                    # Scale In Lightmap as set, for the density gate
@@ -759,14 +782,14 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     if n_isl and tot_w > 0:
         order = np.argsort(isl_tri, kind="stable")
         cuts = np.searchsorted(isl_tri[order], np.arange(n_isl + 1))
-        for i in np.flatnonzero(tot_area >= ISLAND_MIN_SHARE * tot_w):
+        for i in np.flatnonzero(tot_area >= lim["island_min_share"] * tot_w):
             m = order[cuts[i]:cuts[i + 1]]
             m = m[good[m]]
             a95 = _wpct(ang[m], w3[m], 0.95)
             d95 = _wpct(area_dev[m], w3[m], 0.95)
-            if a95 > LIMITS["angular_p95"] or d95 > LIMITS["area_p95"]:
+            if a95 > lim["angular_p95"] or d95 > lim["area_p95"]:
                 island_rows.append((int(i), float(tot_area[i]) / tot_w, a95, d95))
-    island_rows.sort(key=lambda r: -max(r[2] / LIMITS["angular_p95"], 1.0 + r[3]))
+    island_rows.sort(key=lambda r: -max(r[2] / lim["angular_p95"], 1.0 + r[3]))
     tg = good & tmark[d["tpoly"]]
     text_p95 = _wpct(ang[tg], w3[tg], 0.95) if tg.any() else None
     even = shaped & ~low
@@ -822,7 +845,7 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     # pattern jumps along it (a ring that does not close: a 103 mm jump on a brick tower read as a zipper)
     seam_px = np.zeros(0)
     if purpose == "tiling" and len(pa):
-        cont = uv_split & (bend < SEAM_CONTINUES_DEG)
+        cont = uv_split & (bend < lim["seam_continues_deg"])
         jump = np.concatenate([d["uv"][c_ilo] - d["uv"][c_jlo], d["uv"][c_ihi] - d["uv"][c_jhi]], axis=1)[cont]
         jump = np.abs(jump - np.round(jump)) * np.array([w, h, w, h], float)
         seam_px = jump.max(axis=1) if len(jump) else seam_px
@@ -857,7 +880,7 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
            "hard_edges_not_seams": int(np.count_nonzero(hard & ~uv_split)),
            "chart_bends": chart_bends,
            "seam_phase_px_max": round(float(seam_px.max()), 2) if len(seam_px) else None,
-           "seams_off_phase": int(np.count_nonzero(seam_px > TILE_PHASE_PX)),
+           "seams_off_phase": int(np.count_nonzero(seam_px > lim["tile_phase_px"])),
            "elongated_islands": int(elong.sum()), "elongated_along_v": int(along_v.sum()),
            "islands_across_rows": len(across_rows),
            "text_faces": int(tmark.sum()), "text_islands_mirrored": text_mirrored,
@@ -921,7 +944,9 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
             gap = _min_gap(grid, pad_px * k)
             rep["padding_ok"] = gap is None
             rep["min_gap_px"] = None if gap is None else round(gap / k, 2)
-    rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text)
+    rep["issues"] = _issues(rep, purpose, pad_px, px_per_m, baking, directional, text, lim)
+    if limits:
+        rep["limits_overridden"] = dict(limits)
     if not npoly:
         rep["issues"].insert(0, "no faces: nothing to audit (an empty or vertex-only mesh)")
     if bad_uv.any():
@@ -931,16 +956,16 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     return rep
 
 
-def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False):
+def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False, lim=LIMITS):
     out = []
     if len(r["layers"]) > MAX_UV_MAPS:
         out.append("%d UV maps (engines keep at most %d)" % (len(r["layers"]), MAX_UV_MAPS))
     for key, msg in (("angular_p95", "angular stretch p95 %.2f"), ("angular_p99", "angular stretch p99 %.2f"),
                      ("angular_max", "a face stretched %.1fx (folded, collapsed or squashed UVs)"),
                      ("area_p95", "uneven density inside islands (area p95 %.2f)")):
-        if r[key] == r[key] and r[key] > LIMITS[key]:
+        if r[key] == r[key] and r[key] > lim[key]:
             out.append(msg % r[key])
-    if r.get("area_max", 0) > LIMITS["area_max"]:
+    if r.get("area_max", 0) > lim["area_max"]:
         out.append("a patch at %.1fx or 1/%.1f its island's texel density (area max %.2f): it reads blurred or "
                    "oversharp against the rest" % (2 ** (r["area_max"] / 2), 2 ** (r["area_max"] / 2), r["area_max"]))
     if r.get("islands_distorted"):
@@ -949,7 +974,7 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
                    "of the area, angular p95 %.2f, area p95 %.2f)" % (r["islands_distorted"], w["island"],
                                                                       100 * w["area_share"], w["angular_p95"],
                                                                       w["area_p95"]))
-    if r.get("text_angular_p95") is not None and r["text_angular_p95"] > LIMITS["angular_p95"]:
+    if r.get("text_angular_p95") is not None and r["text_angular_p95"] > lim["angular_p95"]:
         out.append("text faces stretched (angular p95 %.2f): letters read squashed" % r["text_angular_p95"])
     if r.get("seams_off_phase"):
         out.append("%d UV seam edge(s) inside a continuing tiling surface open by up to %.1f px, not whole tiles: the "
@@ -990,7 +1015,7 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
         out.append("%d long islands run along V: grain or a trim strip should run along U" % r["elongated_along_v"])
     if r.get("islands_across_rows"):
         out.append("%d islands cross a trim row edge" % r["islands_across_rows"])
-    if r["texel_cv"] == r["texel_cv"] and r["texel_cv"] > LIMITS["texel_cv"]:
+    if r["texel_cv"] == r["texel_cv"] and r["texel_cv"] > lim["texel_cv"]:
         out.append("texel density varies between islands (cv %.2f)" % r["texel_cv"])
     if r.get("low_density_px_per_m") and r["texel_px_per_m"] and r["low_density_px_per_m"] > 0.9 * r["texel_px_per_m"]:
         out.append("%d faces marked low-density are not lowered (%.0f px/m vs %.0f)"
@@ -1157,7 +1182,8 @@ def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX
 # ----------------------------------------------------------------------------------------------- audit (bpy)
 def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None, baking=False, lightmap=False,
           directional=False, rows=None, texels_per_m=None, lightmap_scale=1.0, text=False, material=None, lod=None,
-          evaluated=True, raster=True, lightmapper="unity", tile_m=None, steps=None, tile_offset=(0.0, 0.0, 0.0)):
+          evaluated=True, raster=True, lightmapper="unity", tile_m=None, steps=None, tile_offset=(0.0, 0.0, 0.0),
+          limits=None):
     """Measure one object's UV map on the evaluated mesh in world space; changes nothing. purpose: unique (default),
     tiling, trim or lightmap; lightmap=True or texels_per_m makes it a lightmap audit, and either with another
     purpose raises. layer: index or name; by default 0 (UV0), or 1 for a lightmap; "active" for the active map.
@@ -1172,7 +1198,9 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
     area-based rect, no LOD factor, and an issue when the charts get under half the planned texels per metre).
     rows: trim rows in pixels, [(v0, v1), ...] or "0-128,128-192". tile_m (purpose tiling): also check every face
     against tile_project's scale and phase (tile_phase: a kit piece's pattern continues across joints), and steps
-    (metres: grid module, storey height) for being whole numbers of tiles; tile_offset: a phase variant's offset."""
+    (metres: grid module, storey height) for being whole numbers of tiles; tile_offset: a phase variant's offset.
+    limits: overrides of the gate's numbers for this audit (gate(): a stylised or deliberately graded piece), recorded
+    in the report as limits_overridden."""
     purpose = _purpose(purpose, lightmap, texels_per_m)
     if tile_m is not None and purpose != "tiling":
         raise ValueError("tile_m checks a tiling layout: pass purpose='tiling'")
@@ -1192,13 +1220,14 @@ def audit(ob, layer=None, map_px=None, pad_px=None, px_per_m=None, purpose=None,
                   raster=raster, directional=directional, rows=rows, texels_per_m=texels_per_m,
                   lightmap_scale=lightmap_scale, text=text,
                   lod=(lod if lod is not None else lod_level(ob.name)) if purpose == "lightmap" else 0,
-                  lightmapper=lightmapper)
+                  lightmapper=lightmapper, limits=limits)
     if material:
         rep["material"] = material
     if tile_m is not None:
         m = np.array(ob.matrix_world)
         rot = m[:3, :3] / np.maximum(np.linalg.norm(m[:3, :3], axis=0), 1e-12)
-        tp = tile_phase(d, tile_m, map_px or 1024, frame=(rot, m[:3, 3]), steps=steps, offset=tile_offset)
+        tp = tile_phase(d, tile_m, map_px or 1024, frame=(rot, m[:3, 3]), steps=steps, offset=tile_offset,
+                        limit_px=gate(limits)["tile_phase_px"])
         rep["tile_phase"] = {k: v for k, v in tp.items() if k != "issues"}
         rep["issues"] = list(rep.get("issues", [])) + tp["issues"]
     return rep
@@ -2177,6 +2206,9 @@ def _run(argv):
                     "storey height): each must be a whole number of tiles")
     ap.add_argument("--tile-offset", default=None, help="with --tile-m: a phase variant's offset in metres, x,y,z "
                     "(as given to tile_project)")
+    ap.add_argument("--limits", type=json.loads, default=None, help="overrides of the gate as JSON, e.g. "
+                    "'{\"angular_p95\": 1.2, \"island_min_share\": 0.02}' (uv-audit.md, gate()); recorded in "
+                    "each report")
     ap.add_argument("--json", default=None, help="write the full reports here")
     ap.add_argument("--shared", action="store_true", help="the matched objects share one texture (an atlas): also "
                     "check overlaps and gaps between them")
@@ -2200,7 +2232,7 @@ def _run(argv):
                          material=a.material, lightmapper=lightmapper_name(a.lightmapper), tile_m=a.tile_m,
                          steps=[float(x) for x in a.steps.split(",")] if a.steps else None,
                          tile_offset=tuple(float(x) for x in a.tile_offset.split(",")) if a.tile_offset
-                         else (0.0, 0.0, 0.0))
+                         else (0.0, 0.0, 0.0), limits=a.limits)
     bad = any(r["issues"] for r in reps)
     if a.shared:
         sh = audit_shared(obs, layer=layer, map_px=map_px or 1024, pad_px=a.pad, purpose=purpose,

@@ -207,6 +207,25 @@ class UvAuditMaths(unittest.TestCase):
         r = self.m(d, map_px=1024)
         self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
 
+    def test_limits_override_lets_a_deliberate_case_through_and_is_recorded(self):
+        """A stylised piece may carry a stretch on purpose: limits= loosens one number for that audit and the report
+        says so; float('inf') switches a check off; a misspelt key raises instead of passing everything."""
+        k, s = 0.5, math.sqrt(1.45)
+        verts = quad(0, 0, 1, 1) + quad(2, 0, 2.15, 0.15)
+        uvs = [square_uv(0.05, 0.05, k), square_uv(0.6, 0.6, 0.15 * k * s, 0.15 * k / s)]
+        d = mesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]], uvs)
+        self.assertEqual(self.m(d, map_px=1024)["islands_distorted"], 1)
+        r = self.m(d, map_px=1024, limits={"angular_p95": 1.5})
+        self.assertEqual((r["islands_distorted"], r["issues"]), (0, []))
+        self.assertEqual(r["limits_overridden"], {"angular_p95": 1.5})
+        r = self.m(d, map_px=1024, limits={"island_min_share": float("inf")})
+        self.assertEqual(r["islands_distorted"], 0)
+        with self.assertRaises(ValueError):
+            self.m(d, map_px=1024, limits={"angular_p59": 1.2})
+        with self.assertRaises(TypeError):
+            self.m(d, map_px=1024, limits={"angular_p95": "1.2"})
+        self.assertEqual(self.ua.gate()["island_min_share"], self.ua.ISLAND_MIN_SHARE)
+
     def test_area_max_finds_a_blurred_patch_slivers_absorbed(self):
         """A label inside its panel's island, a 2 mm ring of slivers round it, the label's UVs shrunk to 1/8: the
         slivers take the distortion and are left out of angular_max, the label is 99% of nothing in p95; area_max

@@ -79,6 +79,7 @@ Measure, do not eyeball. The gate (this skill owns the numbers; `rizomuv-uv-pipe
 | The p95 limits per island (each with >= 0.5% of the area) and on the `uv_text` faces; area max (non-sliver faces) | <= 1.15, <= 0.20; <= 2.0 | the object's numbers hide a small island: a label on 2.5% stretched 1.45x passed them (5.2.2); 2.0 = a patch at 2x or 1/2 the density |
 
 Fix with seams first; keep a `uv.minimize_stretch` result only if the audit improves (sphere p95 1.06 to 1.23, 5.2.2).
+A piece whose look needs a number loosened passes `limits=` (recorded in the report: uv-audit.md).
 
 ## 5. Straighten and orient
 
