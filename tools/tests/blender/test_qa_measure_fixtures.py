@@ -451,7 +451,7 @@ def build(d):
     reset()
     save(f["master"])
     kit = link(f["kit"], ["TST_Wall_2x3_A", "TST_Bevel_1x1x1_A", "TST_Col_1x1x1_A", "TST_Offset_1x1x1_A",
-                          "TRIM_Skirting_2_A"])
+                          "TRIM_Skirting_2_A", "TST_Prop_Free_A"])
     booth_l = link(f["asm"], ["ASM_Booth_A"])["ASM_Booth_A"]
     shift_l = link(f["asm_shift"], ["ASM_Shift_A"])["ASM_Shift_A"]
     abs_wall = link(f["kit_abs"], ["ABS_Wall_2x3_A"], relative=False)["ABS_Wall_2x3_A"]
@@ -476,7 +476,14 @@ def build(d):
     instance("asm_copy", copy, (2.37, 12, 0), rot=(0, 0, 45), parent=zone)
     instance("asm_squashed", booth_l, (40, 4, 0), scale=(1, 1, 0.8), parent=zone)   # uneven: its texels stretch
     instance("asm_mirrored", booth_l, (44, 4, 0), scale=(-1, 1, 1), parent=zone)    # mirrored, even: no stretch
-    piece("TST_Slab_2x2_A", [("TST_Slab_2x2_A", box("slab", (0, 0, 0), (2, 2, 0.1)))], "modelled")
+    slab = piece("TST_Slab_2x2_A", [("TST_Slab_2x2_A", box("slab", (0, 0, 0), (2, 2, 0.1)))], "modelled")
+    # tile phase, read with --families (TST tiling at 1024 px/m, a 1 m tile): a wall 1.9 mm along, one 3 cm up, a
+    # floor slab turned 90 deg, a slab unturned; and a Free prop scaled 2 (half its texels per metre)
+    instance("wall_jog", wall_l, (16.0019, 1, 0), parent=zone)
+    instance("wall_step", wall_l, (18, 1, 0.03), parent=zone)
+    instance("slab_turned", slab, (24, 0, 0), rot=(0, 0, 90), parent=zone)
+    instance("slab_ok", slab, (26, 0, 0), parent=zone)
+    instance("prop_big", kit["TST_Prop_Free_A"], (30.4, 2.7, 0), scale=(2, 2, 2), parent=zone)
     shadow = bpy.data.collections.new("TST_Bevel_1x1x1_A")         # same name as the linked piece (names are
     bpy.context.scene.collection.children.link(shadow)             # unique per library, so it keeps the name)
     f["shadow_name"] = shadow.name
@@ -672,6 +679,10 @@ class Runs:
 
     def _master(self):
         return self._ok(self.f["master"], [], "master")
+
+    def _master_phase(self):
+        return self._ok(self.f["master"], ["--families", '{"TST": {"texturing": "tiling", "map_px": 1024, '
+                                           '"texel_density": 1024}}'], "master_phase")
 
     def _master_textured(self):
         return self._ok(self.f["master"], ["--expect-status", "textured"], "master_textured")
@@ -1112,6 +1123,30 @@ def master_placements(r):
     check(not has(rep["problems"], "wall_scaled", "unevenly"), "an even scale is not uneven")
     check(not has(rep["problems"], "asm_mirrored", "unevenly"), "a mirror is not uneven: %s" % pl["asm_mirrored"])
     check("inner" not in pl, "an instance inside an unplaced collection counted as a placement")
+    check(pl["wall_jog"]["on_grid"] is False and has(rep["problems"], "wall_jog", "off grid"),
+          "1.9 mm off a 1 m grid is off it (0.1 mm tolerance): %s" % pl["wall_jog"])
+    check(pl["wall_ok"]["tile_phase"] is None, "no --families: no tile phase")
+    check(has(rep["problems"], "prop_big", "scaled 2"), "a Free prop at scale 2 halves its texel density")
+
+
+@case
+def master_tile_phase(r):
+    """With the spec's families, every tiling placement is checked against the world tile grid: a wall 1.9 mm along
+    (1.95 px at 1024 px/m) and one 3 cm up (30.7 px) jump against their neighbours; a floor slab turned 90 deg turns
+    its pattern; the grid walls and the unturned slab are clean."""
+    rep = r.get("master_phase")
+    pl = {p["object"]: p for p in rep["placements"]}
+    check(pl["wall_ok"]["tile_phase"] == {"u_px": 0.0, "v_px": 0.0, "turn_deg": 0.0, "tile_m": 1.0,
+                                          "horizontal": False}, pl["wall_ok"])
+    check(not has(rep["problems"], "wall_ok") and not has(rep["problems"], "wall_west", "tile grid"),
+          rep["problems"])
+    check(abs(pl["wall_jog"]["tile_phase"]["u_px"] - 1.95) < 0.02 and has(rep["problems"], "wall_jog", "tile grid"),
+          pl["wall_jog"])
+    check(abs(pl["wall_step"]["tile_phase"]["v_px"] - 30.72) < 0.02 and has(rep["problems"], "wall_step", "up"),
+          pl["wall_step"])
+    check(pl["slab_turned"]["tile_phase"]["horizontal"] and has(rep["problems"], "slab_turned", "turned 90"),
+          pl["slab_turned"])
+    check(not has(rep["problems"], "slab_ok"), "an unturned slab on the grid is clean")
 
 
 @case
