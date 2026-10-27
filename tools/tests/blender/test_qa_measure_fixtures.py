@@ -484,6 +484,9 @@ def build(d):
     instance("slab_turned", slab, (24, 0, 0), rot=(0, 0, 90), parent=zone)
     instance("slab_ok", slab, (26, 0, 0), parent=zone)
     instance("prop_big", kit["TST_Prop_Free_A"], (30.4, 2.7, 0), scale=(2, 2, 2), parent=zone)
+    instance("wall_twin", wall_l, (1, 1, 0), parent=zone)              # on top of wall_ok: every face z-fights
+    instance("pair_a", wall_l, (50, 1, 0), parent=zone)                # side by side: end caps pressed together
+    instance("pair_b", wall_l, (52, 1, 0), parent=zone)                # face apart, hidden, never counted
     shadow = bpy.data.collections.new("TST_Bevel_1x1x1_A")         # same name as the linked piece (names are
     bpy.context.scene.collection.children.link(shadow)             # unique per library, so it keeps the name)
     f["shadow_name"] = shadow.name
@@ -1127,6 +1130,11 @@ def master_placements(r):
           "1.9 mm off a 1 m grid is off it (0.1 mm tolerance): %s" % pl["wall_jog"])
     check(pl["wall_ok"]["tile_phase"] is None, "no --families: no tile phase")
     check(has(rep["problems"], "prop_big", "scaled 2"), "a Free prop at scale 2 halves its texel density")
+    over = {(a, b): k for a, b, k in rep["placement_overlaps"]}
+    check(over.get(("wall_ok", "wall_twin"), 0) > 0 and has(rep["problems"], "wall_ok and wall_twin", "z-fight"),
+          "two placements in one place z-fight: %s" % rep["placement_overlaps"])
+    check(("pair_a", "pair_b") not in over, "end caps pressed together at a joint are not z-fighting: %s" % over)
+    check(("asm_mirrored", "asm_squashed") in over, "the two booths placed over each other: %s" % over)
 
 
 @case
@@ -1138,7 +1146,7 @@ def master_tile_phase(r):
     pl = {p["object"]: p for p in rep["placements"]}
     check(pl["wall_ok"]["tile_phase"] == {"u_px": 0.0, "v_px": 0.0, "turn_deg": 0.0, "tile_m": 1.0,
                                           "horizontal": False}, pl["wall_ok"])
-    check(not has(rep["problems"], "wall_ok") and not has(rep["problems"], "wall_west", "tile grid"),
+    check(not has(rep["problems"], "wall_ok", "tile grid") and not has(rep["problems"], "wall_west", "tile grid"),
           rep["problems"])
     check(abs(pl["wall_jog"]["tile_phase"]["u_px"] - 1.95) < 0.02 and has(rep["problems"], "wall_jog", "tile grid"),
           pl["wall_jog"])

@@ -776,6 +776,32 @@ def _evaluated(colls):
         vl.update()
 
 
+def placement_overlaps(depsgraph, scene=None):
+    """Faces of two different placements that lie in one plane, overlap with area and face the same way: z-fighting
+    between placed pieces (an engaged capital flush with the wall it stands against), which no per-piece check sees.
+    End caps pressed together at a joint face opposite ways, are hidden, and are not counted. LOD0 render meshes of
+    every collection instance in the scene, in world space. Returns [[placement, placement, face pairs]]."""
+    scene = scene or bpy.context.scene
+    faces, normals = [], {}
+    for inst in depsgraph.object_instances:
+        ob, top = inst.object, inst.parent
+        if not inst.is_instance or top is None or ob.type != "MESH" or COL_RE.search(ob.name) or not _is_lod0(ob):
+            continue
+        me, mw = ob.data, inst.matrix_world.copy()
+        nm = mw.to_3x3().inverted().transposed()
+        for p in me.polygons:
+            label = (top.name, len(faces))
+            n = (nm @ p.normal).normalized()
+            normals[label] = n
+            faces.append((label, n, [mw @ me.vertices[v].co for v in p.vertices]))
+    counts = {}
+    for a, b in coplanar_overlaps(faces):
+        if a[0] != b[0] and normals[a].dot(normals[b]) > 0:
+            key = tuple(sorted((a[0], b[0])))
+            counts[key] = counts.get(key, 0) + 1
+    return [[a, b, n] for (a, b), n in sorted(counts.items())]
+
+
 def tile_phase(pos, rot_z, tile_m, px_per_m, module=1.0, k=0, horizontal=False, turn_symmetry=360.0):
     """How far one placement of a tiling family's piece sits off the world tile grid, in texels (tile_project puts
     phase 0 at each piece's pivot). A wall: along its own +X, (s - k x module) mod tile with s the pivot's distance
@@ -888,6 +914,7 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                           for c in sorted(bpy.data.collections, key=lambda c: c.name)
                           if c.library is not None and NAME_RE.match(c.name)],
         "placements": places,
+        "placement_overlaps": placement_overlaps(dg, scene) if places else [],
         # a kit-named local collection that is also placed here is a copy, not a link (in a single MASTER, the norm)
         "appended": sorted(n for n in used_locally if NAME_RE.match(n) or ASM_RE.match(n)),
         "shadowing_linked": sorted(c.name for c in local if (NAME_RE.match(c.name) or ASM_RE.match(c.name))
@@ -1276,6 +1303,9 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
             out.append("placement %s (%s) tilted: rotated about X or Y" % (pl["object"], pl["asset"]))
         if not pl["scale_ok"]:
             out.append("placement %s (%s) scaled: grid pieces are placed at scale 1" % (pl["object"], pl["asset"]))
+    out += ["placements %s and %s have %d face pair(s) in one plane facing the same way: they z-fight; set one back "
+            "(an engaged capital or base stands proud of the wall face or is let into it) or remove the hidden face"
+            % (a, b, k) for a, b, k in rep.get("placement_overlaps", [])]
     out += ["%s is placed from a local copy (appended), not linked" % n for n in rep["appended"]]
     out += ["local collection %s shadows a linked one of the same name" % n for n in rep["shadowing_linked"]]
     if role != "fbx":                        # a Path Mode Strip export carries no textures: data only there
