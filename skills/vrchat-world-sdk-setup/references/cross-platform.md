@@ -32,17 +32,19 @@ PC publish prep:
      | `VRChat/Mobile/Standard Lite` | Albedo, metallic (R) and smoothness (A) map, normal, occlusion (G), emission, detail maps (the Standard layout: Detail Mask alpha, Detail Albedo x2, Detail Normal, UV0 or UV1), lightmaps (Directional and Bakery MonoSH too), light probes, vertex colour; geometric specular anti-aliasing; opaque only | Yes: tick Enable GPU Instancing on its materials | Lit world materials; also what an iOS fallback renders best |
      | `VRChat/Mobile/Lightmapped` | Albedo (`_MainTex`) and the lightmap only: no probes, so dynamic or toggled lighting does not show | No instancing variant | The cheapest baked surfaces |
 
-     VRChat's full mobile list (Content Limitations page, updated 2025-10-08, checked 2026-10-27) binds **avatars**,
-     not worlds: "VRChat on Android or Quest only permits the shaders provided with the latest SDK on avatars", while
-     "Shaders are not restricted for worlds" (optimisation page). For avatars: Toon Standard, Standard Lite, Bumped
-     Diffuse, Bumped Mapped Specular, Diffuse, Matcap Lit, Toon Lit, Particles/Additive and Particles/Multiply; for
-     worlds only: Lightmapped, Skybox and Supersampled UI. In SDK 3.10.5 their `Shader.Find` names are
-     `VRChat/Mobile/` plus `Toon Standard`, `Standard Lite`, `Bumped Diffuse`, `Bumped Mapped Specular`, `Diffuse`,
-     `MatCap Lit`, `Toon Lit`, `Particles/Additive`, `Particles/Multiply`, `Lightmapped`, `Skybox` and
-     `Worlds/Supersampled UI`; the SDK also ships `Particles/Alpha Blended` and `Toon Standard (Outline)` (its
-     outline is PC-only: mobile "will fall back to the non-outline variant"). None has a cutout mode (Supersampled
-     UI's alpha clip at 0.001 sits under alpha blending): cutout foliage on mobile needs another shader
-     (`pbr-texturing`).
+     VRChat's full mobile list (Content Limitations, updated 2025-10-08, checked 2026-10-27:
+     https://creators.vrchat.com/platforms/android/quest-content-limitations/) binds **avatars**, not worlds: "VRChat
+     on Android or Quest only permits the shaders provided with the latest SDK on avatars", while "Shaders are not
+     restricted for worlds" (Content Optimization, checked 2026-10-27:
+     https://creators.vrchat.com/platforms/android/quest-content-optimization/). For avatars: Toon Standard, Standard
+     Lite, Bumped Diffuse, Bumped Mapped Specular, Diffuse, Matcap Lit, Toon Lit, Particles/Additive and
+     Particles/Multiply; for worlds only: Lightmapped, Skybox and Supersampled UI. In SDK 3.10.5 their `Shader.Find`
+     names are `VRChat/Mobile/` plus `Toon Standard`, `Standard Lite`, `Bumped Diffuse`, `Bumped Mapped Specular`,
+     `Diffuse`, `MatCap Lit`, `Toon Lit`, `Particles/Additive`, `Particles/Multiply`, `Lightmapped`, `Skybox` and
+     `Worlds/Supersampled UI` (read from the SDK 3.10.5 package's shaders); the SDK also ships `Particles/Alpha
+     Blended` and `Toon Standard (Outline)` (its outline is PC-only: mobile "will fall back to the non-outline
+     variant", Content Limitations, above). None has a cutout mode (Supersampled UI's alpha clip at 0.001 sits under
+     alpha blending): cutout foliage on mobile needs another shader (`pbr-texturing`).
 
      Standard Lite's detail maps, emission, MonoSH and specular anti-aliasing are `shader_feature` keywords that only
      its material inspector switches on (`_DETAIL`, `_EMISSION`, `_MONOSH_SPECULAR` or `_MONOSH_NOSPECULAR`,
