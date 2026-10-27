@@ -118,3 +118,9 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 | `high_low_gap(low, highs)` at the nearest distance d | `low_outside_p99` at most `min_width_m(d)`; `high_outside_p99` at most `stereo_relief_m(d)` |
 | `bake_skew(low)` | under 10% of the area over 15 deg where detail is baked (*practice*) |
 | After the bake | the bake report's `cage_inside` own and neighbour both 0; `pbr-texturing`'s seam check on the normal map shows no seam |
+
+**Where the normal map does not draw.** VRChat's Standard Lite (Quest, iOS) does not sample the normal map on a
+lightmapped surface with Non-Directional lightmaps, glossy reflections off and no realtime light (`pbr-texturing`'s
+engine notes): there a baked high reads flat. The lighting skill decides the lightmap mode; where those conditions
+hold, the bake's cavity also goes into the base colour (the AO and curvature masks darkening crevices a few percent),
+so the form still reads on mobile.
