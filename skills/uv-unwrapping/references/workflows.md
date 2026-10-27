@@ -162,7 +162,10 @@ storey height (or the vertical module) up the walls.
 | 1 m module, 4 m tile wanted | jumps at three joints in four: one of the three options below | |
 
 A small tile repeats more often, so it must pass pbr-texturing's tile-scale check (an even tile), with variation from
-variants, decals and the lightmap. Where the art needs a period longer than the step:
+variants, decals and the lightmap. A photographed or library material keeps its real scale: its period is the size
+its source covers (`size_m` in its source record), or a whole number of its own repeats cropped to fit; scaled the
+same on U and V, never squeezed (a 1.4 m brick tile forced into 1 m makes every brick 29% too small, and different
+factors on U and V stretch it). Where the art needs a period longer than the step:
 
 1. Place that family only on multiples of the tile (the world spec's placements, checked by the validator), or
 2. phase variants: one mesh per offset (`_P0`, `_P1`, ...: `tile_project(..., offset=(k * module, 0, 0))`, projected
