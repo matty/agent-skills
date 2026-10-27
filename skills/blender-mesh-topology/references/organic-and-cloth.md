@@ -87,6 +87,7 @@ table.modifiers.new("Collision", "COLLISION"); table.collision.thickness_outer =
 cl = plane.modifiers.new("Cloth", "CLOTH")
 cl.collision_settings.distance_min = 0.003
 cl.collision_settings.use_self_collision = True        # folds that touch
+cl.collision_settings.self_distance_min = 0.003         # at the 15 mm default a 2 cm grid crumpled into itself
 cl.point_cache.frame_end = 60
 for f in range(1, 61):
     scene.frame_set(f)                          # step in order: the cache needs every frame
@@ -101,7 +102,13 @@ bpy.ops.object.modifier_apply(modifier="Cloth")         # with the plane active
   top with a vertex group in `cl.settings.vertex_group_mass`.
 - **UVs before the simulation**, on the flat sheet, so the weave follows the folds without stretching
   (*practice*); they survive the simulation because the topology does not change.
+- **Self-collision distance**: at the default `self_distance_min` (15 mm) a 1.4 m sheet on a 2 cm grid crumpled to
+  0.97 m and rose 25 cm; at 3 mm it draped (*measured*). Keep it under the grid spacing.
 - **Thickness**: a Solidify (or a hem: the border edge loop extruded down a few millimetres) after the simulation.
-  A single-sided sheet disappears from behind in an engine that culls back faces, as Unity's Standard does.
+  A single-sided sheet disappears from behind in an engine that culls back faces, as Unity's Standard does. The
+  Solidify's back copies the front's UVs mirrored and its rim gets none: one island of folded and zero-area faces
+  (3500 and 240 on a tablecloth) that `layout(bake=True)` cannot part. Name them with the Solidify's
+  `shell_vertex_group` and `rim_vertex_group`, apply it, mark seams round the rim, unwrap the rim as its own strip
+  and the back as its own island (or move it +1 U as a stack when front and back may share their texels).
 - **The low**: the applied sheet decimated or QuadriFlow-remeshed with its border kept where it meets a rail or a
   table edge, then the simulated folds baked onto it. Upholstery forms (crown, sag, piping sizes) are `3d-form-design`'s.
