@@ -469,15 +469,16 @@ def joint_match(a, b, select, digits=5, matrix_a=None, matrix_b=None):
     return pa - pb, pb - pa, pa & pb
 
 
-def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None, skip_deg=45.0):
+def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None):
     """Does the shading carry on across a joint? At each joint position the two pieces share (as joint_match finds
     them, in one frame through matrix_a / matrix_b), each corner normal of either evaluated mesh is matched to the
-    nearest corner normal of the other piece there (its front against the neighbour's front, its top against the
-    top); a corner with no match within skip_deg is an end cap pressed against the neighbour and is left out. The worst
-    match, both ways, is reported. A smooth curved piece ending against a straight one leans its end vertices by half
-    a facet angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true
-    surface normal put it right. Returns {"positions": shared positions compared, "max_deg", "worst": [(deg,
-    position), ...]}."""
+    nearest corner normal of the other piece there (its front against the neighbour's front, its top against the top).
+    Faces lying wholly in the joint (every corner selected: the end caps pressed together) are left out, so a crease
+    of any angle counts (a piece smoothed across its folds against a hard-shaded one reads 54.7 deg). The worst match,
+    both ways, is reported. A smooth curved piece ending against a straight one leans its end vertices by half a facet
+    angle, a crease in the shading at every such joint; custom normals on the joint vertices set to the true surface
+    normal put it right. Returns {"positions": shared positions compared, "max_deg", "worst": [(deg, position),
+    ...]}."""
     import bpy
     dg = bpy.context.evaluated_depsgraph_get()
 
@@ -488,10 +489,12 @@ def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None, skip_deg
             rot = (m.to_3x3() if m is not None else None)
             out = {}
             for p in me.polygons:
-                for li in p.loop_indices:
-                    v = me.vertices[me.loops[li].vertex_index].co
-                    co = m @ v if m is not None else v.copy()
-                    if not select(co):
+                pos = [m @ me.vertices[i].co if m is not None else me.vertices[i].co.copy() for i in p.vertices]
+                inside = [bool(select(co)) for co in pos]
+                if all(inside):
+                    continue                                   # an end cap lying in the joint
+                for li, co, sel in zip(p.loop_indices, pos, inside):
+                    if not sel:
                         continue
                     n = me.corner_normals[li].vector.copy()
                     if rot is not None:
@@ -506,9 +509,7 @@ def joint_normals(a, b, select, digits=5, matrix_a=None, matrix_b=None, skip_deg
     for x, y in ((ca, cb), (cb, ca)):
         for key in shared:
             for n in x[key]:
-                best = min(math.degrees(n.angle(m, 0.0)) for m in y[key])
-                if best <= skip_deg:
-                    per[key] = max(per[key], best)
+                per[key] = max(per[key], min(math.degrees(n.angle(m, 0.0)) for m in y[key]))
     worst = sorted(((round(d, 3), list(key)) for key, d in per.items()), key=lambda w: -w[0])
     return {"positions": len(worst), "max_deg": worst[0][0] if worst else 0.0, "worst": worst[:5]}
 
@@ -557,18 +558,17 @@ def _world_mesh(ob, dg):
 
 
 def _surface_samples(co, tri, area, n, seed=0):
-    """The vertices plus n points spread over the triangles by area."""
+    """n points spread over the triangles by area (none when the surface has no area)."""
     import numpy as np
     rng = np.random.default_rng(seed)
     if n <= 0 or area.sum() <= 0:
-        return co
+        return np.zeros((0, 3))
     pick = rng.choice(len(tri), size=n, p=area / area.sum())
     a, b = rng.random(n), rng.random(n)
     flip = a + b > 1
     a[flip], b[flip] = 1 - a[flip], 1 - b[flip]
     t = tri[pick]
-    pts = co[t[:, 0]] + a[:, None] * (co[t[:, 1]] - co[t[:, 0]]) + b[:, None] * (co[t[:, 2]] - co[t[:, 0]])
-    return np.vstack([co, pts])
+    return co[t[:, 0]] + a[:, None] * (co[t[:, 1]] - co[t[:, 0]]) + b[:, None] * (co[t[:, 2]] - co[t[:, 0]])
 
 
 def _signed_outside(points, trees):
@@ -591,30 +591,39 @@ def high_low_gap(low, highs, depsgraph=None, samples=20000, seed=0):
     """How far a low poly and its high polys part, in metres, both evaluated in world space (closed meshes with
     outward normals): high_outside, how far the high stands outside the low (the relief the bake turns into a normal
     map, and how far the cage must reach); low_outside, how far the low stands outside every high (a silhouette the
-    high does not have). Each as max and p99 over the vertices plus `samples` points spread by area. Judge them at
-    the nearest viewing distance d with detail_scale.py: high_outside_p99 above stereo_relief_m(d) is relief that
-    shows depth and belongs in the low's geometry; low_outside_p99 above min_width_m(d) (2 px) is a silhouette the
-    player sees that the texture cannot explain. Read-only."""
+    high does not have). The highs are one surface, sampled by area (`samples` points each side): splitting a high
+    into two objects or adding rivets changes nothing. Percentiles (p99, p999) come from the area samples, max from
+    those and every vertex. Judge them at the nearest viewing distance d with detail_scale.py: low_outside_max above
+    min_width_m(d) (2 px) is a bulge the player sees round the silhouette that the texture cannot explain (a 4 cm
+    bump on 0.6% of a low read p99 0); high_outside_p99 above stereo_relief_m(d) is relief that shows depth and
+    belongs in the low's geometry. Raises ValueError for a low or high with no faces. Read-only."""
     import bpy
     import numpy as np
     from mathutils.bvhtree import BVHTree
     dg = depsgraph or bpy.context.evaluated_depsgraph_get()
-
-    def tree(ob):
-        co, tri, _area, _vn = _world_mesh(ob, dg)
-        return BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in tri])
-
     lo = _world_mesh(low, dg)
     hi = [_world_mesh(h, dg) for h in highs]
-    per = max(1, samples // max(1, len(hi)))
-    hp = np.vstack([_surface_samples(co, tri, area, per, seed) for co, tri, area, _vn in hi])
-    lp = _surface_samples(lo[0], lo[1], lo[2], samples, seed)
-    h_out = np.maximum(_signed_outside(hp, [tree(low)]), 0.0)
-    l_out = np.maximum(_signed_outside(lp, [tree(h) for h in highs]), 0.0)
+    empty = [ob.name for ob, m in zip([low] + list(highs), [lo] + hi) if not len(m[1])]
+    if empty or not hi:
+        raise ValueError("high_low_gap needs faces on the low and on at least one high: %s"
+                         % (", ".join(empty) or "no highs given"))
+    offs = np.cumsum([0] + [len(h[0]) for h in hi])
+    hco = np.vstack([h[0] for h in hi])
+    htri = np.vstack([h[1] + o for h, o in zip(hi, offs)])
+    harea = np.concatenate([h[2] for h in hi])
+    tree = lambda co, tri: BVHTree.FromPolygons([tuple(c) for c in co], [tuple(int(i) for i in t) for t in tri])
+    low_tree, high_tree = tree(lo[0], lo[1]), tree(hco, htri)
+    hs = np.maximum(_signed_outside(_surface_samples(hco, htri, harea, samples, seed), [low_tree]), 0.0)
+    ls = np.maximum(_signed_outside(_surface_samples(lo[0], lo[1], lo[2], samples, seed), [high_tree]), 0.0)
+    hv = np.maximum(_signed_outside(hco, [low_tree]), 0.0)
+    lv = np.maximum(_signed_outside(lo[0], [high_tree]), 0.0)
     r = lambda v: round(float(v), 5)
-    return {"high_outside_max": r(h_out.max()), "high_outside_p99": r(np.percentile(h_out, 99)),
-            "low_outside_max": r(l_out.max()), "low_outside_p99": r(np.percentile(l_out, 99)),
-            "points": [int(len(hp)), int(len(lp))]}
+    pct = lambda v, q: r(np.percentile(v, q)) if len(v) else 0.0
+    return {"high_outside_max": r(max(hs.max(initial=0.0), hv.max(initial=0.0))),
+            "high_outside_p99": pct(hs, 99), "high_outside_p999": pct(hs, 99.9),
+            "low_outside_max": r(max(ls.max(initial=0.0), lv.max(initial=0.0))),
+            "low_outside_p99": pct(ls, 99), "low_outside_p999": pct(ls, 99.9),
+            "points": [int(len(hs) + len(hv)), int(len(ls) + len(lv))]}
 
 
 def bake_skew(low, limit_deg=15.0, depsgraph=None):

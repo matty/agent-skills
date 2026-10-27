@@ -76,9 +76,11 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 
 1. **Silhouette.** The low's outline is what the player sees round the object, so its curves follow the chord rule
    at the nearest viewing distance (sag at most 2 px: `min_width_m(d)` from `detail_scale.py`, `arc_segments` in
-   `grid_topology.py`). `high_low_gap(low, highs)` in `topology_audit.py` measures both ways: `low_outside_p99`, the
-   low standing outside the high (a bulge the texture cannot explain), at most `min_width_m(d)`; `high_outside_p99`,
-   the relief the bake must carry, at most `stereo_relief_m(d)` or that relief belongs in the low (section 1).
+   `grid_topology.py`). `high_low_gap(low, highs)` in `topology_audit.py` measures both ways: `low_outside_max`, the
+   low standing outside the high anywhere (a bulge the texture cannot explain), at most `min_width_m(d)`, worst point
+   and not a percentile (*measured*: a 4 cm bump on 0.6% of a crate's low read p99 0); `high_outside_p99`, the relief
+   the bake must carry, at most `stereo_relief_m(d)` or that relief belongs in the low (section 1). The highs count
+   as one surface sampled by area, so a split high or a scatter of rivets does not change the answer.
    *Measured*: a 16-sided low against a 128-sided high of 0.1 m radius gives high_outside 1.92 mm (its sagitta,
    r (1 - cos(pi / 16)), exactly), within 2 px from about 1.1 m (*derived*); a low 2 mm fatter than its high gives
    low_outside 2.0 mm.
@@ -131,7 +133,7 @@ ripples, pinches round poles, streaks along long triangles or facets on curves.
 | `topology_audit.audit(low)` and `problems()` | clean (no n-gons on the low, no open edges where faces are seen) |
 | A reflective matcap close-up of the high | no ripples, pinches, streaks or facets |
 | `review_render.compare("Body_high", "Chest_low", views, out)` (object names, one high at a time: the part's main high) | silhouettes match from every view the player has (`mismatch` per view) |
-| `high_low_gap(low, highs)` at the nearest distance d | `low_outside_p99` at most `min_width_m(d)`; `high_outside_p99` at most `stereo_relief_m(d)` |
+| `high_low_gap(low, highs)` at the nearest distance d | `low_outside_max` at most `min_width_m(d)`; `high_outside_p99` at most `stereo_relief_m(d)` |
 | `bake_skew(low)` | under 10% of the area over 15 deg where detail is baked (*practice*) |
 | After the bake | the bake report (`<name>_bake.json`) has `cage_inside` own and neighbour 0 in every pass; `pbr-texturing`'s seam check on the normal map shows no seam |
 

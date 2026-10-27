@@ -982,6 +982,26 @@ def test_review_compare_frames_each_object_alone():
     check(len(bpy.data.objects) == 4, "temporary objects left behind")
 
 
+def test_review_render_culls_back_faces_like_the_engine():
+    """A single-sided plate wound inside out (its normal away from the eye) passes every audit; the engine's stock
+    shaders cull it. review_render culls by default, so it vanishes there too; cull=False draws it."""
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)
+    bm = bmesh.new()
+    bm.faces.new([bm.verts.new(c) for c in ((-0.5, -0.5, 0), (-0.5, 0.5, 0), (0.5, 0.5, 0), (0.5, -0.5, 0))])
+    ob = object_from_bmesh("inside_out", bm)                     # wound clockwise from above: normal -Z
+    check(ob.data.polygons[0].normal.z < 0, "fixture should face down")
+
+    def covered(**kw):
+        path = str(TMP / ("cull_%s.png" % kw.get("cull", True)))
+        RR["render"](path, eye=(0, 0, 3), target=(0, 0, 0), w=200, h=100, light="FLAT", **kw)
+        return float(RR["_silhouette"](RR["_load"](path)).mean())     # pixels unlike the background corners
+    shown, culled = covered(cull=False), covered()
+    check(shown > 0.05 and culled < 0.001, "coverage drawn %.3f, culled %.3f" % (shown, culled))
+    check(not scene.display.shading.show_backface_culling, "the scene's culling setting was not restored")
+
 def test_high_low_gap_reads_the_sagitta_and_a_fat_low():
     """A 16-sided low cylinder against a 128-sided high of the same radius: the high stands out by the low's sagitta,
     r (1 - cos(pi / 16)) = 1.92 mm, and the low nowhere outside it; the high shrunk 2% (2 mm) puts the low 2 mm out."""
@@ -1004,6 +1024,63 @@ def test_high_low_gap_reads_the_sagitta_and_a_fat_low():
     m = ns["high_low_gap"](low, [high], samples=8000)
     check(abs(m["low_outside_max"] - r["low_outside_max"]) < 2e-4 and m["high_outside_max"] < 1e-4, (m, r))
 
+
+def _grid_box(name, sx, sy, sz, step, lift=None):
+    """A closed box x 0..sx, y 0..sy, z 0..sz, each side a grid of `step` quads; lift(x, y) raises top vertices."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(sx, sy, sz), verts=bm.verts)
+    bmesh.ops.translate(bm, vec=(sx / 2, sy / 2, sz / 2), verts=bm.verts)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=int(round(max(sx, sy, sz) / step)) - 1, use_grid_fill=True)
+    if lift:
+        for v in bm.verts:
+            if abs(v.co.z - sz) < 1e-6:
+                v.co.z += lift(v.co.x, v.co.y)
+    return object_from_bmesh(name, bm)
+
+
+def _blocks(name, parts):
+    """One object of closed boxes given as (size, centre)."""
+    bm = bmesh.new()
+    for size, centre in parts:
+        geom = bmesh.ops.create_cube(bm, size=1.0)["verts"]
+        bmesh.ops.scale(bm, vec=size, verts=geom)
+        bmesh.ops.translate(bm, vec=centre, verts=geom)
+    return object_from_bmesh(name, bm)
+
+
+def test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split():
+    """A 2 x 1 x 1 m low with a 25 cm patch of its top raised 4 cm (0.6% of its area) against the flat high: the old
+    p99 read 0 (a bump the player sees at 23 px from 2 m); low_outside_max reads 4 cm. A 3 cm boss on the high
+    reads the same whether it is part of the body's object or its own, and nine rivets do not dilute a 2 cm panel."""
+    fresh()
+    ns = AUDIT
+
+    def bump(x, y):
+        d = max(abs(x - 1.0), abs(y - 0.5))
+        return 0.04 if d <= 0.125 else 0.04 * max(0.0, 1 - (d - 0.125) / 0.05)
+    low = _grid_box("low_bump", 2, 1, 1, 0.025, bump)
+    high = _blocks("box_high", [((2, 1, 1), (1, 0.5, 0.5))])
+    r = ns["high_low_gap"](low, [high], samples=8000)
+    check(abs(r["low_outside_max"] - 0.04) < 1e-3 and r["low_outside_p99"] < 0.04, r)
+    flat = _blocks("box_low", [((2, 1, 1), (1, 0.5, 0.5))])
+    boss = ((0.3, 0.03, 0.2), (1.0, -0.015 + 1e-4, 0.5))
+    merged = _blocks("merged_high", [((2, 1, 1), (1, 0.5, 0.5)), boss])
+    body, own = _blocks("body_high", [((2, 1, 1), (1, 0.5, 0.5))]), _blocks("boss_high", [boss])
+    a = ns["high_low_gap"](flat, [merged], samples=8000)
+    b = ns["high_low_gap"](flat, [body, own], samples=8000)
+    check(abs(a["high_outside_p99"] - b["high_outside_p99"]) < 2e-3 and abs(a["high_outside_max"] - 0.03) < 1e-3, (a, b))
+    panel = _blocks("panel_high", [((2, 1, 1), (1, 0.5, 0.5)), ((0.55, 0.55, 0.02), (1.0, 0.5, 1.01 - 1e-4))])
+    rivets = [_blocks("rivet_high_%d" % i, [((0.02, 0.02, 0.003), (0.2 + 0.2 * i, 0.1, 1.0015 - 1e-5))])
+              for i in range(9)]
+    c = ns["high_low_gap"](flat, [panel], samples=8000)
+    d = ns["high_low_gap"](flat, [panel] + rivets, samples=8000)
+    check(abs(c["high_outside_p99"] - 0.02) < 1e-3 and abs(d["high_outside_p99"] - 0.02) < 1e-3, (c, d))
+    try:
+        ns["high_low_gap"](flat, [object_from_bmesh("faceless", bmesh.new())])
+        raise AssertionError("a high with no faces must be refused")
+    except ValueError:
+        pass
 
 def test_bake_skew_falls_with_a_bevel():
     """A hard box's averaged normals lean up to 54.7 deg off its faces (most of its area over 15 deg); a 5 cm bevel
@@ -1167,6 +1244,34 @@ def test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front():
         r = ns["joint_normals"](*pair, at_joint)
         check(r["positions"] == 4 and abs(r["max_deg"] - 90.0 / 16 / 2) < 0.01, r)
 
+
+def test_joint_normals_counts_creases_of_any_angle():
+    """Two flat plates meeting along a 60 deg bend read 60 (a skip by angle read 0); a box shaded smooth across its
+    folds against a hard-shaded one reads 54.7 at the joint; two hard boxes read 0."""
+    fresh()
+    ns = AUDIT
+    bm = bmesh.new()
+    bm.faces.new([bm.verts.new(c) for c in ((-1, 0, 0), (0, 0, 0), (0, 1, 0), (-1, 1, 0))])
+    a = object_from_bmesh("plate_a", bm)
+    bm = bmesh.new()
+    c, s = math.cos(math.radians(60)), math.sin(math.radians(60))
+    bm.faces.new([bm.verts.new(p) for p in ((0, 0, 0), (c, 0, s), (c, 1, s), (0, 1, 0))])
+    b = object_from_bmesh("plate_b", bm)
+    at_joint = lambda co: abs(co.x) < 1e-4 and abs(co.z) < 1e-4
+    r = ns["joint_normals"](a, b, at_joint)
+    check(r["positions"] == 2 and abs(r["max_deg"] - 60.0) < 0.01, r)
+    hard = _blocks("hard_beam", [((1, 0.2, 0.2), (-0.5, 0.1, 0.1))])
+    soft = _blocks("soft_beam", [((1, 0.2, 0.2), (0.5, 0.1, 0.1))])
+    hard.data.set_sharp_from_angle(angle=math.radians(30))
+    hard.data.shade_smooth()
+    soft.data.shade_smooth()
+    at_end = lambda co: abs(co.x) < 1e-4
+    r = ns["joint_normals"](hard, soft, at_end)
+    check(r["positions"] == 4 and abs(r["max_deg"] - 54.74) < 0.05, r)
+    soft.data.set_sharp_from_angle(angle=math.radians(30))
+    r = ns["joint_normals"](hard, soft, at_end)
+    check(r["max_deg"] < 0.01, r)
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1186,7 +1291,9 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
            test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
-           test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front):
+           test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front,
+           test_high_low_gap_sees_a_small_bump_and_ignores_how_the_high_is_split,
+           test_joint_normals_counts_creases_of_any_angle, test_review_render_culls_back_faces_like_the_engine):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]
 if not failed:
