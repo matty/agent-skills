@@ -76,7 +76,9 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
 On a unique UV layout every signal comes from 3D space: baked mesh maps, procedurals on Object coordinates, images
 through Box projection or a tri-planar fill, painting on the mesh. Anything laid out in UV space breaks at every seam
 (measured: noise from UV coordinates showed at every seam, the same noise from Object coordinates at none). Wood grain
-runs along each board in 3D. Routes and the check: `references/seamless-textures.md`.
+runs along each board in 3D. A stacked copy shows the texels baked at the other copy's position, so bake 3D signals
+only onto copies whose island borders are hard folds or hidden (1.08 m of seam showed on a stacked box end). Routes
+and the check: `references/seamless-textures.md`.
 
 ## 5. Wear, variation and repetition
 
