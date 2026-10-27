@@ -770,8 +770,9 @@ def bbox_share(uvw_ids, uvw):
 
 
 def merge_gate(gate=None):
-    """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest.
-    A value of float('inf') switches that check off. Raises TypeError or ValueError for anything but a dict of
+    """GATE with the given keys overriding it: a partial gate tightens or loosens those keys and keeps the rest; a
+    whole-object key it sets (angular_p95, area_local_p95) also sets its per-island twin unless the gate sets that
+    too, as uv-unwrapping's audit judges both against one limit. A value of float('inf') switches that check off. Raises TypeError or ValueError for anything but a dict of
     known keys and numbers, so a typo fails at once instead of sending every piece to review."""
     if gate is None:
         return dict(GATE)
@@ -785,6 +786,9 @@ def merge_gate(gate=None):
             raise TypeError("gate[%r] must be a number, not %r" % (k, v))
     merged = dict(GATE)
     merged.update(gate)
+    for whole, island in (("angular_p95", "island_angular_p95"), ("area_local_p95", "island_area_local_p95")):
+        if whole in gate and island not in gate:
+            merged[island] = gate[whole]
     return merged
 
 

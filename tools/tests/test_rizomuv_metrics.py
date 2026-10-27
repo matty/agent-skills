@@ -222,6 +222,12 @@ class Gate(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.um.merge_gate({"angular_p95": "1.2"})
 
+    def test_partial_gate_carries_to_the_island_twin(self):
+        g = self.um.merge_gate({"angular_p95": 1.3})                    # as uv_audit judges both with one limit
+        self.assertEqual((g["angular_p95"], g["island_angular_p95"], g["island_area_local_p95"]), (1.3, 1.3, 0.20))
+        g = self.um.merge_gate({"angular_p95": 1.3, "island_angular_p95": 1.2})
+        self.assertEqual(g["island_angular_p95"], 1.2)
+
     def test_coverage_floor(self):
         self.assertEqual(self.um.MIN_FILL_COVERAGE, 0.35)
         rep = {"distortion": dict(self.BAD, angular_p99=1.0, angular_max=1.0, area_local_p95=0.0,
