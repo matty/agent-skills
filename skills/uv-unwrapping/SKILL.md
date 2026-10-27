@@ -126,6 +126,9 @@ Mips and a platform override that caps the map shrink the gap in pixels. Polycou
 round each shell at 512, 1024 and 2048 and twice that between shells (http://wiki.polycount.com/wiki/Edge_padding):
 `map_px / 64` is the minimum gap, the `layout` and `pack` default, pixel-exact. Bake dilation fills half the gap
 (Blender's 16 px: maps up to 2048). A shared texture: `ua.layout(objs, ..., together=True)`, then `--shared`.
+A bake atlas for one material of meshes that carry others (fabric baked, wood not): add `material="M_Fabric"`,
+so the other faces keep their UVs and take no atlas space, and `max_island_m=0.8` when a long shell (a sofa's
+back) caps the scale; then `--shared --material M_Fabric`.
 
 ## 8. Stacking, mirroring and overlap
 

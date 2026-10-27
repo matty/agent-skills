@@ -1431,7 +1431,89 @@ def stack_faces_names_the_causes():
         check("scaled" in str(e) and "mirrored" in str(e), "message: %s" % e)
 
 
-CASES = [stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
+def two_material_seat(name, x0):
+    """A seat of four 0.5 m fabric quads (M_Fabric, one island each) and one 2.5 x 2.5 m walnut base (M_Walnut)
+    whose UV fills the tile, as the issue's sofas: a fabric bake atlas packed whole would give the base most of it."""
+    q3 = [quad(x0 + 0.6 * i, 0, x0 + 0.6 * i + 0.5, 0.5) for i in range(4)] + [quad(x0, 1, x0 + 2.5, 3.5)]
+    ob = make(name, q3, [sq(0.1 * i, 0.0, 0.05) for i in range(4)] + [sq(0.0, 0.0, 1.0)])
+    for m in ("M_Fabric", "M_Walnut"):
+        ob.data.materials.append(bpy.data.materials.get(m) or bpy.data.materials.new(m))
+    ob.data.polygons[4].material_index = 1
+    return ob
+
+
+def pack_one_material():
+    """#14: pack(material=) and layout(material=, together=True) pack only that material's faces into the shared
+    atlas; the walnut keeps its UVs, the fabric fills the tile without overlaps, and the hidden faces, the active UV
+    layer and Edit Mode come back as they were."""
+    obs = [two_material_seat("SEAT_%d" % k, 4 * k) for k in range(2)]
+    walnut = [face_uvs(o)[4].copy() for o in obs]
+    obs[0].data.polygons[0].hide = True                           # hidden by the user: stays hidden, not packed
+    hidden_before = face_uvs(obs[0])[0].copy()
+    bpy.context.view_layer.objects.active = obs[1]
+    obs[1].select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    ua.pack(obs, map_px=1024, material="M_Fab*", together=True)
+    check(bpy.context.mode == "EDIT_MESH", "pack left Edit Mode: %s" % bpy.context.mode)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    hide = [[p.hide for p in o.data.polygons] for o in obs]
+    check(hide == [[True, False, False, False, False], [False] * 5], "hide flags %s" % hide)
+    check(np.abs(face_uvs(obs[0])[0] - hidden_before).max() < 1e-6, "a hidden face was packed")
+    for o, w in zip(obs, walnut):
+        check(np.abs(face_uvs(o)[4] - w).max() < 1e-6, "%s: the walnut UVs moved" % o.name)
+    obs[0].data.polygons[0].hide = False
+    res = ua.layout(obs, map_px=1024, material="M_Fabric", together=True, bake=True)
+    check(all(r["fits"] and r["islands"] == 4 for r in res.values()), "layout: %s" % res)
+    for o, w in zip(obs, walnut):
+        check(np.abs(face_uvs(o)[4] - w).max() < 1e-6, "%s: layout moved the walnut UVs" % o.name)
+    sh = ua.audit_shared(obs, layer=0, map_px=1024, material="M_Fabric")
+    check(not sh["issues"], "shared audit of the fabric: %s" % sh["issues"])
+    fab = np.concatenate([np.concatenate(face_uvs(o)[:4]) for o in obs])
+    check(fab.max(0).max() > 0.9, "the fabric does not fill the tile: max UV %s" % fab.max(0))
+    try:
+        res = ua.layout(obs, map_px=1024, material="M_None")
+        check(res == {}, "layout with no matching faces returned %s" % res)
+    except ValueError as e:
+        check(False, "layout with no matching faces raised: %s" % e)
+
+
+def strip(name, n, seg, width, y0=0.0):
+    """One island: n connected quads of seg x width metres along X, unwrapped along U at 0.1 UV units per metre."""
+    verts = [(seg * i, y0 + dy, 0.0) for i in range(n + 1) for dy in (0.0, width)]
+    faces = [(2 * i, 2 * i + 2, 2 * i + 3, 2 * i + 1) for i in range(n)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(verts, [], faces)
+    me.update()
+    lay = me.uv_layers.new(name="UVMap")
+    lay.uv.foreach_set("vector", [c for f in faces for v in f for c in (0.1 * verts[v][0], 0.1 * (verts[v][1] - y0))])
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    return ob
+
+
+def layout_cuts_long_islands():
+    """#14: max_island_m cuts a 4 m shell into 0.8 m pieces, so it no longer caps the atlas's scale; each piece is
+    moved only (every face keeps its direction and one density), and short islands are left whole."""
+    ob = strip("SHELL", 8, 0.5, 0.3)
+    before = directions(ob)
+    whole = ua.layout([ob], map_px=1024)[ob.name]
+    cov_whole = ua.audit(ob, layer=0, map_px=1024)["texel_px_per_m"]
+    reset()
+    ob = strip("SHELL", 8, 0.5, 0.3)
+    short = strip("ARM", 1, 0.5, 0.3, y0=2.0)
+    res = ua.layout([ob, short], map_px=1024, max_island_m=0.8)
+    r = ua.audit(ob, layer=0, map_px=1024)
+    check(res["SHELL"]["islands_cut"] == 1 and res["SHELL"]["islands"] == 5 and res["SHELL"]["fits"],
+          "cut: %s" % res["SHELL"])
+    check(res["ARM"]["islands_cut"] == 0 and res["ARM"]["islands"] == 1, "short island cut: %s" % res["ARM"])
+    check(directions(ob) == before, "a piece was turned: %s -> %s" % (before, directions(ob)))
+    check(r["texel_cv"] < 0.01, "pieces scaled apart: cv %.3f" % r["texel_cv"])
+    check(r["texel_px_per_m"] > 1.5 * cov_whole and whole["islands"] == 1,
+          "cut %.0f px/m against %.0f whole" % (r["texel_px_per_m"], cov_whole))
+    print("INFO layout_cuts_long_islands: %.0f px/m whole, %.0f px/m cut" % (cov_whole, r["texel_px_per_m"]))
+
+
+CASES = [pack_one_material, layout_cuts_long_islands, stack_smooth_by_angle_first, stack_route_a_never_reshaded, stack_mirror_above_bevel, stack_bevel_then_mirror,
          stack_added_triangulate, seams_by_angle_matches_select_sharp, text_up_attribute_in_world_space,
          trim_sheet_2048x1024, material_filter_and_command_line, stack_faces_names_the_causes,
          lightmap_lods_at_their_own_footprint, hard_edges_route_a_boolean, modular_wall_mixed_materials,

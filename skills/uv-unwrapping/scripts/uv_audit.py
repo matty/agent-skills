@@ -1331,8 +1331,37 @@ def _uv_get(lay, nl):
     return uv.reshape(-1, 2)
 
 
+def _hide_others(o, keep):
+    """Hide every face not kept (and the edges and vertices only they use) so an operator sees the kept faces only;
+    returns the previous hide flags for _unhide. Object Mode only."""
+    me = o.data
+    prev = []
+    for coll in (me.vertices, me.edges, me.polygons):
+        h = np.zeros(len(coll), bool)
+        coll.foreach_get("hide", h)
+        prev.append(h)
+    lv = np.empty(len(me.loops), np.int64)
+    me.loops.foreach_get("vertex_index", lv)
+    lt = np.array([p.loop_total for p in me.polygons], np.int64)
+    shown_v = np.zeros(len(me.vertices), bool)
+    shown_v[lv[np.repeat(keep, lt)]] = True
+    le =np.empty(len(me.loops), np.int64)
+    me.loops.foreach_get("edge_index", le)
+    shown_e = np.zeros(len(me.edges), bool)
+    shown_e[le[np.repeat(keep, lt)]] = True
+    for coll, shown, h in zip((me.vertices, me.edges, me.polygons), (shown_v, shown_e, keep), prev):
+        coll.foreach_set("hide", h | ~shown)
+    return prev
+
+
+def _unhide(o, prev):
+    for coll, h in zip((o.data.vertices, o.data.edges, o.data.polygons), prev):
+        coll.foreach_set("hide", h)
+    o.data.update()
+
+
 def pack(objects, map_px=1024, pad_px=None, layer=0, scale=True, rotate=False, rotate_method="CARDINAL",
-         together=False, shape="CONCAVE", keep_stacks=False):
+         together=False, shape="CONCAVE", keep_stacks=False, material=None):
     """Pack each object's UV map (UV0 unless layer says otherwise) into the 0-1 tile with pad_px pixels between
     islands (default map_px / 64) and half of it to the tile edge: Blender's FRACTION margin puts margin at the edge
     and twice it between islands (measured on 5.2.2), so margin = pad_px / (2 * map_px). scale=False keeps island
@@ -1341,28 +1370,50 @@ def pack(objects, map_px=1024, pad_px=None, layer=0, scale=True, rotate=False, r
     non-directional textures and for lightmaps, rotate_method="ANY" only for organic non-directional islands.
     keep_stacks=True packs exactly stacked islands as one (Blender's merge_overlap merges every overlapping island,
     so separate the others first: layout() does). together=True packs all objects into one tile (an atlas).
-    Restores the active UV layer, the selection and the mode. Square maps only."""
+    material: only the faces whose material name matches (a name or a pattern) are packed; the others keep their UVs
+    where they are, overlapping the packed tile (right for a bake atlas of one material, which the others never
+    sample), and objects without it are skipped. Restores the active UV layer, the selection, the hidden faces and
+    the mode. Square maps only."""
     size = _square(map_px, "pack()")
     if pad_px is None:
         pad_px = size / 64.0
     objects = [o for o in objects if o.type == "MESH"]
+    was_edit = bpy.context.mode == "EDIT_MESH"
+    if material and bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")                 # mesh data reads empty in Edit Mode
+    keeps = {o.name: _keep_faces(o, material) for o in objects}
+    if material:
+        objects = [o for o in objects if keeps[o.name].any()]
     groups = [objects] if together else [[o] for o in objects]
     for group in groups:
+        if not group:
+            continue
         prev_layers = [(o, o.data.uv_layers.active_index) for o in group]
-        prev = None
+        prev, hidden = None, []
         try:
+            if bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
             for o in group:
                 _set_active_layer(o, layer)
+                if keeps[o.name] is not None:
+                    hidden.append((o, _hide_others(o, keeps[o.name])))
             prev = _edit(group)
             bpy.ops.uv.select_all(action="SELECT")
             bpy.ops.uv.pack_islands(udim_source="CLOSEST_UDIM", rotate=rotate, rotate_method=rotate_method,
                                     scale=scale, merge_overlap=keep_stacks, margin_method="FRACTION",
                                     margin=pad_px / (2.0 * size), shape_method=shape)
         finally:
+            if hidden and bpy.context.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            for o, h in hidden:
+                _unhide(o, h)
             if prev is not None:
                 _restore(prev)
             for o, i in prev_layers:
                 o.data.uv_layers.active_index = i
+    act = bpy.context.view_layer.objects.active
+    if was_edit and bpy.context.mode == "OBJECT" and act is not None and act.type == "MESH":
+        bpy.ops.object.mode_set(mode="EDIT")
 
 
 def _lightmap_pack_fails(ob, layer_name, size):
@@ -1640,9 +1691,12 @@ def set_texel_density(objects, px_per_m, map_px, layer=0, per_island=True, pack_
     return out
 
 
-def _island_boxes(ob, lay):
-    """Islands of the mesh's own layer: id per corner, bounding boxes, unsigned and signed UV areas, UVs."""
+def _island_boxes(ob, lay, keep=None):
+    """Islands of the mesh's own layer: id per corner, bounding boxes, unsigned and signed UV areas, UVs. keep: per
+    polygon, only those faces (the corners and UVs returned are theirs; write back with _write_uv)."""
     d = _arrays(ob, lay.name, evaluated=False)
+    if keep is not None:
+        d = _subset(d, keep)
     pa, pb, uv_split, _hard, _key = _edges(d)
     isl = _islands(len(d["ls"]), pa, pb, ~uv_split)
     n = int(isl.max()) + 1 if len(isl) else 0
@@ -1652,6 +1706,60 @@ def _island_boxes(ob, lay):
     area = np.bincount(it, weights=np.abs(au), minlength=n)
     lo, hi = _boxes(d, isl, n)
     return np.repeat(isl, d["lt"]), lo, hi, area, signed, d["uv"]
+
+
+def _keep_faces(ob, material):
+    """Per polygon of ob's mesh: True where its material matches material (a name or pattern); None for every face."""
+    if not material:
+        return None
+    return _material_faces(_arrays(ob, None, evaluated=False, need_uv=False), material)
+
+
+def _write_uv(o, lay, uv, keep=None):
+    """Write UVs for the kept faces' corners (all corners when keep is None) and leave the others as they were."""
+    if keep is not None:
+        full = _uv_get(lay, len(o.data.loops))
+        full[np.repeat(keep, [p.loop_total for p in o.data.polygons])] = uv
+        uv = full
+    lay.uv.foreach_set("vector", np.asarray(uv, float).ravel())
+    o.data.update()
+
+
+def _split_long(o, lay, max_m, keep=None):
+    """Cut every island longer than max_m metres (along its box's long axis, in the world-space size its own UV
+    density gives) into equal pieces by face centre, and move piece j along that axis by j x (the island's length +
+    1), so the pack places each piece on its own. Translation only: no piece is rotated or scaled, so the tangent
+    frame stays. Copies of a stack are cut and moved alike, so they stay stacked. Returns the islands cut."""
+    d = _arrays(o, lay.name, evaluated=False)
+    if keep is not None:
+        d = _subset(d, keep)
+    npoly = len(d["ls"])
+    if not npoly:
+        return 0
+    pa, pb, uv_split, _hard, _key = _edges(d)
+    isl = _islands(npoly, pa, pb, ~uv_split)
+    n = int(isl.max()) + 1
+    tr = _triangles(d)
+    it = isl[d["tpoly"]]
+    a3 = np.bincount(it, weights=tr["a3"], minlength=n)
+    au = np.bincount(it, weights=np.abs(tr["au"]), minlength=n)
+    lo, hi = _boxes(d, isl, n)
+    ext = hi - lo
+    axis = (ext[:, 1] > ext[:, 0]).astype(np.int64)
+    span = ext[np.arange(n), axis]
+    length_m = span / np.maximum(np.sqrt(np.maximum(au, 1e-30) / np.maximum(a3, 1e-30)), 1e-30)
+    pieces = np.where((au > 0) & (a3 > 0) & (length_m > max_m), np.ceil(length_m / max_m - 1e-6), 1).astype(np.int64)
+    if (pieces <= 1).all():
+        return 0
+    uv = d["uv"].copy()
+    centre = np.add.reduceat(uv, d["ls"], axis=0) / d["lt"][:, None]
+    ax = axis[isl]
+    t = (centre[np.arange(npoly), ax] - lo[isl, ax]) / np.maximum(span[isl], 1e-30)
+    j = np.clip((t * pieces[isl]).astype(np.int64), 0, pieces[isl] - 1)
+    shift = np.zeros((npoly, 2))
+    shift[np.arange(npoly), ax] = j * (span[isl] + 1.0)
+    _write_uv(o, lay, uv + np.repeat(shift, d["lt"], axis=0), keep)
+    return int((pieces > 1).sum())
 
 
 def _stack_groups(lo, hi, area):
@@ -1670,11 +1778,12 @@ def _stack_groups(lo, hi, area):
     return groups, t
 
 
-def _bake_offsets(o, lay):
+def _bake_offsets(o, lay, faces=None):
     """For a bake: all but one copy of each stack exactly +1 in U (the copy kept inside 0-1 is not mirrored), then
     the flipped half of every island folded onto itself (mirrored halves joined on an axis, as a Mirror modifier
-    applied with Merge on leaves them) +1 in U, face corner by face corner. Returns (copies moved, halves moved)."""
-    isl_loop, lo, hi, area, signed, uv = _island_boxes(o, lay)
+    applied with Merge on leaves them) +1 in U, face corner by face corner. faces: per polygon, only those. Returns
+    (copies moved, halves moved)."""
+    isl_loop, lo, hi, area, signed, uv = _island_boxes(o, lay, faces)
     stacks, _t = _stack_groups(lo, hi, area)
     shift = np.zeros_like(lo)
     moved = 0
@@ -1688,9 +1797,10 @@ def _bake_offsets(o, lay):
                 shift[i, 0] = 1.0
                 moved += 1
     if moved:
-        lay.uv.foreach_set("vector", (uv + shift[isl_loop]).ravel())
-        o.data.update()
+        _write_uv(o, lay, uv + shift[isl_loop], faces)
     d = _arrays(o, lay.name, evaluated=False)
+    if faces is not None:
+        d = _subset(d, faces)
     pa, pb, uv_split, _hard, _key = _edges(d)
     ids, _split, flipped = _island_ids(d, pa, pb, uv_split, _triangles(d)["au"])
     halves = 0
@@ -1700,14 +1810,13 @@ def _bake_offsets(o, lay):
         if sel.any():
             uv2 = d["uv"].copy()
             uv2[np.repeat(sel, d["lt"]), 0] += 1.0
-            lay.uv.foreach_set("vector", uv2.ravel())
-            o.data.update()
+            _write_uv(o, lay, uv2, faces)
             halves = int(len(np.unique(ids[sel])))
     return moved, halves
 
 
 def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=True, rotate_method="CARDINAL",
-           bake=False, together=False):
+           bake=False, together=False, material=None, max_island_m=None):
     """Step 8 of the order of work, its parts in their only safe order, on a UV map (UV0 unless layer says
     otherwise) already unwrapped, straightened, oriented and stacked (identical parts placed exactly on one copy,
     faces lowered on purpose marked):
@@ -1719,27 +1828,42 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
       4. fit check: fits=False when any island ends outside 0-1 (never a silent spill);
       5. bake=True: all but one copy of each stack, and the flipped half of each island folded onto itself (a Mirror
          modifier applied with Merge on), moved exactly +1 in U.
+    material: only the faces whose material name matches (a name or a pattern) take part in every step; the others
+    keep their UVs, and objects without it are skipped. With together=True: one material's faces of several meshes
+    packed into a shared bake atlas, without the other materials taking space they never use.
+    max_island_m: before the pack, islands longer than this many metres are cut into pieces that pack on their own,
+    moved but never turned or scaled (a long sofa shell otherwise caps the whole atlas's scale). For a bake atlas
+    only: each cut is a UV seam, which the bake's margin (dilation) covers, but a tiling or hand-painted texture
+    would show it.
     Square maps only. Restores the active UV layer and the mode. Returns {object name: {"factor", "fits",
-    "islands", "stacks", "copies_moved", "mirror_halves_moved"}}."""
+    "islands", "stacks", "copies_moved", "mirror_halves_moved", "islands_cut"}}."""
     size = _square(map_px, "layout()")
     objects = [o for o in objects if o.type == "MESH"]
     was_edit = bpy.context.mode == "EDIT_MESH"
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
+    keeps = {o.name: _keep_faces(o, material) for o in objects}
+    if material:
+        objects = [o for o in objects if keeps[o.name].any()]
     prev = [(o, o.data.uv_layers.active_index) for o in objects]
-    out = {o.name: {"factor": None} for o in objects}
+    out = {o.name: {"factor": None, "islands_cut": 0} for o in objects}
     try:
-        if px_per_m:
-            for name, f in set_texel_density(objects, px_per_m, size, layer=layer, pack_after=False).items():
+        if px_per_m and objects:
+            for name, f in set_texel_density(objects, px_per_m, size, layer=layer, pack_after=False,
+                                             material=material).items():
                 out[name]["factor"] = f
         groups = [objects] if together else [[o] for o in objects]
         for group in groups:
+            if not group:
+                continue
             boxes = []
             for o in group:
                 lay = _layer(o.data, layer)
                 if lay is None:
                     raise ValueError("%s has no UV layer %r" % (o.name, layer))
-                isl_loop, lo, hi, area, _signed, uv = _island_boxes(o, lay)
+                if max_island_m:
+                    out[o.name]["islands_cut"] = _split_long(o, lay, max_island_m, keeps[o.name])
+                isl_loop, lo, hi, area, _signed, uv = _island_boxes(o, lay, keeps[o.name])
                 stacks, t = _stack_groups(lo, hi, area)
                 boxes.append((o, lay, isl_loop, lo, hi, uv, stacks, t))
             # each stack (or single island) gets its own cell of a square grid, far enough apart that nothing but a
@@ -1752,23 +1876,24 @@ def layout(objects, map_px, px_per_m=None, pad_px=None, layer=0, directional=Tru
                 for g in stacks:
                     shift[g] = -t[g] + step * np.array([slot % cols, slot // cols], float)
                     slot += 1
-                lay.uv.foreach_set("vector", (uv + shift[isl_loop]).ravel())
-                o.data.update()
+                _write_uv(o, lay, uv + shift[isl_loop], keeps[o.name])
             pack(group, map_px=size, pad_px=pad_px, layer=layer, scale=not px_per_m, rotate=not directional,
-                 rotate_method=rotate_method, keep_stacks=True, together=together)
+                 rotate_method=rotate_method, keep_stacks=True, together=together, material=material)
         for o in objects:
             lay = _layer(o.data, layer)
+            keep = keeps[o.name]
             uv = _uv_get(lay, len(o.data.loops))
+            if keep is not None:
+                uv = uv[np.repeat(keep, [p.loop_total for p in o.data.polygons])]
             if len(uv):
                 t0 = np.floor(uv.min(0) + UV_EPS)        # a packer that chose another tile: bring it home
                 if t0.any():
                     uv = uv - t0
-                    lay.uv.foreach_set("vector", uv.ravel())
-                    o.data.update()
+                    _write_uv(o, lay, uv, keep)
             out[o.name]["fits"] = bool(not len(uv) or (uv.min() >= -UV_EPS and uv.max() <= 1 + UV_EPS))
-            _isl_loop, lo, hi, area, _signed, _uv = _island_boxes(o, lay)
+            _isl_loop, lo, hi, area, _signed, _uv = _island_boxes(o, lay, keep)
             stacks, _t = _stack_groups(lo, hi, area)
-            moved, halves = _bake_offsets(o, lay) if bake else (0, 0)
+            moved, halves = _bake_offsets(o, lay, keep) if bake else (0, 0)
             out[o.name].update({"islands": int(len(lo)), "stacks": int(sum(len(g) > 1 for g in stacks)),
                                 "copies_moved": moved, "mirror_halves_moved": halves})
     finally:
