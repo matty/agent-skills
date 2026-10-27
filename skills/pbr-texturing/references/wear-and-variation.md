@@ -14,7 +14,7 @@ families that sit side by side.
 
 | Wear | Mask from | What it changes |
 |---|---|---|
-| Chipped or rubbed edges | Curvature, convex side (above 0.5 in both bakers measured here), broken up with noise | Lighter or a lower layer showing; paint chipped to bare metal turns metallic to 1 there; edges polish smoother |
+| Chipped or rubbed edges | An edge mask from 3D (a Bevel node's normal against the true normal, or curvature's convex side above 0.5), broken up with noise into patches, through a soft threshold | Lighter or a lower layer showing; paint chipped to bare metal turns metallic to 1 there; edges polish smoother. A near-binary threshold on a mask that ramps across a chamfer lands a step on the UV seam there (a crate's chips failed `texture_seams` on 3.7 m of seams; a Bevel-node mask and soft edges took it to 0.05 m), and an unbroken bright line along every edge reads as CG |
 | Dirt in crevices and corners | AO and the concave side of curvature | Darker, rougher, less saturated |
 | Dust on tops | World-space normal, up-facing (Z up) | Lighter, rougher, desaturated; never on undersides |
 | Scuffs and splash near the floor | Position, the lowest 20-30 cm | Darker, rougher; rising damp on masonry |

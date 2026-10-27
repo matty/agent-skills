@@ -45,6 +45,7 @@ MAP_SUFFIX = {"normal": "Normal", "ao": "AO", "curvature": "Curvature"}
 NEUTRAL = {"normal": (0.5, 0.5, 1.0), "ao": (1.0, 1.0, 1.0), "curvature": (0.5, 0.5, 0.5)}
 PNG_COLOUR = {1: 0, 2: 4, 3: 2, 4: 6}        # channels -> PNG colour type: grey, grey + alpha, RGB, RGBA
 FILTER_SIGMA = 0.5       # Gaussian pre-filter, in output texels: a box filter alone steps thin sloped detail
+CURVATURE_SATURATED = 0.05     # a curvature map with more of its texels clipped than this gets a note in the report
 FITTED = {"safety": 1.15, "margin": 0.0015, "floor": 0.002, "min_cos": 0.5, "dilate": 2, "repair": 10}  # metres
 
 
@@ -299,7 +300,8 @@ def cage_faults(low, highs, pushes, depsgraph=None):
     return {"neighbour": n_across, "own": n_short, "rays": rays}
 
 
-def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, report=None, **settings):
+def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, report=None, reference_size=None,
+                           **settings):
     """A cage push per vertex of the evaluated low poly, for pieces where no single push works: narrow channels
     (a channel-tufted back: a cage deep enough for one pad starts rays inside the next), concave creases, and pieces
     whose high stands far off in places and close in others.
@@ -343,7 +345,8 @@ def fitted_cage_extrusions(low, highs, depsgraph=None, max_samples=200000, repor
     push = req.copy()
     lower, upper = np.zeros(nv), np.full(nv, np.inf)            # per vertex: its own last exit, its cap
     capped = 0
-    reach = max(2.0 * float(req.max()) if nv else 0.0, 0.02 * low.dimensions.length)   # sparse highs: gaps in samples
+    size = float(reference_size) if reference_size else low.dimensions.length
+    reach = max(2.0 * float(req.max()) if nv else 0.0, 0.02 * size)   # sparse highs: gaps in samples
     for v in range(nv):
         origin, direction = Vector(lm["co"][v]), Vector(lm["vn"][v]).normalized()
         last_exit, cap = 0.0, None
@@ -536,7 +539,7 @@ def _restore_materials(mat, saved):
 
 def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supersample=2, extrusion=None, margin=16,
          samples=None, ao_distance=None, bits=16, uv_layer=None, curvature_gain=None, gpu=False, cage=None,
-         filter_sigma=FILTER_SIGMA):
+         filter_sigma=FILTER_SIGMA, reference_size=None, occluders=()):
     """Bake `maps` (normal, ao, curvature) from `highs` onto `low` and write <name>_<Map>.png into out_dir.
     size: 1024, (width, height) or "1024x2048"; cage: None or "uniform" (one push along the averaged normals:
     extrusion, default cage_extrusion(), enough to enclose the high polys), "fitted" (a push per vertex,
@@ -546,7 +549,11 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
     about 3 texels wide); samples: Cycles samples per map (default normal 8, ao 64, curvature 8); ao_distance: AO
     ray length in metres (default 10% of the diagonal); curvature_gain: fixed contrast for the curvature map
     (default: per map, so the 99th percentile of |pointiness - 0.5| reaches 0.5; give one value for every piece of
-    a set so they match)."""
+    a set so they match). reference_size: the diagonal in metres the default cage floor and AO distance scale with
+    (default the low's; bake_exploded passes the assembled low's, not the spread-out one's). Every other
+    render-visible object is hidden while baking and restored (an unrelated box over the low took its AO from 0.99 to
+    0.70): occluders lists objects that should still cast AO (a floor for contact shadow); the report counts the
+    hidden ones."""
     t0 = time.time()
     scene = bpy.context.scene
     name = name or low.name
@@ -561,7 +568,7 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
         raise ValueError("extrusion sets a uniform cage: leave it out with cage='fitted'")
     _require_evaluated([low] + highs, bpy.context.evaluated_depsgraph_get())
     out_w, out_h = map_size(size)
-    diag = max(low.dimensions.length, 1e-6)
+    diag = max(float(reference_size) if reference_size else low.dimensions.length, 1e-6)
     stats, fitted = {}, {}
     push = None
     if mode == "uniform":
@@ -570,7 +577,7 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
             extrusion = max(extrusion, 0.005 * diag)          # a little push even when the high poly sits inside
         push = extrusion = float(extrusion)
     elif mode == "fitted":
-        push = fitted_cage_extrusions(low, highs, report=fitted)
+        push = fitted_cage_extrusions(low, highs, report=fitted, reference_size=diag)
     ao_distance = 0.1 * diag if ao_distance is None else float(ao_distance)
     ss = max(1, int(supersample))
     w, h = out_w * ss, out_h * ss
@@ -599,6 +606,13 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
         report["cage_inside"] = fitted["faults"]
     elif mode == "uniform":
         report["cage_inside"] = cage_faults(low, highs, push)
+    keepers = {low, cage} | set(highs) | set(occluders or ())
+    hidden = [o for o in scene.objects if (o.type in ("MESH", "CURVE", "SURFACE", "META", "FONT")
+                                           or (o.type == "EMPTY" and o.instance_type == "COLLECTION"))
+              and not o.hide_render and o not in keepers]
+    for o in hidden:
+        o.hide_render = True
+    report["hidden_for_bake"] = len(hidden)
     try:
         for m in maps:
             if m not in MAP_SUFFIX:
@@ -648,6 +662,14 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
                         0.5 / max(float(np.percentile(dev, 99)), 1e-6) if dev.size else 1.0)
                     a = np.clip(0.5 + p * gain, 0.0, 1.0)[:, :, None]
                     info["gain"] = round(gain, 3)
+                    used = np.abs(p) > 1e-4                    # texels the bake wrote something into
+                    sat = float(((a[:, :, 0] <= 0.001) | (a[:, :, 0] >= 0.999))[used].mean()) if used.any() else 0.0
+                    info["saturated_share"] = round(sat, 4)
+                    if sat > CURVATURE_SATURATED:
+                        report.setdefault("notes", []).append(
+                            "curvature: %.0f%% of its texels clipped to 0 or 1 at gain %.3g: a shared gain from a "
+                            "denser high, or a sparse high read as all edges; cut the high to a grid of about 2 bake "
+                            "texels before its bevels, or bake this set with its own gain" % (100 * sat, gain))
                 path = os.path.join(out_dir, "%s_%s.png" % (name, MAP_SUFFIX[m]))
                 save_png(path, a, bits=bits)
                 out[m] = path
@@ -659,6 +681,8 @@ def bake(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, supers
                 _undo(undo)
                 bpy.data.images.remove(img)
     finally:
+        for o in hidden:
+            o.hide_render = False
         if own_cage:
             me = cage.data
             bpy.data.objects.remove(cage)
@@ -732,7 +756,9 @@ def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("norm
                 if member[v.index] not in (-1, k):
                     raise ValueError("vertex %d of %s is in two part groups" % (v.index, low.name))
                 member[v.index] = k
-    dist = float(distance) if distance else 2.0 * max(low.dimensions.length, 1e-3)
+    size = max(low.dimensions.length, 1e-3)                   # assembled: the defaults scale with this, not with
+    kw.setdefault("reference_size", size)                     # the parts spread out (an 18 m spread made a 90 mm
+    dist = float(distance) if distance else 2.0 * size        # cage floor and 1.8 m AO rays)
     out, reports = {}, {}
     first = [m for m in maps if m in explode]
     rest = [m for m in maps if m not in explode]

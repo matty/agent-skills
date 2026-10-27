@@ -73,6 +73,8 @@ whether the gutters hold at a distance is the padding rule (`uv-unwrapping`, map
 | Shows | Cause | Fix |
 |---|---|---|
 | Colour, roughness or AO seams on a unique prop | A signal from UV space: UV noise, an image on the UVs, 2D painting across a seam | Re-make it from Object coordinates, Box projection or a tri-planar fill; bake again |
+| Colour seams only where a mask ramps (chamfers, panel edges), the normal map clean there | A hard threshold on a 3D mask that changes fast across the seam (curvature across a 3 mm round) | A soft threshold, a mask that is even across the edge (a Bevel node), wear broken into patches |
+| Seams on stacked copies (one part's island reused for its twin) | The stacked copy shows texels computed at the other copy's 3D position | Stack only parts whose island borders are folds over 89 deg or hidden, or give each copy its own island when its signals come from 3D (a stacked box end read 1.08 m of visible seam, unique 0) |
 | Normal-map seams on smooth edges | An island moved, turned or scaled after the bake; a bake without a cage; tangents that differ from the engine's | Re-bake with the cage on the final UVs and the exported triangulation |
 | Normal-map seams on hard edges | The hard edge is not a UV seam, or the bake used split normals for its rays | A seam on every hard edge; an averaged cage (`uv-unwrapping`, `references/baking.md`) |
 | Kit joints | Tiling phase off (Cube Projection per piece, a tile that does not divide the grid), or different densities either side | `uv-unwrapping`'s `tile_project` and joint rule |

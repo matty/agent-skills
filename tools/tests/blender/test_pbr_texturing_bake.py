@@ -175,7 +175,33 @@ def test_bake_normal_ao_curvature():
     c_edge = float(sample(curv, *island_uv(i, 0.5, 0.995))[0])
     check(abs(c_flat - 0.5) < 0.03 and c_edge > c_flat + 0.05,
           "curvature flat %.3f, convex bevel %.3f: convex should read brighter than 0.5" % (c_flat, c_edge))
+    check(rep["maps"]["curvature"]["saturated_share"] < 0.05 and not rep.get("notes"), rep)
+    hot = BAKE["bake"](low, [high], maps=("curvature",), size=64, out_dir=str(out), name="T_TST_Hot",
+                       curvature_gain=200.0)["report"]                     # a gain borrowed from a denser high
+    check(hot["maps"]["curvature"]["saturated_share"] > 0.05 and any("clipped" in n for n in hot.get("notes", [])),
+          "a saturating gain must be reported: %s" % hot)
 
+
+
+def test_ao_ignores_other_objects_unless_asked():
+    """A slab hanging just over the cube (another texture set, a design leftover) occluded the AO bake: bake() hides
+    every render-visible object that is not the low, a high or the cage, and puts it back; occluders= keeps one."""
+    low, high = build_fixture()
+    i = POS_FACE[0]
+    n = low.data.polygons[i].normal
+    ax = max(range(3), key=lambda k: abs(n[k]))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=tuple(0.62 * n[k] for k in range(3)))
+    slab = bpy.context.active_object                  # parallel to that face, 6 cm beyond the high, within AO reach
+    slab.scale = tuple(0.05 if k == ax else 3.0 for k in range(3))
+    bpy.context.view_layer.update()
+    out = TMP / "occluder"
+    res = BAKE["bake"](low, [high], maps=("ao",), size=64, out_dir=str(out), name="T_TST_Alone")
+    alone = float(sample(PC.load(res["ao"])[0], *island_uv(i, 0.3, 0.3))[0])
+    check(res["report"]["hidden_for_bake"] >= 1 and not slab.hide_render, "the slab was not hidden and restored")
+    res = BAKE["bake"](low, [high], maps=("ao",), size=64, out_dir=str(out), name="T_TST_Under", occluders=[slab])
+    under = float(sample(PC.load(res["ao"])[0], *island_uv(i, 0.3, 0.3))[0])
+    check(alone > 0.9 and under < alone - 0.1, "AO alone %.3f, with the slab kept as an occluder %.3f" % (alone, under))
+    bpy.data.objects.remove(slab)
 
 def test_cage_that_does_not_enclose_bakes_black_ao():
     low, high = build_fixture()
@@ -591,6 +617,12 @@ def test_exploded_bake_keeps_close_parts_apart():
     check(rep["exploded"]["maps"] == ["normal", "ao"] and list(rep["passes"]) == ["exploded"]
           and rep["passes"]["exploded"]["cage_inside"]["neighbour"] == 0,
           "exploded, no ray may start in the other part: %s" % rep)
+    ex = rep["passes"]["exploded"]                     # sized from the assembled low, not the spread-out parts
+    check(abs(ex["ao_distance"] - together["report"]["ao_distance"]) < 1e-6
+          and abs(ex["extrusion"] - together["report"]["extrusion"]) < 0.002,
+          "exploded defaults %s / %s against assembled %s / %s" % (ex["ao_distance"], ex["extrusion"],
+                                                                   together["report"]["ao_distance"],
+                                                                   together["report"]["extrusion"]))
     check(os.path.isfile(apart["normal"]) and os.path.isfile(apart["ao"]), apart)
     check(all((v.co - c).length == 0.0 for v, c in zip(low.data.vertices, co0)), "low vertices not restored")
     check(all(h.matrix_world == m for h, m in zip(highs, mw0)), "highs not restored")
@@ -610,7 +642,7 @@ def test_exploded_bake_keeps_close_parts_apart():
         pass
 
 
-for fn in (test_bake_normal_ao_curvature,
+for fn in (test_bake_normal_ao_curvature, test_ao_ignores_other_objects_unless_asked,
            test_cage_that_does_not_enclose_bakes_black_ao,
            test_bpy_loader_matches_png_reader,
            test_dithered_8bit_tracks_a_shallow_gradient,
