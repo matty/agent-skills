@@ -20,7 +20,7 @@ Facts checked 2026-10-17 against https://docs.unity3d.com/2022.3/Documentation/M
 | ASTC 4x4 | 1 | Android, iOS | High Quality choice |
 | ASTC 5x5 | 0.64 | Android, iOS | |
 | ASTC 6x6 | 0.44 | Android, iOS | Normal Quality choice |
-| ASTC 8x8 | 0.25 | Android, iOS | Low Quality choice |
+| ASTC 8x8 | 0.25 | Android, iOS | Low Quality choice; background albedo only: surfaces a player never gets nearer than about 6 m (*practice*), never the ground or anything walked on |
 | ETC2 RGB / RGBA | 0.5 / 1 | Android, iOS (A7 and later) | fallback for GPUs without ASTC; with ETC, the only mobile formats crunch can use |
 
 ASTC stores 16 bytes per block at every block size, so bytes per pixel = 16 / (block width x block height), and a
@@ -66,6 +66,21 @@ On Android, HDR textures compress only to ASTC HDR. A per-platform override with
   new Unity version employs an incompatible version of Crunch"
   (https://creators.vrchat.com/platforms/android/quest-content-optimization/).
 - Compressor Quality 50-75; it is lossy and slow to import.
+- Never on a normal map or a detail normal map (*practice*, no published source): crunch's block artefacts land on
+  the shading, and on a tiling or detail map they repeat in every tile. A Normal map texture left at Unity's PC
+  default is DXT5 (the SKILL's format table), which crunch accepts: leave Use Crunch Compression off on it.
+
+## Detail maps on mobile
+
+When an Android or iOS override halves a surface's maps, its detail maps (Detail Albedo x2, Detail Normal) keep the
+close-range sharpness for far less memory: a 512 pair (albedo ASTC 6x6, normal ASTC 4x4) is about 0.48 MB with
+mips, while keeping an albedo and normal pair at 2048 instead of 1024 costs about 5.8 MB more (*derived* from the
+worked examples above). Keep them on the mobile materials. In VRChat's `Standard Lite` (Worlds SDK 3.10.5,
+`VRChat-Mobile-StandardLite.shader`): the detail maps use the Detail Albedo slot's own tiling and offset on UV0 or
+UV1 (line 139), the Detail Mask's alpha is sampled on the main texture's UV (line 181), and the detail normal, like
+the main normal map, is skipped on a surface with Non-Directional lightmaps, Glossy Reflections off and no realtime
+light (lines 190-198): there only the detail albedo shows. The keyword `_DETAIL` is set only by the material
+inspector: a script that builds the material enables it.
 
 ## Mipmaps and streaming
 
