@@ -191,25 +191,46 @@ or turned only by the texture's own symmetry (a pattern that looks the same turn
 
 **Corners.** V is world Z on every wall face, so courses line up round any corner. U cannot continue round an outside
 corner and keep both walls' own phase (the wall thickness is not a whole number of tiles): cover the corner with a
-trim (quoins on masonry, a corner bead or pilaster on plaster), or make the corner a piece of its own whose bricks
+trim (quoins on masonry, a corner bead or pilaster on plaster; a quoin stands proud, so it is a TRIM piece of its own, never part of the wall piece, whose footprint must stay whole modules), or make the corner a piece of its own whose bricks
 turn the corner in its own unique or trim UVs. Inside corners show less (shadowed); the same fixes apply.
 
 **Trims across joints.** A strip's V span equals its row's span to half a pixel (an underfilled row cuts the baked
 bevel off), both sides of a mitre map the same rows, and the strip carries nothing along U that would show a jump:
 no patches, wear or features along it, or its U is projected from the piece's axes like tiling (`tile_project` on
-those faces, then their V moved onto the row).
+those faces, then their V moved onto the row). A row with joints along U (voussoirs, blocks) follows the trim-on-an-
+arc rule below.
 
-**Curved walls, arches, spiral stairs.** A box projection stretches a face turned theta off its axis by 1 / cos theta
-(1.15 at 30 deg, the angular p95 gate; 1.41 at 45 deg) and seams where the axis switches. Unwrap them as strips:
+**Curved walls, towers, columns, arches, spiral stairs.** A box projection stretches a face turned theta off its
+axis by 1 / cos theta (1.15 at 30 deg, the angular p95 gate; 1.41 at 45 deg) and seams where the axis switches.
+Unwrap them as strips, and mark the strip faces with the boolean face attribute `uv_strip`: the tiling audit then
+judges them by stretch, density and their seams' continuity instead of against tile_project's phase.
 
-1. Seams at the piece's ends and where the curve changes (an arch's springing lines and crown).
-2. Unwrap, then Follow Active Quads (`LENGTH_AVERAGE`) from a square quad, so U runs along the curve at arc length
-   and V up the wall (on an intrados or a stair soffit, V runs along the arc and U across).
-3. `ua.set_texel_density([ob], px_per_m, map_px, pack_after=False, per_island=False, material=...)` to the family's
-   density, then move U so the piece's ends sit on whole tiles.
-4. Plan the radius so the visible arc is a whole number of tiles (*derived*: a quarter circle of radius r is
-   pi r / 2 long, so r = 2 n x tile / pi); otherwise a short tile at one end, hidden by a trim.
-5. The voussoirs or the arch's edge go on a trim strip bent along the arc. Audit `purpose="tiling"` for stretch.
+1. Seams at the piece's ends and where the curve changes (an arch's springing lines and crown); a closed ring (a
+   tower, a column, a newel) gets one, in an opening or where something stands in front of it.
+2. Unwrap, then Follow Active Quads with `mode="LENGTH"` from a square quad, so U runs along the curve and V up the
+   wall (on an intrados or a stair soffit, V along the arc and U across). Never `LENGTH_AVERAGE` on a strip cut from
+   a larger mesh: it averages each edge loop with the faces the loop runs on into (spandrels, reveals, a plinth) and
+   stretched an arch soffit 0.87-1.31x and tore a tower ring 23 mm (measured, 5.2.2); `LENGTH` was exact. It
+   straightens only the active quad's island: each island needs its own active quad.
+3. Scale each island to the family's density: `ua.set_texel_density(..., per_island=True)` (`per_island=False`
+   averages over every island of the material, so use it only when the strip is that material's only island: a
+   newel sharing its material with projected treads came out 1.35% off). Then move V so V = z / tile on a wall (the
+   courses meet the straight pieces), and U so the end that meets a neighbour sits on a whole tile.
+4. A closed ring closes on whole tiles. The strip lies at the facets' chord length, so N facets at radius r hold
+   2 N r sin(pi / N) / tile tiles, not 2 pi r / tile (*derived*: at r = 16 / 2 pi a 64-gon holds 15.994, 6.4 mm short,
+   a 16-gon 103 mm short). Plan the radius for the most seen ring, r = n x tile / (2 N sin(pi / N)) (16 tiles on 64
+   facets: 2.5475 m); scale U on every other ring of the piece (the inside face, a plinth, a cornice) to its nearest
+   whole count, which moves its density a percent or two (keep it in the band). An open arc cannot put both ends on
+   whole tiles: the end that meets a continuation goes on one, the other under a trim or into an opening.
+5. Trim on an arc (voussoirs, an archivolt, a cornice ring): the trim row bent along the arc. Joints along U are
+   allowed when their period divides the strip's arc length at its mid radius (17 voussoirs of 0.25 m on a 4.31 m
+   arc: U x 0.986, an odd count with the keystone on the crown). A strip of depth w on a ring of mid radius r stretches
+   by (r + w / 2) / r at its outer edge and squeezes as much at the inner, so keep w / r under about 0.19 (the 1.15
+   gate; 0.2 m at 1.37 m read p95 1.114) or split it into two rows. A closed trim ring holds whole sheet widths.
+6. Spiral stairs: tread tops and undersides by `tile_project` (they are flat), risers planar, tread rims at arc
+   length, the newel as a ring (step 4), the handrail as one helix strip with the grain along it.
+7. Audit `purpose="tiling"` with `tile_m=`: strip faces are judged for stretch and density, and every UV seam inside
+   the surface must open by whole tiles (`seam_phase_px_max`, half a texel: a ring that does not close fails).
 
 **Slopes and terrain.** A top-down projection (U = x, V = y, what tile_project gives faces that face up) stretches a
 slope by 1 / cos(slope) along the fall line: the angular p95 gate (1.15) fails above 29.6 deg, the tiling density

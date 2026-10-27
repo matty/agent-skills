@@ -90,6 +90,10 @@ TILE_AXIS_TIE = 1e-4         # tile_uv: normal components this close to the larg
 EDGE_SLACK_PX = 1e-3         # float noise allowed on the margin to the tile edge (a FRACTION pack is exact)
 LOW_DENSITY_ATTR = "uv_low_density"
 TEXT_ATTR = "uv_text"        # boolean face attribute: these faces carry text or decals (what text=True checks)
+STRIP_ATTR = "uv_strip"      # boolean face attribute: tiling faces unwrapped as a strip along a curve (a tower ring, an
+                             # arch soffit, a stair rail), judged by their seams' continuity, not tile_project's phase
+SEAM_CONTINUES_DEG = 30.0    # a UV seam between faces meeting at under this angle lies inside a continuing surface:
+                             # on a tiling layout it must open by whole tiles (a ring that closes, a strip on whole tiles)
 TEXT_UP_ATTR = "uv_text_up"  # optional face vector: the 3D direction the letters' up points to (default world +Z)
 SEAM_ANGLE = 30.0            # seams_by_angle: an edge whose faces meet at more than this (deg), like Smooth by Angle
 # Modifier types that change topology. Before seams, apply_stack applies the stack from the top down to and including
@@ -364,6 +368,7 @@ def _arrays(ob, layer, evaluated=True, need_uv=True):
                 "tri": tri.reshape(-1, 3), "tpoly": tpoly, "layer": lname,
                 "layers": [l.name for l in me.uv_layers], "low": _low_faces(me, lname),
                 "text": _face_marks(me, TEXT_ATTR, lname), "text_up": _face_vectors(me, TEXT_UP_ATTR, mw[:3, :3]),
+                "strip": _face_marks(me, STRIP_ATTR, lname),
                 "mat_index": mi, "mat_names": [s.material.name if s.material else "" for s in ob.material_slots]}
     finally:
         if evaluated:
@@ -379,8 +384,9 @@ def _next_loops(d):
     return loop, nxt
 
 
-def _edges(d):
-    """Pairs of polygons across each manifold edge, and whether the UVs and the normals are split there."""
+def _edges(d, corners=False):
+    """Pairs of polygons across each manifold edge, and whether the UVs and the normals are split there. corners:
+    also the four corners (side i at the edge's lower and higher vertex, then side j)."""
     ls, lt, lv = d["ls"], d["lt"], d["lv"]
     loop, nxt = _next_loops(d)
     poly = np.repeat(np.arange(len(ls)), lt)
@@ -401,6 +407,8 @@ def _edges(d):
     uv_split = (np.abs(uv[i_lo] - uv[j_lo]).max(1) > UV_EPS) | (np.abs(uv[i_hi] - uv[j_hi]).max(1) > UV_EPS)
     c = math.cos(math.radians(HARD_EDGE_DEG))
     hard = ((cn[i_lo] * cn[j_lo]).sum(1) < c) | ((cn[i_hi] * cn[j_hi]).sum(1) < c)
+    if corners:
+        return poly[i], poly[j], uv_split, hard, key[i], (i_lo, i_hi, j_lo, j_hi)
     return poly[i], poly[j], uv_split, hard, key[i]
 
 
@@ -706,7 +714,7 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     aspect = (w / s, h / s)
     if pad_px is None:
         pad_px = default_pad((w, h), purpose)
-    pa, pb, uv_split, hard, _key = _edges(d)
+    pa, pb, uv_split, hard, _key, (c_ilo, c_ihi, c_jlo, c_jhi) = _edges(d, corners=True)
     tr = _triangles(d, aspect)
     isl_poly, mirror_stacks, _flipped = _island_ids(d, pa, pb, uv_split, tr["au"])
     n_isl = int(isl_poly.max()) + 1 if npoly else 0
@@ -810,6 +818,14 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
     # triangulated bevel-corner quad at a lightmap's few texels per metre) cannot smear a texel: not counted.
     pn = _poly_normals(d)
     bend = np.degrees(np.arccos(np.clip((pn[pa] * pn[pb]).sum(1), -1.0, 1.0))) if len(pa) else np.zeros(0)
+    # tiling: a seam inside a continuing surface (faces within SEAM_CONTINUES_DEG) must open by whole tiles, or the
+    # pattern jumps along it (a ring that does not close: a 103 mm jump on a brick tower read as a zipper)
+    seam_px = np.zeros(0)
+    if purpose == "tiling" and len(pa):
+        cont = uv_split & (bend < SEAM_CONTINUES_DEG)
+        jump = np.concatenate([d["uv"][c_ilo] - d["uv"][c_jlo], d["uv"][c_ihi] - d["uv"][c_jhi]], axis=1)[cont]
+        jump = np.abs(jump - np.round(jump)) * np.array([w, h, w, h], float)
+        seam_px = jump.max(axis=1) if len(jump) else seam_px
     poly_px2 = np.bincount(d["tpoly"], weights=np.abs(au), minlength=npoly) * s * s
     tiny = poly_px2 < BEND_MIN_PX2
     folded = (bend > LIGHTMAP_HARD_ANGLE) & ~(tiny[pa] | tiny[pb]) if len(pa) else np.zeros(0, bool)
@@ -840,6 +856,8 @@ def measure(d, name="mesh", map_px=None, pad_px=None, px_per_m=None, purpose="un
                                     if lowg.any() else None),
            "hard_edges_not_seams": int(np.count_nonzero(hard & ~uv_split)),
            "chart_bends": chart_bends,
+           "seam_phase_px_max": round(float(seam_px.max()), 2) if len(seam_px) else None,
+           "seams_off_phase": int(np.count_nonzero(seam_px > TILE_PHASE_PX)),
            "elongated_islands": int(elong.sum()), "elongated_along_v": int(along_v.sum()),
            "islands_across_rows": len(across_rows),
            "text_faces": int(tmark.sum()), "text_islands_mirrored": text_mirrored,
@@ -933,6 +951,10 @@ def _issues(r, purpose, pad_px, px_per_m, baking, directional=False, text=False)
                                                                       w["area_p95"]))
     if r.get("text_angular_p95") is not None and r["text_angular_p95"] > LIMITS["angular_p95"]:
         out.append("text faces stretched (angular p95 %.2f): letters read squashed" % r["text_angular_p95"])
+    if r.get("seams_off_phase"):
+        out.append("%d UV seam edge(s) inside a continuing tiling surface open by up to %.1f px, not whole tiles: the "
+                   "pattern jumps along them (close a ring or strip on whole tiles; workflows, curved walls)"
+                   % (r["seams_off_phase"], r["seam_phase_px_max"]))
     if r["folded_faces"]:
         out.append("%d folded faces" % r["folded_faces"])
     if r["zero_area_uv_faces"]:
@@ -1114,6 +1136,9 @@ def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX
 
     err = off(exp)
     mir = off(exp * np.array([-1.0, 1.0]))
+    strip = d.get("strip")
+    strip = np.asarray(strip, bool) if strip is not None and len(strip) == len(err) else np.zeros(len(err), bool)
+    err[strip] = 0.0                                   # strips are judged by their seams' continuity (measure)
     bad = err > limit_px
     mirrored = bad & (mir <= limit_px)
     issues = tile_steps_issues(tile_m, steps)
@@ -1125,7 +1150,8 @@ def tile_phase(d, tile_m, map_px, frame=None, steps=None, limit_px=TILE_PHASE_PX
                       "pattern jumps where they meet a neighbour; re-project with tile_project(tile_m=%g)"
                       % (int((bad & ~mirrored).sum()), len(err), float(err[bad & ~mirrored].max()), limit_px, tile_m))
     return {"tile_m": float(tile_m), "faces": int(len(err)), "phase_px_max": round(float(err.max()), 3) if len(err)
-            else 0.0, "off_faces": int(bad.sum()), "mirrored_faces": int(mirrored.sum()), "issues": issues}
+            else 0.0, "off_faces": int(bad.sum()), "mirrored_faces": int(mirrored.sum()),
+            "strip_faces": int(strip.sum()), "issues": issues}
 
 
 # ----------------------------------------------------------------------------------------------- audit (bpy)

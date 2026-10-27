@@ -83,7 +83,8 @@ Fix with seams first; keep a `uv.minimize_stretch` result only if the audit impr
 ## 5. Straighten and orient
 
 - Straighten every strip of quads (trims, belts, frames, pipes, stairs): it packs tighter and its edges follow the
-  pixel grid. Square one quad, make it active, `bpy.ops.uv.follow_active_quads(mode="LENGTH_AVERAGE")`.
+  pixel grid. Square one quad, make it active, `bpy.ops.uv.follow_active_quads(mode="LENGTH")` (`LENGTH_AVERAGE`
+  stretched a strip cut from a larger mesh 0.87-1.31x), one island at a time.
 - Directional textures (wood grain, fabric, brushed metal): grain along U on every island.
   `uv.align_rotation(method="GEOMETRY", axis=A)` turns each selected island so 3D axis A points along +V (an island
   whose normal is A stays put; Blender 5.2.2). Pass the axis ACROSS the grain, one face group at a time: Z for the
@@ -113,7 +114,8 @@ objects, or the odd one out looks blurry or oversharp.
 - Tiling: `ua.tile_project(objs, tile_m)`, `tile_m = map_px / px_per_m` (512 / 512 = 1 m): a box projection from
   each piece's axes, phase 0 at its pivot. Not Cube Projection: it centres on each selection (5.2.2: a 2 m wall began
   half a 1 m tile off its neighbour). The tile divides every placement step (module, storey: at 1 m modules a 1 m or
-  0.5 m tile, never 4 m); floors and ceilings unturned; audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
+  0.5 m tile, never 4 m); floors and ceilings unturned; curves as strips marked `uv_strip`, closed on whole tiles;
+  audit `tile_m=`, `steps=`. Corners, curves, slopes: workflows.
 - Lower it on purpose only where nobody looks (undersides, backs against walls), each island internally even, and
   mark those faces with the boolean face attribute `uv_low_density` (`uv_low_density_<UV map name>` for one map): the
   audit leaves them out of the mean and spread, `layout` keeps their relative size. Map size: `texel-density.md`.

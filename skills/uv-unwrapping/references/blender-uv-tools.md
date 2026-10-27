@@ -71,7 +71,7 @@ bpy.ops.object.mode_set(mode="OBJECT")                      # leave Edit Mode be
 | `uv.unwrap` | Unwrap | anything with seams marked: the normal choice | `method` (`ANGLE_BASED`, `CONFORMAL`, `MINIMUM_STRETCH`; listed default `CONFORMAL`, but an unset method is the scene's last one, `ANGLE_BASED` in a fresh scene), `fill_holes` (False), `correct_aspect` (True), `use_subsurf_data` (False), `use_original_bounds` (False: True keeps islands where they were instead of re-packing), `margin_method` (`SCALED`), `margin` (0.001), `no_flip` (False), `iterations` (10, Minimum Stretch only), `use_weights` / `weight_group` (`uv_importance`) / `weight_factor` |
 | `uv.smart_project` | Smart UV Project | quick automatic unwraps of hard-surface and architectural pieces; a lightmap UV only with an audit after it (it can join charts across corners; the seam-based unwrap is the default) | `angle_limit` (radians, default 1.1519 = 66 deg; lower = more islands, less distortion), `island_margin` (0: pass 0.001), `margin_method`, `rotate_method` (`AXIS_ALIGNED_Y`), `area_weight` (0), `scale_to_bounds` |
 | `uv.lightmap_pack` | Lightmap Pack | one island per face, packed: only for very simple lightmaps | `PREF_CONTEXT` (`SEL_FACES`), `PREF_PACK_IN_ONE` (True), `PREF_NEW_UVLAYER` (False), `PREF_BOX_DIV` (12), `PREF_MARGIN_DIV` (0.1) |
-| `uv.follow_active_quads` | Follow Active Quads | straight grids from a quad strip: trims, belts, pipes, stairs (see below) | `mode` (`LENGTH_AVERAGE`; `EVEN`; `LENGTH`) |
+| `uv.follow_active_quads` | Follow Active Quads | straight grids from a quad strip: trims, belts, pipes, stairs (see below) | `mode` (`LENGTH`; `LENGTH_AVERAGE`; `EVEN`) |
 | `uv.cube_project` | Cube Projection | one-off boxes and blocky geometry; not kit pieces: it centres on the selection's bounds, so pieces of different sizes start at different phases (5.2.2; `uv_audit.tile_project` instead) | `cube_size` (1.0), `correct_aspect`, `clip_to_bounds`, `scale_to_bounds` |
 | `uv.cylinder_project` | Cylinder Projection | pipes, columns, cans, before a cleanup unwrap | `direction`, `align`, `pole`, `seam`, `radius`, `scale_to_bounds` |
 | `uv.sphere_project` | Sphere Projection | domes and balls, as a starting point | `direction`, `align`, `pole`, `seam` |
@@ -105,8 +105,10 @@ Which unwrap method. Measured with `uv_audit.py` on 5.2.2, same seams for every 
 Rectangular strips packed straight waste no space and tile or trim without stair-stepping.
 
 - **Follow Active Quads**: select a connected quad strip, make one well-shaped quad active, unwrap or square it
-  first, then run `uv.follow_active_quads(mode="LENGTH_AVERAGE")`. Every quad in the loop follows the active one,
-  giving a straight grid. Needs all-quad loops; triangles and n-gons stop it.
+  first, then run `uv.follow_active_quads(mode="LENGTH")`. Every quad of the active quad's island follows it, giving
+  a straight grid at each edge's own length; another island needs its own active quad. `LENGTH_AVERAGE` averages each
+  edge loop with the unselected faces it runs on into: on an arch soffit cut from its spandrel it gave 0.87-1.31x
+  along the arc where `LENGTH` gave 1.000 (measured, 5.2.2). Needs all-quad loops; triangles and n-gons stop it.
 - **Align Rotation** (`uv.align_rotation`, `method="AUTO"|"EDGE"|"GEOMETRY"`, `axis`): rotates whole islands. With
   `GEOMETRY` it turns each selected island so the 3D `axis` points along +V, and leaves an island alone when the axis
   is its normal (measured on 5.2.2). For grain along U, pass the axis across the grain, one face group at a time

@@ -244,6 +244,35 @@ class UvAuditMaths(unittest.TestCase):
         self.assertAlmostEqual(r["area_max"], 6.0, places=1)
         self.assertTrue(any("texel density (area max" in i for i in r["issues"]), r["issues"])
 
+    def test_tiling_ring_must_close_on_whole_tiles(self):
+        """A 16-facet ring unwrapped as one strip (U along it at the facets' chord length, V = z): its one seam lies
+        between faces 22.5 deg apart, inside the surface, so it must open by whole tiles. Closing on 4 tiles passes;
+        4.1 tiles is a 0.1-tile (102 px) jump, the zipper of long and short bricks a ring that does not close shows.
+        Marked uv_strip, tile_phase leaves the ring to this check instead of failing it against a box projection."""
+        n, r, h = 16, 0.65, 1.0
+
+        def ring(total):
+            verts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n), z)
+                     for z in (0.0, h) for i in range(n)]
+            faces, uvs = [], []
+            for i in range(n):
+                j = (i + 1) % n
+                faces.append([i, j, n + j, n + i])
+                u0, u1 = total * i / n, total * (i + 1) / n
+                uvs.append([(u0, 0.0), (u1, 0.0), (u1, h), (u0, h)])
+            return mesh(verts, faces, uvs)
+        ok = self.m(ring(4.0), map_px=1024, purpose="tiling")
+        self.assertEqual(ok["seams_off_phase"], 0, ok["issues"])
+        bad = self.m(ring(4.1), map_px=1024, purpose="tiling")
+        self.assertEqual(bad["seams_off_phase"], 1)
+        self.assertAlmostEqual(bad["seam_phase_px_max"], 102.4, places=0)
+        self.assertTrue(any("open by up to" in i for i in bad["issues"]), bad["issues"])
+        d = ring(4.0)
+        self.assertGreater(self.ua.tile_phase(d, 1.0, 1024)["off_faces"], 0)       # not what a box projection gives
+        d["strip"] = np.ones(n, bool)
+        tp = self.ua.tile_phase(d, 1.0, 1024)
+        self.assertEqual((tp["off_faces"], tp["strip_faces"]), (0, n))
+
     def test_nan_uvs_and_empty_meshes_are_issues_not_crashes(self):
         d = islands([square_uv(0.25, 0.25, 0.5), square_uv(0.05, 0.05, 0.1)])
         d["uv"][1] = np.nan
