@@ -169,21 +169,29 @@ class SpecChecks(unittest.TestCase):
     def test_tiling_tile_divides_the_grid_steps(self):
         spec = study_spec()
         spec["families"]["INT"]["map_px"] = 1024                          # a 2 m tile on a 1 m grid, 3 m storeys
-        errors = messages(run(spec)[0], "ERROR")
-        self.assertTrue(any("family INT: its 2 m tile" in m and "grid.module 1 m" in m and "storey_height 3 m" in m
-                            for m in errors), errors)
-        self.assertTrue(any("family INT: its 2 m tile" in m and "map_px 512 or 256 or 128" in m for m in errors),
-                        errors)
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        notes = messages(res, "NOTE")                                      # placed on multiples of 2 m, it works
+        self.assertTrue(any("family INT: its 2 m tile is 2 grid modules" in m and "3 m storey apart do not" in m
+                            and "map_px 512 or 256 or 128" in m for m in notes), notes)
+        self.assertTrue(any("INT_Wall_2x3_A at [3, 1, 0] sits 512.0 px along it" in m
+                            for m in messages(res, "ERROR")))             # the study's walls are not
         spec["families"]["INT"]["map_px"] = 256                           # 0.5 m divides both
         self.assertEqual(run(spec)[0].errors, 0)
-        spec["families"]["INT"]["map_px"] = 1024
-        spec["grid"]["storey_height"] = 3.5                               # a 1 m tile no longer divides the storey
+        spec["families"]["INT"]["map_px"] = 768                           # 1.5 m: neither divides nor is whole modules
         errors = messages(run(spec)[0], "ERROR")
-        self.assertTrue(any("family INT: its 2 m tile" in m and "map_px 256 or 128)" in m for m in errors), errors)
-        spec["grid"]["storey_height"] = 2.8                               # no power-of-two tile divides 2.8 m
+        self.assertTrue(any("family INT: its 1.5 m tile" in m and "does not divide grid.module 1 m" in m
+                            for m in errors), errors)
+        spec["families"]["INT"]["map_px"] = 512
+        spec["grid"]["storey_height"] = 3.5                               # a 1 m tile no longer divides the storey
+        res = run(spec)[0]
+        self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        self.assertTrue(any("family INT: its 1 m tile does not divide the 3.5 m storey" in m
+                            for m in messages(res, "NOTE")), messages(res, "NOTE"))
+        spec["grid"]["storey_height"] = 2.8
+        spec["families"]["INT"]["map_px"] = 768                           # no power-of-two tile divides 2.8 m
         errors = messages(run(spec)[0], "ERROR")
         self.assertTrue(any("family INT" in m and "no power-of-two map" in m for m in errors), errors)
-        spec["grid"]["storey_height"] = 3.0
         spec["families"]["INT"]["map_px"] = 1024
         spec["grid"]["storey_height"] = 4.0
         spec["families"]["INT"]["tile_phase"] = "variants"                # a 2 m tile: 2 variants on a 1 m grid
@@ -191,7 +199,10 @@ class SpecChecks(unittest.TestCase):
         self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
         self.assertTrue(any("2 phase variants" in m for m in messages(res, "NOTE")), messages(res, "NOTE"))
         spec["grid"]["storey_height"] = 3.0                               # 3 m is not a whole number of 2 m tiles
+        self.assertTrue(any("stacked a storey apart meet off phase" in m for m in messages(run(spec)[0], "NOTE")))
+        spec["families"]["INT"]["map_px"] = 768
         self.assertTrue(any("tile_phase variants needs" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["families"]["INT"]["map_px"] = 1024
         spec["families"]["INT"]["tile_phase"] = "world_uv"
         res = run(spec)[0]
         self.assertFalse(any("family INT" in m for m in messages(res, "ERROR")))
@@ -209,7 +220,7 @@ class SpecChecks(unittest.TestCase):
         zone.append({"ref": "INT_Wall_2x3_A", "pos": [3, 3, 0.03], "rot": 0})
         errors = messages(run(spec)[0], "ERROR")
         self.assertTrue(any("STR_Floor_2x2_A turned 90" in m for m in errors), errors)
-        self.assertTrue(any("INT_Wall_2x3_A at [3, 3, 0.03] sits 0.0 px along it and 15.4 px up" in m
+        self.assertTrue(any("INT_Wall_2x3_A at [3, 3, 0.03] touch with their courses 15.4 px apart" in m
                             for m in errors), errors)
         spec["families"]["STR"]["turn_symmetry"] = 90
         errors = messages(run(spec)[0], "ERROR")
@@ -232,6 +243,56 @@ class SpecChecks(unittest.TestCase):
         errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
         self.assertEqual(len(errors), 1, errors)
         self.assertIn("INT_Bay_1x3_P1 at [5, 3, 0]", errors[0])
+
+    def test_tile_phase_flexibility(self):
+        """Arch sweep: a raised zone's walls start their courses at its own floor (judged only against walls they
+        touch); a kerb (thin, under a module wide) turns like a wall, not a floor; a floor: true family's floors are
+        judged as floors; a floor's phase variant k = kx + n x ky; scale and mirror on placements."""
+        spec = study_spec()
+        spec["zones"].append({"id": "stage", "name": "Stage", "kind": "interior", "bounds": [10, 0, 16, 6],
+                              "floor_z": 0.15, "placements": [
+                                  {"ref": "INT_Wall_2x3_A", "pos": [11, 1, 0.15], "rot": 0},
+                                  {"ref": "INT_Wall_2x3_A", "pos": [13, 1, 0.15], "rot": 0},
+                                  {"ref": "INT_Wall_2x3_A", "pos": [15, 1], "rot": 90}]})
+        res = run(spec)[0]
+        self.assertFalse(any("stage" in m for m in messages(res, "ERROR")), messages(res, "ERROR"))
+        spec["zones"][1]["placements"].append({"ref": "INT_Wall_2x3_A", "pos": [11, 1, 3.15], "rot": 0})
+        self.assertFalse(any("courses" in m for m in messages(run(spec)[0], "ERROR")))     # 3 m up: whole tiles
+        spec["zones"][1]["placements"][-1]["pos"] = [9, 1, 0.65]              # beside the first, half a tile up
+        self.assertTrue(any("touch with their courses 256.0 px apart" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["pieces"].append({"name": "STR_Kerb_1_A", "desc": "kerb", "collision": "box", "size": [1, 0.3, 0.15]})
+        spec["zones"][0]["placements"].append({"ref": "STR_Kerb_1_A", "pos": [2, 2, 0], "rot": 90})
+        self.assertFalse(any("turned" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["families"]["PLK"] = dict(spec["families"]["STR"], materials=["M_PLK_Oak"], floor=True)
+        spec["pieces"].append({"name": "PLK_Floor_2x2_A", "desc": "planks", "collision": "box"})
+        spec["zones"][0]["placements"].append({"ref": "PLK_Floor_2x2_A", "pos": [1, 1, 0], "rot": 90})
+        self.assertTrue(any("PLK_Floor_2x2_A turned 90" in m for m in messages(run(spec)[0], "ERROR")))
+        spec["families"]["PLK"]["floor"] = "yes"
+        self.assertTrue(any("floor must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
+        spec = study_spec()
+        spec["families"]["STR"].update(map_px=1024, tile_phase="variants")              # a 2 m tile: n = 2
+        spec["pieces"] += [{"name": "STR_Tile_1x1_P%d" % k, "desc": "tile", "collision": "box"} for k in range(4)]
+        spec["zones"][0]["placements"] = [{"ref": "STR_Tile_1x1_P0", "pos": [2, 2, 0]},
+                                          {"ref": "STR_Tile_1x1_P1", "pos": [3, 2, 0]},
+                                          {"ref": "STR_Tile_1x1_P2", "pos": [2, 3, 0]},     # ky = 1
+                                          {"ref": "STR_Tile_1x1_P3", "pos": [3, 3, 0]}]
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(errors, [])
+        spec["zones"][0]["placements"][2]["ref"] = "STR_Tile_1x1_P0"
+        errors = [m for m in messages(run(spec)[0], "ERROR") if "tile grid" in m]
+        self.assertEqual(len(errors), 1, errors)
+        spec = study_spec()
+        pl = spec["zones"][0]["placements"]
+        pl.append({"ref": "PROP_Desk_Free_A", "pos": [2, 2, 0], "scale": 1.2, "mirror": True})
+        self.assertEqual(run(spec)[0].errors, 0)
+        pl[-1]["scale"] = 1.4
+        self.assertTrue(any("scale 1.4" in m for m in messages(run(spec)[0], "ERROR")))
+        pl[-1].update(scale=1.0, mirror="yes")
+        self.assertTrue(any("mirror must be true or false" in m for m in messages(run(spec)[0], "ERROR")))
+        pl.append({"ref": "INT_Wall_2x3_A", "pos": [3, 1, 0], "mirror": True})
+        self.assertTrue(any("placed mirrored" in m for m in messages(run(spec)[0], "ERROR")))
 
     def test_scale_range_lets_a_family_vary_its_free_pieces(self):
         spec = study_spec()
