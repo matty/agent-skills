@@ -147,8 +147,8 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=None
     of 4+ corners, and how many of those are not planar (an exporter that triangulates one may split it the other
     way; a planar quad keeps its corner normals, measured 0.0 deg on cards with transferred normals). flat_shaded_faces
     counts faces not shaded smooth. short_edge (metres): edges shorter count as short_edges; by default (reported as
-    short_edge_m) 1 mm, or 2% of the piece's smallest side over 1 mm when that is less (a 5 mm screw's 0.5 mm head
-    rim, a gear's 1.5 mm chamfers).
+    short_edge_m) 1 mm, or 1% of the piece's smallest side over 1 mm when that is less (a 5 mm screw's 0.5 mm head
+    rim, the 0.48 mm corners of a 30 cm gear's 1.5 mm chamfers).
     join_tris=True joins triangle pairs back into quads before counting (an applied Triangulate, _join_pairs)."""
     import bmesh
     import bpy
@@ -170,7 +170,7 @@ def audit(ob, sliver_deg=2.0, bad_corner_deg=3.0, fold_deg=25.0, short_edge=None
             dims = sorted(max(v.co[k] for v in mesh.vertices) - min(v.co[k] for v in mesh.vertices)
                           for k in range(3)) if len(mesh.vertices) else [0.0]
             sides = [x for x in dims if x > 0.001]
-            short_edge = min(0.001, 0.02 * sides[0]) if sides else 0.001
+            short_edge = min(0.001, 0.01 * sides[0]) if sides else 0.001
         flat_shaded = sum(1 for p in mesh.polygons if not p.use_smooth)
         worst_centre = mesh.polygons[at].center.copy() if at >= 0 else None
     finally:
@@ -439,8 +439,10 @@ def audit_stack(ob, allow_open=False, flat_tol=None, normals_tol=0.5, before=Non
         off = on
     merged = dict(on, **{k: off[k] for k in STACK_OFF_KEYS})
     found = problems(merged, allow_open, flat_tol)
-    if on["cn_quads"] if route else on["cn_quads_bent"]:     # a hard-surface stack keeps its Triangulate live; other
-        found.append("custom_normals_on_quads")             # custom normals (cards) only matter on bent quads
+    live_hs = any(m.show_viewport and (m.type == 'WEIGHTED_NORMAL' or (m.type == 'BEVEL' and m.harden_normals))
+                  for m in ob.modifiers)
+    if on["cn_quads"] if live_hs else on["cn_quads_bent"]:   # a live hard-surface stack keeps its Triangulate live;
+        found.append("custom_normals_on_quads")              # normals in the data (cards) only matter on bent quads
     if change is not None and change > normals_tol:
         found.append("triangulate_moves_normals")
     if late:

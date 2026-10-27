@@ -990,10 +990,11 @@ def test_small_pieces_and_cards():
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
     bmesh.ops.scale(bm, vec=(0.005, 0.005, 0.0005), verts=bm.verts)              # a 5 x 5 x 0.5 mm head
+    bm.verts.ensure_lookup_table()
     small = object_from_bmesh("Screw", bm)
     r = AUDIT["audit"](small)
-    check(r["short_edges"] == 0 and r["short_edge_m"] == 0.0001, "small piece: %s %s" % (r["short_edges"],
-                                                                                    r["short_edge_m"]))
+    check(r["short_edges"] == 0 and r["short_edge_m"] == 0.00005, "small piece: %s %s" % (r["short_edges"],
+                                                                                     r["short_edge_m"]))
     check(AUDIT["audit"](small, short_edge=0.001)["short_edges"] > 0, "an explicit 1 mm still counts them")
     bm = bmesh.new()
     bmesh.ops.create_cube(bm, size=1.0)
@@ -1019,6 +1020,12 @@ def test_small_pieces_and_cards():
     bpy.context.view_layer.update()
     s = AUDIT["audit_stack"](cards, allow_open=True)
     check("custom_normals_on_quads" not in s["problems"], "planar cards flagged: %s" % s["problems"])
+    with bpy.context.temp_override(object=cards, active_object=cards, selected_objects=[cards],
+                                   selected_editable_objects=[cards]):
+        bpy.ops.object.modifier_apply(modifier="Normals")     # the transferred normals now in the mesh data
+    s = AUDIT["audit_stack"](cards, allow_open=True)
+    check(cards.data.has_custom_normals and "custom_normals_on_quads" not in s["problems"],
+          "applied card normals flagged: %s" % s["problems"])
 
 
 def test_review_render_culls_back_faces_like_the_engine():

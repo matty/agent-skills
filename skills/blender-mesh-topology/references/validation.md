@@ -19,8 +19,9 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
   a pole). With the Triangulate applied it judges them with triangle pairs joined back into quads. Everything else is
   the mesh as it exports.
 - `custom_normals_on_quads`: custom normals on faces of 4+ corners as it exports (the Triangulate switched off,
-  missing, or set above Minimum Vertices 4): the exporter's triangulation will change them. Without a hard-surface
-  stack (cards with transferred normals) only quads that are not planar count: a planar quad keeps its corner normals.
+  missing, or set above Minimum Vertices 4): the exporter's triangulation will change them. Without a live
+  Weighted Normal or Harden Normals Bevel (cards with transferred normals, applied or live) only quads that are not
+  planar count: a planar quad keeps its corner normals.
 - `triangulate_moves_normals`: the corner normals change when the Triangulates below the last enabled Weighted Normal
   (every one on route A) are toggled, so Keep Normals (`keep_custom_normals`) is off; comparing a re-imported FBX with
   Blender does not show it. `triangulate_below_weighted_normal`: route B's Weighted Normal has no Triangulate above it
@@ -45,7 +46,7 @@ data) needs `audit_stack(obj, flat_tol=0.5)` instead, at any stage of its stack:
 | `overfull_edges` | any | An edge with 3+ faces: a fold, or two layers fused |
 | `flipped_edges` | any | An edge whose two faces both run along it the same way: a face wound against its neighbours (a reduction band built with its runs the wrong way round, `grid-layout.md`). Engines cull back faces, so it shows as a hole |
 | `inverted_islands` | any | A closed island whose faces all point inwards: negative signed volume, summed in float64 about the island's own centre; under 1e-6 of its bounding box counts as undetermined, not inverted (summed in float32 about the origin, 2 cm tubes 5 m out read inverted, 2026-10-24) |
-| `short_edges`, `degenerate_faces` | any | Edges under 1 mm, or under 2% of the piece's smallest side over 1 mm when that is less (`short_edge_m`; a 5 mm screw's 0.5 mm rim is fine; `audit(short_edge=)` sets it), faces under 1e-8 m2 |
+| `short_edges`, `degenerate_faces` | any | Edges under 1 mm, or under 1% of the piece's smallest side over 1 mm when that is less (`short_edge_m`; a 5 mm screw's 0.5 mm rim and a 30 cm gear's 0.48 mm chamfer corners are fine; `audit(short_edge=)` sets it), faces under 1e-8 m2 |
 | `bad_quads` | any | A corner under 3 deg, a quad folded over 25 deg (edges of 2 cm or more), or a bow-tie |
 | `slivers` | any | A face with a corner under 2 deg, flat-shaded or not; on a stack-triangulated piece, judged by `audit_stack` on the untriangulated mesh |
 | `loose_verts` | any | |
