@@ -24,8 +24,9 @@ it can, the presets supply what it cannot, and every guess is measured in the re
 ## 2. Normals: DeepBump or the built-in method
 
 DeepBump (https://github.com/HugoTini/DeepBump, GPL-3.0) is a machine-learning model that predicts a normal map from
-a colour image. Use it when it is installed; download it when it is not; fall back to the built-in luminance method
-when it cannot run, and tell the user which one made the maps.
+a colour image. Use it when it is installed; download it when it is not. Its output is a guess and is never trusted
+unmeasured: the converter gates every DeepBump map (below) and falls back to the built-in luminance method when it
+cannot run or its map fails. Tell the user which one made the maps.
 
 1. `python setup_deepbump.py --check`. Exit 0: installed and working.
 2. Exit 1: run `python setup_deepbump.py`. It downloads DeepBump at a pinned commit (about 42 MB from GitHub), checks
@@ -36,20 +37,50 @@ when it cannot run, and tell the user which one made the maps.
 3. If setup fails (no network, no wheel for this Python, a hash mismatch), do not retry in a loop: tell the user
    DeepBump is unavailable and why (setup prints it), and carry on with the built-in method. A hash mismatch means
    the download is not the pinned code: never edit the pins to make it pass without the user's say-so.
-4. The converter reports `normal_source` (`deepbump <commit>` or `builtin`). Always tell the user which one ran; any
-   `DeepBump unavailable` line goes to the user verbatim.
+4. The converter reports `normal_source` (`deepbump <commit>` or `builtin`) and `deepbump_gate` (the measurements
+   below, `ok` and `reasons`). Always tell the user which one ran; any `DeepBump unavailable` or `DeepBump rejected`
+   line goes to the user verbatim.
 
-| `--normals` | Uses | When DeepBump is missing or fails |
+The gate, measured on DeepBump's raw map before it is scaled or used (`deepbump_gate()`). Any failure means the
+built-in method makes the normal, height, AO and roughness maps:
+
+| Measure | Fails when | What a failure means |
 |---|---|---|
-| `auto` (default) | DeepBump, except for `fabric` | Built-in, with a NOTE |
-| `deepbump` | DeepBump for any preset | Built-in, with a PROBLEM (exit 1) |
+| Unit normals | over 0.1% face away, or mean length error over 0.05 | Broken output, not a surface |
+| Raw 90th-percentile tilt | under 10 degrees | DeepBump found almost no relief; scaling it up to the preset's tilt amplifies noise |
+| Integrable fraction | under 0.6 | Its X and Y slopes disagree: no height map produces them (1.0 for a real surface) |
+| Seam (tiling maps) | its normal map shows a seam | It broke a tile the source made |
+
+The thresholds are calibrated, not guessed: against the scanned normals of 17 CC0 materials (2026-10-28,
+`references/method.md`), every material where DeepBump was more than 1.5 degrees further from the scan than the
+built-in method failed the gate, and every one where it was more than 1.5 degrees closer passed; the five the gate
+called the other way differed by 1.1 degrees or less. Gated, the mean error was 11.9 degrees against 12.4 for DeepBump
+alone and 13.3 for the built-in alone. Do not loosen a threshold to get DeepBump through; re-measure with
+`scripts/normals_benchmark.py` when the pin, a threshold or the built-in method changes, and record the result in
+`references/method.md`.
+
+| `--normals` | Uses | When DeepBump is missing, fails or is rejected |
+|---|---|---|
+| `auto` (default) | DeepBump when its map passes the gate, except for `fabric` | Built-in, with a NOTE |
+| `deepbump` | DeepBump for any preset, still gated | Built-in, with a PROBLEM (exit 1) |
 | `builtin` | The luminance method | n/a |
 
 Why `auto` skips fabric: measured on the rug (2026-10-25), DeepBump embossed the dyed motifs as raised pillows and lost
 the pile weave, a quilted look; on printed or woven textiles the colour pattern is dye, not relief. Where colour does
 follow relief (stone, brick, ground, bark, plaster) DeepBump is the better guess; compare both on
-`preview_lit.png` when in doubt. With DeepBump the height map is integrated from its normals, and its slopes are
-scaled to the preset's tilt like the built-in ones (`deepbump_raw_tilt_deg_p50_p90` in the report keeps its own).
+`preview_lit.png` when in doubt. The gate backs the skip up: on the rug DeepBump's raw tilt was 9.0 degrees, so it
+fails anyway. With DeepBump the height map is integrated from its normals, and its slopes are scaled to the preset's
+tilt like the built-in ones (`deepbump_gate.raw_tilt_deg_p50_p90` in the report keeps its own).
+
+A passing gate shows the map is a plausible surface, not that it is the right one: single-image normals from either
+method correlate only weakly with a scan (mean slope correlation 0.2 gated). Still look at `preview_lit.png`.
+
+Alternatives checked 2026-10-28 (detail and sources in `references/method.md`): PBRify NormalV3 (CC0, ONNX) is a
+DirectX map that tracks the built-in method (slope correlation 0.55-0.88 with it) and was further from the scans
+than either (mean error 13.9 degrees);
+CHORD and RGB-X are research-only licences; Marigold and the diffusion models need a GPU-sized torch install and are
+trained on scenes, not flat textures. None replaces DeepBump plus the built-in fallback, and no open model predicts
+roughness or metallic for flat textures well enough to replace the presets.
 
 ## 3. Convert
 
@@ -83,8 +114,8 @@ What it does, in order (detail in `references/method.md`):
 3. Base colour: divide out broad lighting in linear light, then bring luma into the dielectric 30-240 sRGB range,
    keeping chroma. Both act on luma only: a colour patch at tile scale survives (section 4, step 3).
 4. Height from relative (log) luminance contrast in three bands, so a dark dye and a light dye give the same relief.
-5. Normal (tangent space, OpenGL Y+, 16-bit; DeepBump's or from the height), scaled so the 90th-percentile slope
-   hits the preset's tilt.
+5. Normal (tangent space, OpenGL Y+, 16-bit; DeepBump's when it passes the gate, else from the height), scaled so
+   the 90th-percentile slope hits the preset's tilt.
 6. AO from cavities in the height map; roughness from the preset, rougher in cavities, smoother on peaks.
 7. Writes `T_<FAMILY>_<Name>_<Map>.png` (BaseColor, Normal, Height, Roughness, AO, plus MetallicSmoothness for Unity
    or ORM for glTF with `--pack`), `image_to_pbr_report.json` and the source record.
@@ -114,7 +145,8 @@ with the conversion.
 
 | Script | Host | Use |
 |---|---|---|
-| `scripts/image_to_pbr.py` | Plain Python with numpy, or Blender | `convert(src, out_dir, family, name, preset, ..., normals, deepbump)` returns the report; the CLI above; `load`, `write_png`, `seam_ratios`, `fit_period`, `crop_wrap`, `run_deepbump` and `height_from_normals` as a module |
+| `scripts/image_to_pbr.py` | Plain Python with numpy, or Blender | `convert(src, out_dir, family, name, preset, ..., normals, deepbump)` returns the report; the CLI above; `load`, `write_png`, `seam_ratios`, `fit_period`, `crop_wrap`, `run_deepbump`, `deepbump_gate`, `integrable_fraction` and `height_from_normals` as a module |
 | `scripts/setup_deepbump.py` | Plain Python, standard library; network | Installs DeepBump at a pinned commit with hash checks into a per-user folder and its own venv; `--check` reports whether it works |
+| `scripts/normals_benchmark.py` | Plain Python with numpy (Pillow for most library PNGs); DeepBump installed | Scores DeepBump and the built-in normals against scanned ground truth (folders of colour + OpenGL normal maps) and checks the gate picks the closer one |
 
 Worked example and measured numbers: `references/method.md`.

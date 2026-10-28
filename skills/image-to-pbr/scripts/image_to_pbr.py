@@ -6,8 +6,10 @@ grey, grey-alpha, RGB and RGBA, no palette or interlacing); JPEG, WebP, TIFF and
 Also runs inside Blender 4.2+ (its bundled numpy); tested with numpy 2.2.
 Normals: --normals auto (default) uses DeepBump's machine-learning model (https://github.com/HugoTini/DeepBump,
 GPL-3.0) when setup_deepbump.py has installed it, except for presets in DEEPBUMP_AUTO_SKIP, and otherwise the built-in
-luminance method; the report's normal_source says which ran, and a NOTE (a PROBLEM with --normals deepbump) says
-why DeepBump did not. DeepBump runs as a separate process in its own venv; nothing of it is imported here.
+luminance method. DeepBump's map is measured before it is used (deepbump_gate: unit normals, enough relief, an
+integrable surface, no new seam) and a map that fails falls back to the built-in method too. The report's
+normal_source says which ran, deepbump_gate holds the measurements, and a NOTE (a PROBLEM with --normals deepbump) says
+why DeepBump was not used. DeepBump runs as a separate process in its own venv; nothing of it is imported here.
 
 Command line (exit 0 on success, 1 when the report has a PROBLEM, 2 on bad input):
     python image_to_pbr.py rug.png --out textures/RUG --family RUG --name Persian --preset fabric
@@ -61,6 +63,14 @@ PRESETS = {
 # Presets where auto does not use DeepBump: measured 2026-10-25 on a flat-pile rug, DeepBump embossed the dyed motifs
 # as raised pillows and lost the pile weave; on fabric the colour pattern is dye, not relief.
 DEEPBUMP_AUTO_SKIP = {"fabric"}
+
+# DeepBump's map is used only when it passes these, measured on its raw output; otherwise the built-in method runs.
+# Calibrated 2026-10-28 against the scanned normals of 17 CC0 Poly Haven and ambientCG materials (references/method.md,
+# normals_benchmark.py): every material where DeepBump was over 1.5 degrees further from the scan than the built-in
+# method had a 90th-percentile tilt under 10 degrees (it found almost no relief) or an integrable fraction under 0.6
+# (its normals are no surface); none where it was over 1.5 degrees closer did.
+DEEPBUMP_MIN_TILT_P90 = 10.0     # degrees, raw (before scaling to the preset)
+DEEPBUMP_MIN_INTEGRABLE = 0.6    # share of the slope field's energy that a height map can produce; 1 for a real surface
 
 SEAM_RATIO_TILEABLE = 1.5   # wrap-edge difference / interior difference; above this the source does not tile
 
@@ -519,6 +529,54 @@ def height_from_normals(nrm, wrap=True):
     return np.clip(0.5 + (z - (lo + hi) / 2) / max(hi - lo, 1e-6), 0, 1).astype(np.float32)
 
 
+def integrable_fraction(nrm, wrap=True):
+    """The share of a 0-1 OpenGL normal map's slope energy that some height map's central differences reproduce:
+    1.0 for normals made from a height (normal_map), lower when the slopes curl and describe no surface."""
+    n = nrm * 2 - 1
+    nz = np.maximum(n[..., 2], 1e-3)
+    gx, grow = -n[..., 0] / nz, n[..., 1] / nz
+    if not wrap:
+        gx = np.concatenate([gx, -gx[:, ::-1]], 1)
+        grow = np.concatenate([grow, grow[:, ::-1]], 1)
+        gx = np.concatenate([gx, gx[::-1]], 0)
+        grow = np.concatenate([grow, -grow[::-1]], 0)
+    H, W = gx.shape
+    dx = 1j * np.sin(2 * math.pi * np.fft.fftfreq(W))[None, :]      # central difference, as normal_map takes it
+    dy = 1j * np.sin(2 * math.pi * np.fft.fftfreq(H))[:, None]
+    Gx, Gy = np.fft.fft2(gx), np.fft.fft2(grow)
+    den = np.abs(dx) ** 2 + np.abs(dy) ** 2
+    den[den < 1e-12] = np.inf
+    z = (np.conj(dx) * Gx + np.conj(dy) * Gy) / den               # least-squares height
+    fit = (np.abs(dx * z) ** 2 + np.abs(dy * z) ** 2).sum()
+    return float(fit / max((np.abs(Gx) ** 2 + np.abs(Gy) ** 2).sum(), 1e-12))
+
+
+def deepbump_gate(raw, tiles):
+    """Measure DeepBump's raw normals (0-1, OpenGL) before trusting them. Returns a dict with the measurements, ok and
+    the reasons it failed; a failed gate means the built-in method is used instead."""
+    n = raw * 2 - 1
+    tilt = np.degrees(np.arccos(np.clip(n[..., 2], -1, 1)))
+    g = {"raw_tilt_deg_p50_p90": [round(_pct(tilt, 50), 1), round(_pct(tilt, 90), 1)],
+         "integrable_fraction": round(integrable_fraction(raw, tiles), 3),
+         "back_facing": round(float((n[..., 2] <= 0).mean()), 4),
+         "length_error": round(float(np.abs(np.linalg.norm(n, axis=-1) - 1).mean()), 4),
+         "seam_ratio": round(seam_ratio(raw), 2), "reasons": []}
+    why = g["reasons"]
+    if g["back_facing"] > 0.001 or g["length_error"] > 0.05:
+        why.append("not unit normals (%.2f%% facing away, mean length error %.3f)"
+                   % (100 * g["back_facing"], g["length_error"]))
+    if g["raw_tilt_deg_p50_p90"][1] < DEEPBUMP_MIN_TILT_P90:
+        why.append("found almost no relief (90th-percentile tilt %.1f deg < %.0f)"
+                   % (g["raw_tilt_deg_p50_p90"][1], DEEPBUMP_MIN_TILT_P90))
+    if g["integrable_fraction"] < DEEPBUMP_MIN_INTEGRABLE:
+        why.append("its normals describe no consistent surface (integrable fraction %.2f < %.1f)"
+                   % (g["integrable_fraction"], DEEPBUMP_MIN_INTEGRABLE))
+    if tiles and seam_visible(raw):
+        why.append("its map shows a seam (ratio %.2f) the source does not" % g["seam_ratio"])
+    g["ok"] = not why
+    return g
+
+
 def lit_preview(bc, nrm, ao, light=(-0.5, 0.6, 0.62)):
     l = np.asarray(light, np.float32)
     l /= np.linalg.norm(l)
@@ -596,16 +654,22 @@ def convert(src, out_dir, family, name, preset="fabric", size=None, make_tileabl
         report["notes"].append("normals: built-in method; auto skips DeepBump for the %s preset (it embosses dyed "
                                "patterns as relief); pass --normals deepbump to use it anyway" % preset)
     elif normals in ("auto", "deepbump"):
+        msg = None
         try:
             raw, rec = run_deepbump(rgb, deepbump)
-            nrm, k = scale_normals(raw, p["tilt_deg"], invert_height)
-            hgt = height_from_normals(nrm, tiles)
-            tilt = np.degrees(np.arccos(np.clip(raw[..., 2] * 2 - 1, -1, 1)))
-            report["normal_source"] = "deepbump %s" % rec.get("commit", "(no install record)")[:12]
-            report["deepbump_raw_tilt_deg_p50_p90"] = [round(_pct(tilt, 50), 1), round(_pct(tilt, 90), 1)]
+            gate = deepbump_gate(raw, tiles)
+            report["deepbump_gate"] = gate
+            if gate["ok"]:
+                nrm, k = scale_normals(raw, p["tilt_deg"], invert_height)
+                hgt = height_from_normals(nrm, tiles)
+                report["normal_source"] = "deepbump %s" % rec.get("commit", "(no install record)")[:12]
+            else:
+                msg = ("DeepBump rejected (%s): used the built-in luminance method instead"
+                       % "; ".join(gate["reasons"]))
         except DeepBumpUnavailable as e:
             msg = ("DeepBump unavailable (%s): used the built-in luminance method instead; install it with "
                    "setup_deepbump.py" % e)
+        if msg:
             report["problems" if normals == "deepbump" else "notes"].append(msg)
     if nrm is None:
         hgt = height_map(rgb, p["bands"], size, tiles)
@@ -700,7 +764,8 @@ def main(argv):
     ap.add_argument("--pack", choices=("unity", "orm", "none"), default="unity")
     ap.add_argument("--preview", action="store_true")
     ap.add_argument("--normals", choices=("auto", "deepbump", "builtin"), default="auto",
-                    help="auto: DeepBump when installed (not for fabric), else built-in; deepbump: a PROBLEM if missing")
+                    help="auto: DeepBump when installed and its map passes the gate (not for fabric), else built-in; "
+                         "deepbump: a PROBLEM if missing or rejected")
     ap.add_argument("--deepbump", help="DeepBump install folder (default: setup_deepbump.py's)")
     a = ap.parse_args(argv)
     if a.size and a.size & (a.size - 1):
@@ -721,6 +786,11 @@ def main(argv):
     print("  normal tilt p50/p90/p99: %s deg; roughness p2/p50/p98: %s; AO p2/p50: %s"
           % (m["normal_tilt_deg_p50_p90_p99"], m["roughness_p2_p50_p98"], m["ao_p2_p50"]))
     print("  seam ratios: %s" % {k: v["seam_ratio"] for k, v in r["maps"].items()})
+    if "deepbump_gate" in r:
+        g = r["deepbump_gate"]
+        print("  DeepBump gate %s: raw tilt p50/p90 %s deg, integrable fraction %s, seam ratio %s"
+              % ("passed" if g["ok"] else "failed", g["raw_tilt_deg_p50_p90"], g["integrable_fraction"],
+                 g["seam_ratio"]))
     for n in r["notes"]:
         print("NOTE: " + n)
     for pr in r["problems"]:

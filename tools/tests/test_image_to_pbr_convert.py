@@ -181,6 +181,59 @@ class ImageToPbrTest(unittest.TestCase):
             r = self.m.convert(src, os.path.join(d, "c"), "RUG", "Wool", "fabric", deepbump=nowhere)
             self.assertTrue(any("skips DeepBump" in n for n in r["notes"]))
 
+    def _relief(self, n=128, tilt=25):
+        y, x = np.mgrid[0:n, 0:n].astype(np.float32)
+        h = np.sin(2 * np.pi * x / 32) + np.cos(2 * np.pi * y / 16) + 0.3 * np.sin(2 * np.pi * (x + y) / 64)
+        return self.m.normal_map(h.astype(np.float32), tilt)[0]
+
+    def test_integrable_fraction(self):
+        self.assertGreater(self.m.integrable_fraction(self._relief()), 0.99)
+        rng = np.random.default_rng(4)
+        curl = np.stack([self.m.blur(rng.normal(0, 1, (128, 128)), 2) for _ in range(2)], -1) * 0.5
+        curl = np.concatenate([curl, np.ones((128, 128, 1))], -1)
+        curl /= np.linalg.norm(curl, axis=-1, keepdims=True)
+        self.assertLess(self.m.integrable_fraction(curl * 0.5 + 0.5), 0.6)  # independent x and y slopes
+
+    def test_deepbump_gate(self):
+        g = self.m.deepbump_gate(self._relief(), True)
+        self.assertTrue(g["ok"], g["reasons"])
+        flat = self._relief(tilt=3)
+        g = self.m.deepbump_gate(flat, True)
+        self.assertFalse(g["ok"])
+        self.assertTrue(any("no relief" in r for r in g["reasons"]))
+        rng = np.random.default_rng(5)
+        s = np.stack([self.m.blur(rng.normal(0, 1, (128, 128)), 2) for _ in range(2)], -1)
+        s = np.concatenate([s / np.percentile(np.abs(s), 90), np.ones((128, 128, 1))], -1)
+        g = self.m.deepbump_gate(s / np.linalg.norm(s, axis=-1, keepdims=True) * 0.5 + 0.5, True)
+        self.assertTrue(any("no consistent surface" in r for r in g["reasons"]), g)
+        unnormalised = self._relief() * 0.5 + 0.25
+        self.assertTrue(any("not unit" in r for r in self.m.deepbump_gate(unnormalised, True)["reasons"]))
+        y, x = np.mgrid[0:128, 0:128].astype(np.float32)          # a 37 px period in 128 px: cut at the wrap edge
+        seam = self.m.normal_map(np.sin(2 * np.pi * x / 37) + np.cos(2 * np.pi * y / 16), 25)[0]
+        self.assertTrue(any("seam" in r for r in self.m.deepbump_gate(seam, True)["reasons"]))
+        self.assertFalse(any("seam" in r for r in self.m.deepbump_gate(seam, False)["reasons"]))
+
+    def test_rejected_deepbump_falls_back_and_says_so(self):
+        from unittest import mock
+        flat = lambda rgb, root=None: (np.dstack([np.full(rgb.shape[:2], 0.5)] * 2 + [np.ones(rgb.shape[:2])]),
+                                       {"commit": "fake"})
+        good = lambda rgb, root=None: (self._relief(rgb.shape[0]), {"commit": "fake"})
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "p.png")
+            self.m.write_png(src, pattern(128, 128, 64, 64))
+            with mock.patch.object(self.m, "run_deepbump", flat):
+                r = self.m.convert(src, os.path.join(d, "a"), "INT", "Stone", "stone")
+                self.assertEqual(r["normal_source"], "builtin")
+                self.assertFalse(r["deepbump_gate"]["ok"])
+                self.assertTrue(any("DeepBump rejected" in n for n in r["notes"]))
+                self.assertEqual(r["problems"], [])
+                r = self.m.convert(src, os.path.join(d, "b"), "INT", "Stone", "stone", normals="deepbump")
+                self.assertTrue(any("DeepBump rejected" in p for p in r["problems"]))
+            with mock.patch.object(self.m, "run_deepbump", good):
+                r = self.m.convert(src, os.path.join(d, "c"), "INT", "Stone", "stone")
+                self.assertEqual(r["normal_source"], "deepbump fake")
+                self.assertTrue(r["deepbump_gate"]["ok"])
+
     def test_cli_rejects_bad_names(self):
         with tempfile.TemporaryDirectory() as d:
             src = os.path.join(d, "p.png")
