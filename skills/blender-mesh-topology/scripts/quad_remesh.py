@@ -7,6 +7,8 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/quad_remesh.py", encoding
     pts, tris, loop_points = ns["patch_input"](obj)         # a patch object with one border (a disc, or one half)
     faces, npos, raw = ns["remesh_patch"](pts, tris, loop_points, target=400)   # remesh, validate, retry other targets
     qp, qf, qm = ns["quad_remesh"](pts, faces, mats=None, TargetQuadCount=400, FreezeBorders=1)   # one engine run
+    qp, qf, qm, tries = ns["quad_remesh_to_budget"](pts, faces, 700, CurvatureAdaptivness=20.0, SymAxis="X",
+                                                    SymLocal=1)            # a whole organic low at a set budget
     layout = ns["weld_layout"](qp, qf, loop_points)          # None if not clean: retry with another target
 
 A half remeshed up to its mirror line (x = 0) is made whole with mirror_half, building into a bmesh through
@@ -72,10 +74,24 @@ def _work_folder():
 ENGINE = find_engine()
 
 
-def quad_remesh(pts, faces, mats=None, engine=None, timeout=600, **opts):
+def density_colour(factor):
+    """The vertex colour (sRGB) the add-on paints for a quad-density factor: white 1, red (1, 1 - t, 1 - t) up to 4 x
+    as dense at t = 1 (factor 1 + 3 t), cyan (1 - t, 1, 1) down to a quarter (factor 1 / (1 + 3 t)); the add-on's own
+    slider mapping (quad_remesher_1_4 __init__.paintDensityPropertyCB)."""
+    f = min(max(float(factor), 0.25), 4.0)
+    if f >= 1.0:
+        t = (f - 1.0) / 3.0
+        return (1.0, 1.0 - t, 1.0 - t)
+    t = (1.0 / f - 1.0) / 3.0
+    return (1.0 - t, 1.0, 1.0)
+
+
+def quad_remesh(pts, faces, mats=None, engine=None, timeout=600, density=None, **opts):
     """Remesh a mesh given as points (object space) and faces. mats: 0/1 per face, with UseMaterialIds keeps an edge
-    loop on their border. opts: settings keys (TargetQuadCount, FreezeBorders, CurvatureAdaptivness, ...). Returns
-    (points, faces, material index per face)."""
+    loop on their border. density: a quad-density factor per point (0.25 to 4, 1 = the target's own size), written
+    as the add-on's painted vertex colours with UseVertexColorMap on: put quads where they are needed (a low's
+    protruding parts) at the same TargetQuadCount. opts: settings keys (TargetQuadCount, FreezeBorders,
+    CurvatureAdaptivness, ...). Returns (points, faces, material index per face)."""
     engine = engine or ENGINE
     if not os.path.exists(engine):
         raise RuntimeError("Quad Remesher engine not found at %s (install the add-on and run it once)" % engine)
@@ -90,6 +106,14 @@ def quad_remesh(pts, faces, mats=None, engine=None, timeout=600, **opts):
     sel, act = list(bpy.context.selected_objects), vl.objects.active
     me = bpy.data.meshes.new("_qr_in")
     me.from_pydata([tuple(p) for p in pts], [], [tuple(f) for f in faces])
+    if density is not None:
+        if len(density) != len(pts):
+            raise ValueError("density has %d values for %d points" % (len(density), len(pts)))
+        col = me.color_attributes.new("QR_density", "BYTE_COLOR", "POINT")
+        for v, f in zip(col.data, density):
+            v.color_srgb = density_colour(f) + (1.0,)
+        me.color_attributes.active_color = col
+        opts = dict(opts, UseVertexColorMap="True")
     if mats is not None:
         for k in range(max(mats) + 1):
             me.materials.append(bpy.data.materials.new("_qr_m%d" % k))
@@ -142,6 +166,23 @@ def quad_remesh(pts, faces, mats=None, engine=None, timeout=600, **opts):
                 o.select_set(True)
         vl.objects.active = act
     return out
+
+
+def quad_remesh_to_budget(pts, faces, quads, tol=0.06, runs=4, **opts):
+    """quad_remesh() steered to `quads` faces (within tol) with the engine's adaptive count left on: adaptive mode and a
+    density map both ignore ExactQuadCount, so the target is scaled by quads / got and the engine run again (one to
+    three more runs). Returns (points, faces, materials, [(target, faces got), ...]); the last run if none landed.
+    Measured 2026-11-02 on four generated props at the same budget: adaptive count with CurvatureAdaptivness 20 and
+    SymAxis on the symmetric ones gave a cauldron 56 irregular vertices against 109 with ExactQuadCount=1 (mean quad
+    corner 7.1 against 10.2 degrees off square), a sack 96 against 127 (15.0 against 20.9 degrees)."""
+    target, tries, out = float(quads), [], None
+    for _ in range(int(runs)):
+        out = quad_remesh(pts, faces, TargetQuadCount=max(int(round(target)), 4), **opts)
+        tries.append((max(int(round(target)), 4), len(out[1])))
+        if abs(len(out[1]) / float(quads) - 1.0) <= tol:
+            break
+        target *= quads / float(max(len(out[1]), 1))
+    return out[0], out[1], out[2], tries
 
 
 def weld_layout(qp, qf, loop, tol=2e-4, log=None):

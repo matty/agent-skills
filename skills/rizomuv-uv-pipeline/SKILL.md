@@ -155,7 +155,7 @@ Choose the density with `uv-unwrapping` (about 1150 / d px/m at d metres; classe
 px/m), size the map with `ru.texture_size(TD, area_m2)` and pack it exactly with `pack_spec(map_px, px_per_unit=TD)`.
 A renderer's lightmap footprint is texels_per_m x sqrt(area / b) x Scale In Lightmap, b = the UV2 bounding-box share
 (0.85 only to plan): gaps are packed for b = 1, so they hold at >= 2 texels, and checked at the measured b. How
-RizomUV delivers both, and Bakery's sizing: `references/texel-density.md`.
+RizomUV delivers both, Bakery's sizing, and one atlas for a set (`br.pack_shared`): `references/texel-density.md`.
 
 ## 9. Batches and parallel work
 
@@ -188,7 +188,7 @@ Own RizomUVLink calls (Pack doing nothing, density 100x off, flat stretch maps):
 
 | Script | Host | What it gives |
 |---|---|---|
-| `scripts/blender_rizom.py` | Blender 4.2+ | `unwrap_selected`, `unwrap_objects`, `unwrap_object`, `raise_on_failure`, `meshes_matching`, `check_object`, `guard_blend`, `mesh_arrays`, `uv_arrays` (grade an existing layer), `world_area`, `renderers`, `order_layers`, `write_uv`, `save`, `checker_preview`, `checker_clear` |
+| `scripts/blender_rizom.py` | Blender 4.2+ | `unwrap_selected`, `unwrap_objects`, `unwrap_object`, `pack_shared` (one atlas for a set), `raise_on_failure`, `meshes_matching`, `check_object`, `guard_blend`, `mesh_arrays`, `uv_arrays` (grade an existing layer), `world_area`, `renderers`, `order_layers`, `write_uv`, `save`, `checker_preview`, `checker_clear` |
 | `scripts/rizom_uv.py` | any Python | `unwrap_gated`, `unwrap_and_pack`, `pack_spec`, `directional`, `lightmap_spec`, `lightmap_footprint`, `lightmapper_name`, `lightmap_capacity_px`, `lightmap_too_small`, `layer_report`, `layer_failures`, `pack` (returns `fits`), `PRESETS`, `RETRY_LADDER`, `load`, `load_layout`, `unfold`, `save`, `stretch_map`, `texture_size`, `mesh_area` |
 | `scripts/rizom_link.py` | Python 3.6-3.13 | `rizom_session()` (private instance, guaranteed close), `RizomSession` (with `deadline()`), `FileLock`, `find_rizomuv()`, `exe_version()`, `import_link()`, `zmq_safe_temp()` |
 | `scripts/uv_metrics.py` | numpy | `report`, `grade`, `check_gate`, `merge_gate`, `GATE`, `coverage_floor`, `shape_coverage_limit`, `distortion`, `texel_density`, `padding_gaps`, `bbox_share`, `flipped_polygons`, `visible_seams`, `visible_seam_warning`, `triangulate`, `json_safe`; grades UVs from any tool |

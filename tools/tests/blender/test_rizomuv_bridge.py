@@ -712,6 +712,49 @@ def test_save_writes_no_backup():
     check(path.is_file() and not (TMP / "scene.blend1").exists(), "no .blend1 next to %s" % path)
 
 
+def _combined(obs):
+    mesh = {"sizes": [], "xyz_ids": [], "xyz": [], "uvw_ids": [], "uvw": []}
+    for ob in obs:
+        m, ids, uvw = br.uv_arrays(ob, "UVMap", world=True)
+        nx, nu = len(mesh["xyz"]) // 3, len(mesh["uvw"]) // 3
+        mesh["sizes"] += m["sizes"]
+        mesh["xyz_ids"] += [k + nx for k in m["xyz_ids"]]
+        mesh["xyz"] += m["xyz"]
+        mesh["uvw_ids"] += [k + nu for k in ids]
+        mesh["uvw"] += uvw
+    return mesh
+
+
+def test_pack_shared_one_density_no_overlap():
+    """Two props unwrapped on their own, then packed into one 1024 atlas: one density for both (the highest that
+    packed), no island of one on the other's, padding and margin kept."""
+    a, b = cube("SET_A", loc=(5, 0, 0), size=1.0), cube("SET_B", loc=(8, 0, 0), size=0.5)
+    br.unwrap_objects([a, b], kind="hard")
+    r = br.pack_shared([a, b], 1024)
+    check(r["failures"] == [] and any(t[2] for t in r["tries"]), r)
+    mesh = _combined([a, b])
+    rep = um.report(mesh, mesh["uvw_ids"], mesh["uvw"], 1024, pad_px=16, margin_px=8)
+    check(not um.layout_failures(rep, flips=False), um.layout_failures(rep, flips=False))
+    for ob in (a, b):
+        m, ids, uvw = br.uv_arrays(ob, "UVMap", world=True)
+        d = br.ru.linear_ratio(m, ids, uvw) * 1024
+        check(abs(d / r["px_per_m"] - 1) < 0.02, "%s at %.1f px/m, the set at %.1f" % (ob.name, d, r["px_per_m"]))
+
+
+def test_pack_shared_rejects_a_stacked_fit():
+    """A pack that gives up leaves the islands stacked in the tile at the asked scale, which Pack's fits reads as a
+    fit: pack_shared grades every try and keeps a density under the one that stacked."""
+    a, b = cube("STACK_A", loc=(11, 0, 0), size=1.0), cube("STACK_B", loc=(14, 0, 0), size=0.5)
+    br.unwrap_objects([a, b], kind="hard")
+    clean = br.pack_shared([a, b], 1024)["px_per_m"]
+    limit = 0.8 * clean / 1024.0
+    FakeSession.link_kwargs = {"stack": lambda p: p.get("Scaling", {}).get("SpecifiedScale", 0) > limit}
+    r = br.pack_shared([a, b], 1024)
+    check(any(fits and not ok for _m, fits, ok in r["tries"]), "no stacked fit was tried: %s" % r["tries"])
+    check(r["px_per_m"] <= 0.8 * clean + 0.5 and r["failures"] == [], "kept %.1f px/m (limit %.1f): %s"
+          % (r["px_per_m"], 0.8 * clean, r))
+
+
 for fn in (test_seams_split_the_seed_topology, test_layers_and_strict_report,
            test_imported_first_layer_is_reused_not_pushed_to_index_1, test_second_layer_in_the_lightmap_slot_is_warned,
            test_apply_modifiers_on_linked_duplicates_unwraps_each, test_plain_linked_duplicates_share,
@@ -730,7 +773,8 @@ for fn in (test_seams_split_the_seed_topology, test_layers_and_strict_report,
            test_lod1_gets_half_the_lightmap_footprint, test_revert_after_another_jobs_save_keeps_its_work,
            test_a_failing_fallback_climbs_to_a_larger_footprint, test_hard_surface_after_apply_stack_keeps_its_normals,
            test_apply_bakes_only_the_modifiers_that_count, test_bakery_lightmapper_reaches_the_lightmap_pack,
-           test_save_writes_no_backup):
+           test_save_writes_no_backup, test_pack_shared_one_density_no_overlap,
+           test_pack_shared_rejects_a_stacked_fit):
     case(fn)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)          # let go of scene.blend before removing the folder

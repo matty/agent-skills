@@ -4,7 +4,8 @@ detail: black AO, rings for domes), restores everything it touched, writes 16-bi
 grey + alpha, RGB, RGBA), bakes non-square maps, sizes a uniform cage by the faces the detail stands on (not the
 sharpest corner), fits a per-vertex cage that clears a narrow channel without losing floating piping, Gaussian
 pre-filters before downsampling (a steadier sloped edge than a box filter), refuses highs in an excluded collection,
-bakes parts that sit close together apart (bake_exploded) and puts them back, and its CLI bakes a saved .blend; lookdev_render.py shows a metal's roughness map where Workbench shows none of it, and
+bakes parts that sit close together apart (bake_exploded) and puts them back, copies a high's own material (base
+colour stored sRGB, roughness and metallic as data) and puts the material back, and its CLI bakes a saved .blend; lookdev_render.py shows a metal's roughness map where Workbench shows none of it, and
 renders maps from the command line; pbr_check.py's convention test reads real Cycles bakes as OpenGL (and a green-flipped
 copy as DirectX), and its Blender loader returns the same codes as its own PNG reader for 8- and 16-bit PNGs written by
 Blender and by the scripts (a 16-bit PNG read under the default sRGB tag comes back linearised: the reason it sets
@@ -181,6 +182,54 @@ def test_bake_normal_ao_curvature():
     check(hot["maps"]["curvature"]["saturated_share"] > 0.05 and any("clipped" in n for n in hot.get("notes", [])),
           "a saturating gain must be reported: %s" % hot)
 
+
+
+def _transfer_material():
+    """Base colour red (linear 1, 0, 0) above z = 0 and linear 0.214 grey below; metallic 1 above, 0 below; roughness
+    an unlinked 0.37. Object coordinates, so the high needs no UVs of its own."""
+    m = bpy.data.materials.new("high_paint")
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+    tc, sep = nt.nodes.new("ShaderNodeTexCoord"), nt.nodes.new("ShaderNodeSeparateXYZ")
+    gt = nt.nodes.new("ShaderNodeMath")
+    gt.operation = "GREATER_THAN"
+    gt.inputs[1].default_value = 0.0
+    mix = nt.nodes.new("ShaderNodeMix")
+    mix.data_type = "RGBA"
+    mix.inputs["A"].default_value = (0.214, 0.214, 0.214, 1.0)
+    mix.inputs["B"].default_value = (1.0, 0.0, 0.0, 1.0)
+    nt.links.new(tc.outputs["Object"], sep.inputs["Vector"])
+    nt.links.new(sep.outputs["Z"], gt.inputs[0])
+    nt.links.new(gt.outputs["Value"], mix.inputs["Factor"])
+    nt.links.new(mix.outputs["Result"], bsdf.inputs["Base Color"])
+    nt.links.new(gt.outputs["Value"], bsdf.inputs["Metallic"])
+    bsdf.inputs["Roughness"].default_value = 0.37
+    return m
+
+
+def test_material_transfer_copies_the_highs_textures():
+    low, high = build_fixture()
+    mat = _transfer_material()
+    high.data.materials.append(mat)
+    mats, imgs = set(bpy.data.materials), set(bpy.data.images)
+    res = BAKE["bake"](low, [high], maps=("basecolor", "roughness", "metallic"), size=128, out_dir=str(TMP / "xfer"),
+                       name="T_TST_Xfer")
+    check(set(bpy.data.materials) == mats and set(bpy.data.images) == imgs, "temporary materials or images left")
+    check(high.material_slots[0].material == mat, "the high's own material was not put back")
+    check(res["report"]["maps"]["basecolor"].get("colour_space") == "sRGB", res["report"])
+    top = next(i for i, f in enumerate(low.data.polygons) if f.normal.z > 0.9)
+    bottom = next(i for i, f in enumerate(low.data.polygons) if f.normal.z < -0.9)
+    col, _ = PC.load(res["basecolor"])
+    red, grey = sample(col, *island_uv(top, 0.5, 0.5)), sample(col, *island_uv(bottom, 0.5, 0.5))
+    check(red[0] > 0.98 and red[1] < 0.02 and red[2] < 0.02, "top face base colour %s, expected red" % (red,))
+    check(abs(grey[:3] - 0.5).max() < 0.01, "linear 0.214 should be stored as sRGB 0.5, got %s" % (grey,))
+    rough, _ = PC.load(res["roughness"])
+    check(abs(float(sample(rough, *island_uv(top, 0.5, 0.5))[0]) - 0.37) < 0.01, "unlinked roughness 0.37 not copied")
+    met, _ = PC.load(res["metallic"])
+    mt, mb = (float(sample(met, *island_uv(f, 0.5, 0.5))[0]) for f in (top, bottom))
+    check(mt > 0.98 and mb < 0.02, "metallic top %.3f bottom %.3f, expected 1 and 0" % (mt, mb))
+    check(PC.png_header(res["roughness"])[3] == 0, "roughness should be a one-channel grey PNG")
 
 
 def test_ao_ignores_other_objects_unless_asked():
@@ -414,7 +463,8 @@ def cell_texels(px, part, ax, sg, inset=2):
 def test_fitted_cage_clears_a_channel_and_keeps_floating_piping():
     low, highs = build_channel_fixture()
     inward = {}
-    for label, kw in (("uniform", {"extrusion": 0.010}), ("fitted", {"cage": "fitted"})):
+    for label, kw in (("uniform", {"extrusion": 0.010, "resolve": False}), ("uniform_resolved", {"extrusion": 0.010}),
+                      ("fitted", {"cage": "fitted"})):
         res = BAKE["bake"](low, highs, maps=("normal",), size=256, out_dir=str(TMP / ("channel_" + label)),
                            name="T_TST_Channel", **kw)
         nrm, _ = PC.load(res["normal"])
@@ -424,7 +474,7 @@ def test_fitted_cage_clears_a_channel_and_keeps_floating_piping():
                                                                            {k: res["report"].get(k) for k in
                                                                             ("extrusion", "capped", "repaired",
                                                                              "cage_inside")}))
-        if label == "uniform":
+        if label.startswith("uniform"):
             check(res["report"]["cage_inside"]["neighbour"] > 0, "a 10 mm cage across a 2 mm gap reported no ray "
                   "starting inside the neighbour: %s" % res["report"]["cage_inside"])
         else:
@@ -439,6 +489,8 @@ def test_fitted_cage_clears_a_channel_and_keeps_floating_piping():
                   % float(np.abs(top[:, :, 0]).max()))
     check(inward["uniform"] > 50, "a 10 mm uniform cage baked only %d inward texels" % inward["uniform"])
     check(inward["fitted"] == 0, "the fitted cage baked %d inward texels" % inward["fitted"])
+    check(inward["uniform_resolved"] <= inward["uniform"] // 20, "the resolver left %d of the uniform cage's %d inward "
+          "texels" % (inward["uniform_resolved"], inward["uniform"]))
 
 
 def test_downsample_filter_steadies_a_sloped_edge():
@@ -680,7 +732,121 @@ def test_exploded_bake_keeps_close_parts_apart():
         pass
 
 
-for fn in (test_bake_normal_ao_curvature, test_ao_ignores_other_objects_unless_asked,
+def _sphere_pair():
+    """A smooth 24 x 12 low sphere (smart-projected, triangulated) inside an icosphere high 1 cm larger whose material
+    is an Image Texture (a hue ramp over its own UVs) into Base Color."""
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=12, radius=0.3)
+    low = object_from_bm("Ball_low", bm)
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=5, radius=0.31)
+    high = object_from_bm("Ball_high", bm)
+    for ob in (low, high):
+        for p in ob.data.polygons:
+            p.use_smooth = True
+        bpy.ops.object.select_all(action="DESELECT")
+        bpy.context.view_layer.objects.active = ob
+        ob.select_set(True)
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.04)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    low.modifiers.new("Triangulate", "TRIANGULATE").min_vertices = 4
+    img = bpy.data.images.new("ramp", 64, 64)
+    u = np.linspace(0.0, 1.0, 64)
+    ramp = np.dstack([np.tile(u[None, :], (64, 1)), np.tile(u[:, None], (1, 64)), np.full((64, 64), 0.3),
+                      np.ones((64, 64))])
+    img.pixels.foreach_set(ramp.astype(np.float32).ravel())
+    mat = bpy.data.materials.new("M_ramp")
+    mat.use_nodes = True
+    tex = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    high.data.materials.append(mat)
+    bpy.context.view_layer.update()
+    return low, high
+
+
+def test_resolver_matches_cycles_where_the_cage_is_clean():
+    """resolve_faults() re-casts texels itself; where Cycles' cage rays are fine, both must agree. Every polygon of a
+    sphere resolved and compared with a plain Cycles bake (supersample 1, no filter): normals within a few degrees
+    (same MikkTSpace frame, same rows) and the base colour read through the high's own UVs."""
+    low, high = _sphere_pair()
+    out = TMP / "resolver"
+    res = BAKE["bake"](low, [high], maps=("normal", "basecolor"), size=128, supersample=1, filter_sigma=0.0,
+                       out_dir=str(out), name="T_TST_Ball", resolve=False, extrusion=0.03)
+    dg = bpy.context.evaluated_depsgraph_get()
+    lm = BAKE["_low_mesh"](low, dg)
+    tex, rep = BAKE["resolve_faults"](low, [high], lm, 0.03, set(range(len(lm["polys"]))), ("normal", "basecolor"),
+                                      128, 128, depsgraph=dg)
+    check(rep["hit"] > 0.95 * rep["texels"], rep)
+    inside = tex["covered"].copy()                          # texels away from island edges only
+    for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        inside &= np.roll(np.roll(tex["covered"], dr, 0), dc, 1)
+    keep = tex["ok"] & inside[tex["rows"], tex["cols"]]
+    nrm, _ = PC.load(res["normal"])
+    cyc = nrm[tex["rows"][keep], tex["cols"][keep], :3] * 2.0 - 1.0
+    own = tex["normal"][keep] * 2.0 - 1.0
+    cos = (cyc * own).sum(1) / np.linalg.norm(cyc, axis=1) / np.linalg.norm(own, axis=1)
+    ang = np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
+    check(np.median(ang) < 1.5 and np.percentile(ang, 95) < 5.0,
+          "resolver against Cycles normals: median %.2f p95 %.2f degrees" % (np.median(ang), np.percentile(ang, 95)))
+    col, _ = PC.load(res["basecolor"])
+    cyc = col[tex["rows"][keep], tex["cols"][keep], :3]
+    own = BAKE["_linear_to_srgb"](tex["basecolor"][keep])
+    err = np.abs(cyc - own).max(1)
+    check(np.median(err) < 0.02 and np.percentile(err, 95) < 0.08,
+          "resolver against Cycles base colour: median %.3f p95 %.3f" % (np.median(err), np.percentile(err, 95)))
+
+
+def test_resolver_fixes_rays_that_start_inside_a_neighbour():
+    """A body and a lid 3 mm apart, baked assembled: the cage pushed out for the body's 15 mm bump puts the lid's
+    rays inside the body's high, and Cycles records its back faces (normals pointing into the surface, blue under
+    0.5). With resolve on, those texels are re-cast with back faces stepped over: none points inward."""
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
+    bm = bmesh.new()
+    add_box(bm, (-0.15, -0.1, 0.0), (0.15, 0.1, 0.15), cuts=2)
+    add_box(bm, (-0.15, -0.1, 0.153), (0.15, 0.1, 0.18), cuts=2)
+    low = object_from_bm("Chest_low", bm)
+    bpy.context.view_layer.objects.active = low
+    low.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66), island_margin=0.03)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    low.modifiers.new("Triangulate", "TRIANGULATE")
+    highs = []
+    for name, lo, hi in (("Body_high", (-0.151, -0.101, -0.001), (0.151, 0.101, 0.151)),
+                         ("Lid_high", (-0.151, -0.101, 0.152), (0.151, 0.101, 0.181))):
+        bmh = bmesh.new()
+        add_box(bmh, lo, hi, cuts=6)
+        highs.append(object_from_bm(name, bmh))
+    bmh = bmesh.new()
+    bmesh.ops.create_uvsphere(bmh, u_segments=24, v_segments=12, radius=0.03)
+    bump = object_from_bm("Body_high_bump", bmh)
+    bump.location = (0.0, -0.1 + 0.015, 0.07)
+    highs.append(bump)
+    bpy.context.view_layer.update()
+    out = TMP / "resolve_fault"
+    inward = {}
+    for flag in (False, True):
+        res = BAKE["bake"](low, highs, maps=("normal",), size=128, out_dir=str(out), name="T_TST_R%d" % flag,
+                           resolve=flag)
+        nrm, _ = PC.load(res["normal"])
+        inward[flag] = int((nrm[:, :, 2] < 0.45).sum())
+        if flag:
+            rr = res["report"]["resolved"]
+    check(inward[False] > 20, "the assembled bake should have inward normals to fix: %s" % inward)
+    check(rr["hit"] > 0 and inward[True] <= inward[False] // 20,
+          "texels pointing into the surface: %d without the resolver, %d with it (%s)" % (inward[False], inward[True], rr))
+
+
+for fn in (test_bake_normal_ao_curvature, test_material_transfer_copies_the_highs_textures,
+           test_ao_ignores_other_objects_unless_asked,
            test_cage_that_does_not_enclose_bakes_black_ao,
            test_bpy_loader_matches_png_reader,
            test_dithered_8bit_tracks_a_shallow_gradient,
@@ -691,6 +857,8 @@ for fn in (test_bake_normal_ao_curvature, test_ao_ignores_other_objects_unless_a
            test_downsample_filter_steadies_a_sloped_edge,
            test_bake_refuses_an_excluded_high,
            test_exploded_bake_keeps_close_parts_apart,
+           test_resolver_matches_cycles_where_the_cage_is_clean,
+           test_resolver_fixes_rays_that_start_inside_a_neighbour,
            test_cli_bakes_a_saved_blend,
            test_lookdev_shows_roughness_and_workbench_does_not,
            test_lookdev_cli_renders_maps, test_lookdev_maps_on_an_object_from_the_eye):

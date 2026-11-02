@@ -108,12 +108,19 @@ Aim between:
 
 - LODs: `<Piece>_LOD0`, `<Piece>_LOD1`, `<Piece>_LOD2` as siblings in the piece collection; Unity builds the LOD Group
   from the `_LODn` suffixes on import ("Importing LOD Meshes", Unity 2022.3:
-  https://docs.unity.cn/Manual/importing-lod-meshes.html, checked 2026-10-17). Decimate (Collapse) to about 50% and
-  20% of LOD0, then fix LOD1's silhouette by hand. Worth it for hero props, foliage and pieces repeated dozens of
+  https://docs.unity.cn/Manual/importing-lod-meshes.html, checked 2026-10-17). A quad LOD0 (Quad Remesher, hand
+  retopo): build LOD1 with `blender-mesh-topology`'s `lod_quads` (whole edge loops first) to about 50%. It keeps
+  every UV map, so the LOD shares LOD0's atlas and lightmap UVs. Decimate (Collapse) to about 50% and 20% of LOD0
+  turns quads into slivers and fans; use it only for a triangulated LOD0 or a last LOD, then fix the silhouette by
+  hand. Worth it for hero props, foliage and pieces repeated dozens of
   times; overkill for a wall.
 - Collision: prefer Unity primitive colliders (box, capsule), cheapest by far. Where a mesh collider is needed, model
   a low-poly shell `<Piece>_COL` in the piece collection: it exports with the piece and KitImport.cs turns it into a
-  MeshCollider without a renderer. Never let the detailed render mesh be the collider.
+  MeshCollider without a renderer. Never let the detailed render mesh be the collider. For an organic or generated
+  prop, `scripts/collision_shell.py` builds it: a convex hull of at most 64 corners (124 triangles, under Unity's 255
+  for a convex MeshCollider) chosen from the mesh's extremes, so leg tips and handles stay in. Never hull a
+  decimated copy: a cauldron's shell built that way floated 44 mm over the floor, its legs gone (measured
+  2026-11-02).
 
 ## Scripts
 
@@ -122,6 +129,7 @@ Aim between:
 | `scripts/batch_export_fbx.py -- --kit --dir <dir> [--set-status]` | Blender 4.2+, headless: `blender -b --factory-startup KIT_<Name>.blend --python-exit-code 1 --python batch_export_fbx.py -- ...` (without `--python-exit-code 1` a failed export still exits 0) | One FBX per piece collection into `<dir>/<FAMILY>/<Piece>.fbx`, every member mesh (hidden ones too) with modifiers applied, Path Mode Strip; prints each file's objects, and warns about custom normals on quads, which the exporter would re-triangulate. `<dir>`: absolute, `//`-relative to the .blend (`//../../export/fbx` from `blender/kits/`), or relative to the current directory. `--set-status` writes `kit_status = "exported"` and saves the KIT file without a .blend1. A single MASTER (`blender-kit-library`'s default layout) holds every family, so export a family from a work file checked out of it (`checkout`) and set the status in MASTER through the MCP (never `--set-status` on a MASTER someone has open) |
 | `scripts/batch_export_fbx.py` (`MODE`) | Blender Text Editor or Blender MCP | The selection: `object`, `collection` or `single`; set `EXPORT_DIR`, `MODE` and `PATH_MODE` at the top |
 | `scripts/mesh_audit.py` | Blender, headless: `blender -b --factory-startup file.blend --python-exit-code 1 --python mesh_audit.py` | Per mesh, evaluated as the kit export evaluates it (excluded and outside-scene collections included, and in a MASTER or ASM the meshes inside instanced collections, flagged `instanced`): triangles, slots, UV maps (UV2 on everything but `_COL`), n-gons, loose geometry, custom normals on quads, unapplied rotation or scale; render triangles including collection instances, and the instancers Blender does not show (hidden, or in hidden or excluded collections), left out of the total; hidden or excluded objects never count as shown. The total is what Blender shows: Unity gets every instancer, since placement sync ships hidden and excluded ones too |
+| `scripts/collision_shell.py -- --piece <Piece> [--points 64] [--save]` | Blender 4.2+, headless or live (`shell(lod0, max_points)` as a module) | A convex `<Piece>_COL` from `<Piece>_LOD0`: extremes in directions over a sphere (straight down always), then the vertex furthest outside added until max_points corners; replaces an old shell, wire, out of renders; reports triangles, closed, floor gap, how far the mesh sticks out of it and its share of the full hull's volume |
 | `scripts/unity/Editor/KitImport.cs` | Unity 2022.3 editor | Import settings, material remap and `_COL` colliders for `Assets/World/Kits/`; `CreateVariants()`, `SetStaticFlags()`, `Check()` |
 
 Through Blender MCP: `get_addon_status` and `get_scene_info` first; run a script with `execute_blender_code` (put

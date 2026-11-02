@@ -13,7 +13,9 @@ What it does, deliberately simple and predictable:
     RizomUV), or when overflow(auto) says so (a hard cut that joins a bevel ring into one long island). Islands go
     on shelves (turned long side along U when Rotate.Step > 0, as RizomUV may turn them) with PaddingSizePx between
     bounding boxes and MarginSizePx to the edge, at MapResolution; when
-    overlap(params) says so, every island is stacked at the margin instead (a pack that breaks its padding). Every
+    overlap(params) says so, every island is stacked at the margin instead (a pack that breaks its padding), and when
+    stack(params) says so, stacked at the margin at the asked scale (a pack that gave up but still reads as fitting,
+    as RizomUV did on a shared atlas at too high a density). Every
     Pack's parameters are kept in .packs.
   - RasterExport writes a placeholder file, or raises when fail_raster is set.
 """
@@ -27,11 +29,12 @@ class FakeZEx(Exception):
 
 
 class FakeLink:
-    def __init__(self, stretch=None, fail_raster=False, coverage=None, overflow=None, overlap=None):
+    def __init__(self, stretch=None, fail_raster=False, coverage=None, overflow=None, overlap=None, stack=None):
         self.stretch = stretch or (lambda auto: 1.0)
         self.coverage = coverage or (lambda auto: 1.0)      # < 1 shrinks a fill pack: a sprawling, loose layout
         self.overflow = overflow or (lambda auto: False)    # True: a texel-density pack does not fit
         self.overlap = overlap or (lambda params: False)    # True: the islands are stacked on each other
+        self.stack = stack or (lambda params: False)        # True: stacked at the margin, at the asked scale
         self.fail_raster = fail_raster
         self.auto, self.grouped, self.calls, self.packs = {}, False, [], []
         self.sizes = self.xid = self.xyz = self.uid = self.uvw = None
@@ -62,6 +65,30 @@ class FakeLink:
             groups.setdefault(find(v), []).append(v)
         used = set(self.uid)
         return [sorted(v for v in vs if v in used) for vs in groups.values() if any(v in used for v in vs)]
+
+    def _to_3d_scale(self, isl):
+        """Scale each island about its corner so its UV area equals its 3D area: RizomUV's USER_SPECIFIED scale is
+        relative to the surface, not to the UVs it was given (a loaded, already packed layout)."""
+        vert_island = {v: i for i, vs in enumerate(isl) for v in vs}
+        a3, a2 = [0.0] * len(isl), [0.0] * len(isl)
+        for corners in self._polys():
+            i = vert_island.get(self.uid[corners[0]])
+            if i is None:
+                continue
+            P = [self.xyz[3 * self.xid[c]:3 * self.xid[c] + 3] for c in corners]
+            U = [self.uvw[3 * self.uid[c]:3 * self.uid[c] + 2] for c in corners]
+            for k in range(1, len(corners) - 1):
+                e1 = [P[k][j] - P[0][j] for j in range(3)]
+                e2 = [P[k + 1][j] - P[0][j] for j in range(3)]
+                cx = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+                a3[i] += 0.5 * math.sqrt(sum(c * c for c in cx))
+                a2[i] += 0.5 * abs((U[k][0] - U[0][0]) * (U[k + 1][1] - U[0][1])
+                                   - (U[k][1] - U[0][1]) * (U[k + 1][0] - U[0][0]))
+        for i, vs in enumerate(isl):
+            f = math.sqrt(a3[i] / a2[i]) if a2[i] > 1e-18 else 1.0
+            for v in vs:
+                self.uvw[3 * v] *= f
+                self.uvw[3 * v + 1] *= f
 
     # ---- commands
     def Load(self, p):
@@ -136,6 +163,8 @@ class FakeLink:
         res = float(p.get("MapResolution", 2048))
         pad, margin = p.get("PaddingSizePx", 16) / res, p.get("MarginSizePx", 8) / res
         isl = self._islands()
+        if p.get("Scaling", {}).get("Mode") == 6:
+            self._to_3d_scale(isl)
         turn = float(p.get("Rotate", {}).get("Step", 0) or 0) > 0
         boxes, mins = [], []
         for vs in isl:
@@ -150,6 +179,8 @@ class FakeLink:
         if scaling.get("Mode") == 6:
             s = float(scaling["SpecifiedScale"])
             pos = None if self.overflow(self.auto) else self._shelf(boxes, s, pad, margin)
+            if pos is None and self.stack(p):
+                pos = {i: (margin, margin) for i in range(len(boxes))}
             if pos is None:
                 return {"Coverages": []}                      # does not fit: untouched, no error
         else:
@@ -161,6 +192,8 @@ class FakeLink:
             pos = self._shelf(boxes, s, pad, margin)
         if self.overlap(p):
             s = (1 - 2 * margin) / max(max(max(b) for b in boxes), 1e-9)
+            pos = {i: (margin, margin) for i in range(len(boxes))}
+        elif self.stack(p):                                   # a pack that gave up: in the tile, at scale, stacked
             pos = {i: (margin, margin) for i in range(len(boxes))}
         for i, vs in enumerate(isl):
             for v in vs:

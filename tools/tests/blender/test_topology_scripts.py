@@ -1433,6 +1433,123 @@ def test_loop_decimate_tube_follows_the_chord_rule():
     check(not AUDIT["problems"](AUDIT["audit"](ob), allow_open=True), "audit: %s" % AUDIT["audit"](ob))
 
 
+def test_outline_error_sees_a_lost_part_in_headset_pixels():
+    """outline_error() renders high and low from the player's distance at 20 ppd: a coarse but faithful low reads
+    under 2 px either way; a low that lost a 4 cm knob on the high's side reads it as a high-only band of many pixels,
+    and a low 3% too big reads as a low-only band."""
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=0.2)
+    high = object_from_bmesh("Ball_high", bm)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.2)
+    low = object_from_bmesh("Ball_low", bm)
+    low.location = (2.0, 0.0, 0.0)                                # built beside its high: framed from its own centre
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.206)
+    fat = object_from_bmesh("Ball_fat", bm)
+    fat.location = (-2.0, 0.0, 0.0)
+    for ob in (high, low, fat):
+        for f in ob.data.polygons:
+            f.use_smooth = True
+    good = RR["outline_error"]("Ball_high", "Ball_low", views=4)
+    check(good["high_only_px"] <= 2 and good["low_only_px"] <= 2, "faithful low %s" % good)
+    big = RR["outline_error"]("Ball_high", "Ball_fat", views=4)
+    check(big["low_only_px"] >= 2 and big["high_only_px"] <= 2, "a 3%% bigger low %s" % big)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=0.2)
+    knob = bmesh.ops.create_cube(bm, size=0.04)["verts"]
+    bmesh.ops.translate(bm, verts=knob, vec=(0.21, 0.0, 0.0))     # a knob on the side, 3 cm proud (one on top
+    # would sit inside the outline from a standing eye: it is not a silhouette there)
+    object_from_bmesh("Knob_high", bm).location = (0.0, 3.0, 0.0)
+    lost = RR["outline_error"]("Knob_high", "Ball_low", views=4)
+    check(lost["high_only_px"] >= 8, "the lost knob reads %s" % lost)
+
+
+def test_quad_remesh_density_map_puts_quads_where_painted():
+    """density_colour gives the add-on's paint colours (white 1, red 4, cyan 0.25); quad_remesh(density=...) writes
+    them and turns UseVertexColorMap on, so a sphere painted 4 x on its +X half comes back with most quads there."""
+    dc = QR["density_colour"]
+    check(dc(1.0) == (1.0, 1.0, 1.0) and dc(4.0) == (1.0, 0.0, 0.0) and dc(0.25) == (0.0, 1.0, 1.0)
+          and dc(9.0) == dc(4.0), "density colours %s %s %s" % (dc(1.0), dc(4.0), dc(0.25)))
+    engine = QR["find_engine"]()
+    if not os.path.exists(engine):
+        raise Skip("Quad Remesher engine not installed (%s)" % engine)
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=4, radius=0.5)
+    pts = [v.co.copy() for v in bm.verts]
+    faces = [[v.index for v in f.verts] for f in bm.faces]
+    bm.free()
+    try:
+        qp, qf, _m = QR["quad_remesh"](pts, faces, TargetQuadCount=300, timeout=120,
+                                       density=[4.0 if p.x > 0 else 1.0 for p in pts])
+    except RuntimeError as exc:
+        raise Skip("engine did not run here: %s" % str(exc)[:200])
+    right = sum(1 for f in qf if sum(qp[i].x for i in f) > 0)
+    check(right > 2 * (len(qf) - right), "quads on the painted half %d of %d" % (right, len(qf)))
+    qp, qf, _m, tries = QR["quad_remesh_to_budget"](pts, faces, 300, density=[4.0 if p.x > 0 else 1.0 for p in pts],
+                                                     timeout=120)
+    check(abs(len(qf) / 300.0 - 1) <= 0.06 or len(tries) == 4, "steered to 300 quads: %s" % tries)
+    sym, _f, _m2, _t = QR["quad_remesh_to_budget"](pts, faces, 300, SymAxis="X", SymLocal=1, timeout=120)
+    xs = sorted(round(p.x, 3) for p in sym)
+    mirrored = sum(1 for x in xs if -x in set(xs)) / float(len(xs))
+    check(mirrored > 0.9, "SymAxis=X mirrors the result about X (%.2f of vertices have a mirror twin)" % mirrored)
+
+
+def test_lod1_takes_clean_loops_first_and_says_which_route():
+    """lod_quads.lod1: a UV-mapped lathe (a 24 x 16 open tube) halves by whole loops, all quads, UVs of the kept
+    corners unchanged; a quad sphere (poles everywhere, few loops that run round) with no engine falls through to
+    pole_loops and reaches the budget, and the report names the routes tried."""
+    path = str(SCRIPTS / "lod_quads.py")
+    L = {"__file__": path}
+    exec(compile(open(path, encoding="utf-8").read(), path, "exec"), L)
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_circle(bm, segments=24, radius=0.2)
+    ring = list(bm.edges)
+    for k in range(16):                                       # extrude the ring up 16 times: a tube of quads
+        res = bmesh.ops.extrude_edge_only(bm, edges=ring)
+        new_v = [e for e in res["geom"] if isinstance(e, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=new_v, vec=(0.0, 0.0, 0.03))
+        ring = [e for e in res["geom"] if isinstance(e, bmesh.types.BMEdge)
+                and all(v in new_v for v in e.verts)]
+    uv = bm.loops.layers.uv.new("UVMap")
+    import math
+    for f in bm.faces:
+        for l in f.loops:
+            l[uv].uv = ((math.atan2(l.vert.co.y, l.vert.co.x) + math.pi) / (2 * math.pi) * 0.999, l.vert.co.z * 2)
+    tube = object_from_bmesh("PROP_Tube_Free_A_LOD0", bm)
+    lod, rep = L["lod1"](tube, ratio=0.5, tol=0.02)
+    check(rep["route"] == "loops" and rep["ngons"] == 0 and rep["tris"] == 0 and rep["faces"] <= 0.6 * 384,
+          "the tube should halve by loops: %s" % rep)
+    check(lod.name == "PROP_Tube_Free_A_LOD1" and "UVMap" in lod.data.uv_layers, "named LOD1, UVs kept")
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=0.4)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=5, use_grid_fill=True)
+    for v in bm.verts:
+        v.co = v.co.normalized() * 0.2                        # a quad sphere: eight 3-poles, rings that end at them
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for l in f.loops:
+            l[uv].uv = (l.vert.co.x + 0.5, l.vert.co.y + 0.5)
+    ball = object_from_bmesh("PROP_Ball_Free_A_LOD0", bm)
+    keep = L["_load"]
+    L["_load"] = lambda n: (_ for _ in ()).throw(RuntimeError("no engine (test)")) if n == "quad_remesh.py" else keep(n)
+    try:
+        lod, rep = L["lod1"](ball, ratio=0.5, tol=0.03)
+    finally:
+        L["_load"] = keep
+    routes = [t["route"] for t in rep["tried"]]
+    check(rep["route"] in ("loops", "pole_loops") and (rep["route"] == "loops" or routes == ["loops", "remesh"]),
+          "quad sphere routes %s -> %s" % (routes, rep))
+    check(rep["faces"] < len(ball.data.polygons), "it reduced: %s" % rep)
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1448,8 +1565,11 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_hand_off_refusals_and_topology_types, test_scale_goes_before_the_stack_or_after_the_hand_off,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
-           test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
+           test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip,
+           test_quad_remesh_density_map_puts_quads_where_painted,
+           test_lod1_takes_clean_loops_first_and_says_which_route, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
+           test_outline_error_sees_a_lost_part_in_headset_pixels,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
            test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
            test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front,
