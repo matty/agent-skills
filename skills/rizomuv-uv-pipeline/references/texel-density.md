@@ -148,3 +148,16 @@ no UV2 written, an older `UVMap_Lightmap` removed rather than left at index 1, a
   `graded_at_px` (the larger footprint when `fallback` holds the too-small note). `box_fill` is advisory: under
   0.5 it is noted at footprints of 64 px or more only, as vrchat-world-qa does.
 - In the editor, a debug checker coloured by class shows mismatches at a glance before anyone signs off a scene.
+
+## A shared atlas for a set of props
+
+Several props baked into one map at one density: unwrap each with `unwrap_objects`, then
+`br.pack_shared(objects, map_px)`. It packs every island of the set together in RizomUV and finds the highest density
+that packs cleanly by bisection (between 0.3 and 1.0 of the density that would fill the map). Every try is graded for
+overlap, padding and margin with `uv_metrics`, because Pack's `fits` only means "in the tile at the asked scale": a
+pack RizomUV gave up on left the islands stacked and still read as a fit (*measured*: 795 px/m with 418 overlapping
+island pairs, which baked a garbage atlas). *Measured* on four generated props (2026-11-02, 2048 map, 32 px gaps):
+792-800 px/m on 49% of the map, where Blender's packer took an earlier build of the same props (same counts and
+settings) to 640 px/m on 31%.
+For your own Pack calls at a texel density, grade the result with `uv_metrics.report` before writing it, for the
+same reason.
