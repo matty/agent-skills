@@ -103,7 +103,59 @@ curvature 0.10 s):
 - **Cage check.** Every uniform or fitted bake reports `cage_inside`: of the rays traced at seven points per cage
   triangle, how many start inside a high that stands off the low (`neighbour`: the cage reaches across a gap,
   normals point into the surface) or inside the low's own high (`own`: rings, black AO). Both should be 0; `own`
-  above 0 means a larger push, `neighbour` above 0 a fitted cage.
+  above 0 means a larger push, `neighbour` above 0 a fitted cage. What is still above 0 after that, the resolver
+  fixes (next).
+- **Resolver: the texels no cage can bake** (on by default, `resolve=False` to turn it off). Cycles casts one ray
+  per texel, from the cage to the low, and keeps its first hit even on a back face; it has no "ignore back faces"
+  switch, which the Marmoset Toolbag and Substance bakers both have. Where a thin part sits close to another
+  surface (a handle by its body, legs under a pot, two slabs 2 mm apart), no push works: far enough to clear the
+  part's own high puts the cage inside its neighbour's. So the faulty texels are re-baked by `resolve_faults()`, the
+  way those bakers do. In order:
+  1. **Find them two ways.** The polygons where a traced cage ray starts inside a high, grown by one ring (seven
+     rays per triangle miss faults between them). Plus the polygons where a 1-sample Cycles normal pre-pass actually
+     came out pointing into the surface (the result, not a prediction).
+  2. **Re-cast each texel.** Along the averaged normal, from the cage push in front of the low to the same distance
+     behind it, back faces stepped over. The first front-facing hit wins; not the one nearest the low, because a bump
+     welded onto a body hides the body's surface inside it.
+     - No front face in that window: once more, three times wider.
+     - Still none: the nearest surface.
+     - If even that faces away (the low spans air, between a cauldron's legs): its colour and a flat normal, never
+       an inward one.
+  3. **Shade the maps itself.** The normal comes from the high's corner normals in the low's MikkTSpace frame, AO
+     from 24 cosine rays, and base colour, roughness and metallic from the image or value feeding the high's
+     Principled input (through a glTF import's Separate Color too).
+  4. **Write them over Cycles' texels, then rebuild the gutter.** Cycles' adjacent-faces margin copies each faulty
+     value 16 px out past the island edge, so the gutter beside every resolved polygon, or a polygon next to one, is
+     rebuilt from the nearest island-edge texel. Any normal-map gutter texel still pointing into the surface (it has
+     no surface of its own, so it can only be a copied fault) takes the nearest edge value.
+
+  Curvature, a node-chain input and the high's own normal-map detail keep Cycles' value, and the report's
+  `resolved` lists them under `left_to_cycles`. *Measured* (2026-11-02):
+  - **A sphere with every texel re-baked:** the resolver matched Cycles to within the test's tolerances (normals
+    median under 1.5 degrees, base colour within 0.02).
+  - **The 10 mm uniform cage across the 2 mm slab gap above:** 6,711 inward texels became 0.
+  - **A generated cauldron's handle and legs, baked alone at 1024:** inward-pointing texels at each step:
+
+    | Step | Inward texels |
+    | --- | --- |
+    | Cycles alone | 21,703 |
+    | + cage-ray resolver | 5,938 |
+    | + wider retry | 5,296 |
+    | + one-ring growth | 3,630 |
+    | + self-detection pre-pass | 2,374 |
+    | + nearest-surface and flat fallback | 1,160 |
+    | + gutter clean | **189** |
+
+    Of those 189, 5 are on the surface, 4 of them where the high really turns more than 90 degrees from the low (only
+    geometry in the low changes those); 184 are gutter continuing them. In all, 99% fewer.
+  - **A four-prop 2048 atlas at supersample 2:** inward texels 48,538 with Cycles alone, 133 with everything above
+    (99.7% fewer). It took 2.3 million texels re-baked in 1,616 s of a 2,241 s bake. The resolver is the price of a
+    clean bake; turn it off for a draft.
+
+  It runs in Python, one texel at a time (about 0.7 ms each), so it can cost more than the Cycles bake.
+  `RESOLVE["grow"] = 0` re-bakes about a third of the texels. `RESOLVE["detect"] = False` skips the pre-pass. A
+  first look can bake with `resolve=False`. `cage_inside` keeps counting the cage's faults, and `resolved` says how
+  many texels were re-baked, how many fell back to the nearest surface or a flat normal, and how many found nothing.
 - **Normal map.** Selected to Active, tangent space, swizzle +X +Y +Z (OpenGL), the low poly's MikkTSpace tangents
   from its active render UV map (or `--uv-layer`). `pbr_check.py` read the bakes as OpenGL, r +0.53 to +0.59, and a
   green-flipped copy as DirectX.
@@ -137,6 +189,14 @@ curvature 0.10 s):
   coverage in one map) from rows top to bottom, as `_image_array` returns them: Blender's `Image.pixels` run bottom
   to top, and writing them unflipped turns the map upside down. Everything it adds (images, materials, image nodes,
   the cage) is removed, and the render engine, samples, selection and active object restored.
+- **A textured high (a scan, a generated model, a high with its own node material).** `--maps
+  normal,ao,basecolor,roughness,metallic` copies what feeds each high's Principled BSDF onto the low through the
+  same cage, as Emission bakes: base colour is written sRGB-encoded (baked as linear light, so a linear 0.214 is
+  stored 0.5), roughness and metallic as one-channel data; a material with no Principled BSDF bakes the neutral
+  value and a note. Cycles' normal bake includes the high's own normal map, so a generated model's normal detail
+  carries over. *Measured* on a generated stump (2026-11-02): five maps at 1024, supersample 2, fitted cage, 46 s
+  on the CPU; the low with the baked maps read the same as the high from 1.5 m. Pack metallic and 1 - roughness
+  into the engine's map afterwards (Unity: MetallicSmoothness).
 
 Blender facts behind it, measured on 5.2.2: `Image.save()` of a float image writes a 16-bit PNG; a 16-bit PNG loaded
 under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read data maps as Non-Color.
@@ -178,7 +238,7 @@ union, then clean the slivers it leaves) or split them into parts of their own.
 | Symptom | Cause | Fix |
 |---|---|---|
 | Domes bake as rings, AO black on protruding detail | Rays start inside the high poly: cage or frontal distance too small | Enlarge it past the tallest protrusion (`bake_maps.py` measures it; `cage_inside.own` counts the rays) |
-| Normals pointing into the surface (black streaks, z < 0) along channels, gaps or creases | The cage reaches past the gap and starts rays inside the neighbouring high (`cage_inside.neighbour` above 0) | `--cage fitted`; in the Substance baker a cage mesh, or a frontal distance under half the gap |
+| Normals pointing into the surface (black streaks, z < 0) along channels, gaps or creases | The cage reaches past the gap and starts rays inside the neighbouring high (`cage_inside.neighbour` above 0), and Cycles records the back face it hits | `--cage fitted` (the resolver re-bakes what it cannot fix, on by default); in the Substance baker Ignore Backface, a cage mesh, or a frontal distance under half the gap |
 | A thin cord or chamfer highlight bakes as a dashed or stepped line | A box filter steps detail under about 3 texels wide at a slight slope; more supersampling barely helps | `--filter-sigma 0.8` (or a 0.8-texel Gaussian on the final map, normals renormalised), or a higher texel density |
 | A line along every hard edge | Rays follow split normals (no cage, `smooth_normals` off), or a hard edge without a UV seam | Averaged cage; a seam on every hard edge (`uv-unwrapping`) |
 | Normal map lit from below in the engine | Wrong Y convention | OpenGL for Blender and Unity; `pbr_check.py` reports it |

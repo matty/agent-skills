@@ -55,7 +55,7 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
    | Route | When | Gives |
    |---|---|---|
    | Substance 3D baker CLI (`substance3d_baker`, in Designer's install folder: how to find it is in `references/baking.md`; measured with 16.0.7) | Designer installed | Raytraced normal, AO, curvature, thickness, position, ID, world normal, bent normals; GPU, under a second on the test fixture |
-   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself, uniform or fitted per vertex; square or tall maps; 16-bit PNGs |
+   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself, uniform or fitted per vertex; square or tall maps; 16-bit PNGs. Also base colour, roughness and metallic copied from a textured high (a scan or a generated model) |
 
    The Substance baker writes **DirectX** normal maps unless told `--output_texture_orientation opengl`, and pads only
    2 px by default (measured 2026-10-18): pass both every time.
@@ -142,7 +142,7 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits; for tiling maps (`--tiling`, `--trim`) seam ratios, a windowed seam, tile-scale variation and 3 x 3 composites; exit 1 on a PROBLEM |
 | `scripts/texture_seams.py` | Blender | `seams(ob, map, kind)`: the step across every UV seam against the texture's own, colour or normal (object space, MikkTSpace); `joints(objects, map)`: the same where placed pieces meet, collection instances expanded; a CLI, exit 1 when a seam shows |
 | `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
-| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high, supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
+| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`, plus `"basecolor"`, `"roughness"`, `"metallic"` copied from the highs' own materials; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high and a resolver that re-bakes their texels with back faces ignored (`resolve_faults`), supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png, eye=, target=)` under a bundled CC0 HDRI; a CLI for maps, objects, or maps on objects from an eye point |
 
 Load a Blender script from the Blender MCP with `exec(open(path, encoding="utf-8").read(), ns)` after setting
