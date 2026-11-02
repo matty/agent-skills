@@ -59,7 +59,21 @@ curves converted to mesh and voxel-merged into the trunk before the displacement
 | --- | --- | --- |
 | QuadriFlow | A closed organic mesh that may deform or will be hand-edited | `bpy.ops.object.quadriflow_remesh(target_faces=n, seed=0)`: on a closed mesh, *measured* 385 quads for a 400 target on an icosphere |
 | Decimate (Collapse) | Static props (rocks, stumps): triangles are fine and the silhouette is kept best per triangle | a Decimate modifier, `ratio` to the target count |
-| Quad Remesher | Patches with frozen borders (SKILL.md section 4); also a whole closed organic low, where it beats QuadriFlow | `quad_remesh.py`: `patch_input` refuses a closed mesh, but `quad_remesh(pts, faces, TargetQuadCount=n, ExactQuadCount=1)` takes any mesh. *Measured* 2026-11-02 on a generated stump at 1.5 m against QuadriFlow at about the same count (2,162 vs 2,320 triangles): ray skew against its own faces 24% vs 43%, relief left to the bake p99 10.4 vs 16.9 mm, RizomUV 46 islands on 52% of the map vs 94 on 46%. Keep `ExactQuadCount=1` for a budget: adaptive, 1,300 asked gave 3,622 |
+| Quad Remesher | Patches with frozen borders (SKILL.md section 4); also a whole closed organic low, where it beats QuadriFlow | `quad_remesh.py`: `patch_input` refuses a closed mesh, but `quad_remesh(pts, faces, TargetQuadCount=n, ExactQuadCount=1)` takes any mesh. *Measured* 2026-11-02 on a generated stump at 1.5 m against QuadriFlow at about the same count (2,162 vs 2,320 triangles): ray skew against its own faces 24% vs 43%, relief left to the bake p99 10.4 vs 16.9 mm, RizomUV 46 islands on 52% of the map vs 94 on 46%. For a budget use `quad_remesh_to_budget` (adaptive count, the target steered; settings below), not `ExactQuadCount=1`: adaptive, 1,300 asked gave 3,622, so it needs steering |
+
+**Quad Remesher settings for a whole organic low** (*measured* 2026-11-02 on four generated props, each at one quad
+budget, scored by irregular vertices (valence not 4) and how far quad corners are from square):
+
+| Settings | Cauldron | Sack | Pot | Crate |
+| --- | --- | --- | --- | --- |
+| Remesh of an 8,000-quad (or 2,000-2,500) Quad Remesher cage, `ExactQuadCount=1`, adaptivity 50 | 109, 10.2 deg | 127, 20.9 | 8, 6.3 | 50, 10.2 |
+| Straight from the dense high, the same | 153, 12.2 | 158, 20.2 | 12, 6.1 | 67, 10.1 |
+| From the cage, adaptive count steered to the budget, `SymAxis` where symmetric, `CurvatureAdaptivness` 20 | **56, 7.1** | **96, 15.0** | **8, 4.7** | **42, 8.7** |
+
+So: remesh a cleaner cage first, never the raw high; `quad_remesh_to_budget(..., CurvatureAdaptivness=20.0)` with
+`SymAxis="X"` (and `SymLocal=1`; "XY" for a pot) when the piece is mirror-symmetric about its own origin. The outline
+(`review_render.outline_error`) barely moved between them: the settings buy flow, not silhouette. A lumpy high (a
+sack, a generated crate) keeps lumpy flow whatever the settings.
 
 Then, before UVs:
 
@@ -68,7 +82,8 @@ Then, before UVs:
 2. Shade the low smooth whole (no angle split: it makes every ridge a hard edge and a seam).
 3. Delete faces that are always buried in the ground; they waste texels and their seams are the easiest to hide.
 4. Budgets are the world's; as a starting point (*practice*): a boulder seen from 1-3 m 1-3k triangles, a stump with
-   roots 2-5k, LOD1 at about half.
+   roots 2-5k, LOD1 at about half (`lod_quads.lod1`: keeps the UVs; clean quads by whole loops on a lathe-like
+   low, pentagons beside the poles on a remeshed one; never Decimate a quad low for it).
 5. UVs: seams on buried and contact faces, concave cracks and undersides (`uv-unwrapping`); bake with a fitted cage
    where creases are deep (`pbr-texturing`).
 

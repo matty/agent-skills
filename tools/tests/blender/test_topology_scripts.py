@@ -1491,6 +1491,63 @@ def test_quad_remesh_density_map_puts_quads_where_painted():
         raise Skip("engine did not run here: %s" % str(exc)[:200])
     right = sum(1 for f in qf if sum(qp[i].x for i in f) > 0)
     check(right > 2 * (len(qf) - right), "quads on the painted half %d of %d" % (right, len(qf)))
+    qp, qf, _m, tries = QR["quad_remesh_to_budget"](pts, faces, 300, density=[4.0 if p.x > 0 else 1.0 for p in pts],
+                                                     timeout=120)
+    check(abs(len(qf) / 300.0 - 1) <= 0.06 or len(tries) == 4, "steered to 300 quads: %s" % tries)
+    sym, _f, _m2, _t = QR["quad_remesh_to_budget"](pts, faces, 300, SymAxis="X", SymLocal=1, timeout=120)
+    xs = sorted(round(p.x, 3) for p in sym)
+    mirrored = sum(1 for x in xs if -x in set(xs)) / float(len(xs))
+    check(mirrored > 0.9, "SymAxis=X mirrors the result about X (%.2f of vertices have a mirror twin)" % mirrored)
+
+
+def test_lod1_takes_clean_loops_first_and_says_which_route():
+    """lod_quads.lod1: a UV-mapped lathe (a 24 x 16 open tube) halves by whole loops, all quads, UVs of the kept
+    corners unchanged; a quad sphere (poles everywhere, few loops that run round) with no engine falls through to
+    pole_loops and reaches the budget, and the report names the routes tried."""
+    path = str(SCRIPTS / "lod_quads.py")
+    L = {"__file__": path}
+    exec(compile(open(path, encoding="utf-8").read(), path, "exec"), L)
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_circle(bm, segments=24, radius=0.2)
+    ring = list(bm.edges)
+    for k in range(16):                                       # extrude the ring up 16 times: a tube of quads
+        res = bmesh.ops.extrude_edge_only(bm, edges=ring)
+        new_v = [e for e in res["geom"] if isinstance(e, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, verts=new_v, vec=(0.0, 0.0, 0.03))
+        ring = [e for e in res["geom"] if isinstance(e, bmesh.types.BMEdge)
+                and all(v in new_v for v in e.verts)]
+    uv = bm.loops.layers.uv.new("UVMap")
+    import math
+    for f in bm.faces:
+        for l in f.loops:
+            l[uv].uv = ((math.atan2(l.vert.co.y, l.vert.co.x) + math.pi) / (2 * math.pi) * 0.999, l.vert.co.z * 2)
+    tube = object_from_bmesh("PROP_Tube_Free_A_LOD0", bm)
+    lod, rep = L["lod1"](tube, ratio=0.5, tol=0.02)
+    check(rep["route"] == "loops" and rep["ngons"] == 0 and rep["tris"] == 0 and rep["faces"] <= 0.6 * 384,
+          "the tube should halve by loops: %s" % rep)
+    check(lod.name == "PROP_Tube_Free_A_LOD1" and "UVMap" in lod.data.uv_layers, "named LOD1, UVs kept")
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=0.4)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=5, use_grid_fill=True)
+    for v in bm.verts:
+        v.co = v.co.normalized() * 0.2                        # a quad sphere: eight 3-poles, rings that end at them
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for l in f.loops:
+            l[uv].uv = (l.vert.co.x + 0.5, l.vert.co.y + 0.5)
+    ball = object_from_bmesh("PROP_Ball_Free_A_LOD0", bm)
+    keep = L["_load"]
+    L["_load"] = lambda n: (_ for _ in ()).throw(RuntimeError("no engine (test)")) if n == "quad_remesh.py" else keep(n)
+    try:
+        lod, rep = L["lod1"](ball, ratio=0.5, tol=0.03)
+    finally:
+        L["_load"] = keep
+    routes = [t["route"] for t in rep["tried"]]
+    check(rep["route"] in ("loops", "pole_loops") and (rep["route"] == "loops" or routes == ["loops", "remesh"]),
+          "quad sphere routes %s -> %s" % (routes, rep))
+    check(rep["faces"] < len(ball.data.polygons), "it reduced: %s" % rep)
 
 
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
@@ -1509,7 +1566,8 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip,
-           test_quad_remesh_density_map_puts_quads_where_painted, test_quad_remesher_page_recipe_runs,
+           test_quad_remesh_density_map_puts_quads_where_painted,
+           test_lod1_takes_clean_loops_first_and_says_which_route, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
            test_outline_error_sees_a_lost_part_in_headset_pixels,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,

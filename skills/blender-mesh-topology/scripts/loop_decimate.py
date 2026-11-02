@@ -11,9 +11,10 @@ tol. A loop vertex's sag is its distance to the segment between its two neighbou
 already removed next to it (so removing neighbouring loops one after another cannot add up past tol unseen).
 
 A loop is never removed when any of its edges is a marked seam, a UV seam of a protected map, sharp, a material
-boundary or open, or when it touches a triangle or an n-gon, or ends at an interior vertex of 3 edges (it would leave
-a 2-edge vertex inside the surface). It may end at the rim (that vertex goes, sag-checked) or at a pole of 5 or more
-edges (the pole stays). So the result stays clean quads, and every UV map keeps the corners it had on the vertices
+boundary or open, or when it touches a triangle or an n-gon, or ends anywhere but the rim (that vertex goes,
+sag-checked): an interior 3-edge end would leave a 2-edge vertex, a pole end a pentagon. pole_ends=True allows pole
+ends for more reduction on a remeshed low full of poles, at the price of n-gons (measured 2026-11-02: 144 on a
+generated cauldron's LOD1). Without it the result stays clean quads, and every UV map keeps the corners it had on the vertices
 kept: bakes and lightmap UVs made on protected maps stay valid. Run it before custom normals (Weighted Normal, Harden
 Normals), which dissolving faces does not carry.
 """
@@ -106,7 +107,7 @@ def _sag(v, a, b):
     return (v - (a + ab * t)).length
 
 
-def _cost(edges, verts, closed, uvs, err):
+def _cost(edges, verts, closed, uvs, err, pole_ends=False):
     """The loop's cost (largest sag plus carried error), or None when it may not go."""
     faces = [f for e in edges for f in e.link_faces]
     in_loop = set(edges)
@@ -121,7 +122,9 @@ def _cost(edges, verts, closed, uvs, err):
         if v in ends and len(others) != 2:
             if not v.is_boundary and len(v.link_edges) <= 3:
                 return None                                         # an interior 3-edge end would keep 2 edges
-            continue                                                # a pole: it stays
+            if not v.is_boundary and not pole_ends:
+                return None                                         # a pole end leaves a pentagon beside it
+            continue                                                # a rim vertex (or, allowed, a pole): it stays
         if len(others) != 2:
             return None
         a, b = (o.other_vert(v).co for o in others)
@@ -129,25 +132,27 @@ def _cost(edges, verts, closed, uvs, err):
     return worst
 
 
-def _loops(bm, uvs, err):
+def _loops(bm, uvs, err, pole_ends=False):
     seen, out = set(), []
     for e in bm.edges:
         if e in seen or len(e.link_faces) != 2:
             continue
         edges, verts, closed = _walk(e)
         seen.update(edges)
-        c = _cost(edges, verts, closed, uvs, err)
+        c = _cost(edges, verts, closed, uvs, err, pole_ends)
         if c is not None:
             out.append((c, edges, verts))
     return out
 
 
-def loop_decimate(ob, tol, protect_uv="all", max_loops=None):
+def loop_decimate(ob, tol, protect_uv="all", max_loops=None, pole_ends=False):
     """Remove edge loops from ob's mesh (Object Mode, its own data, not the modifier result) while the sag each removal
     leaves, plus what earlier removals left next to it, stays within tol metres (object space). protect_uv: "all" (the
     default) keeps every UV map's seams, or a list of map names or indices: on a probe-lit piece whose lightmap UV has
-    a chart per face, protect only the texture UV or nothing can go. max_loops: stop after that many. Returns
-    loops_removed, faces_before, faces_after, tris_before, tris_after and worst (the largest cost accepted, m)."""
+    a chart per face, protect only the texture UV or nothing can go. max_loops: stop after that many. pole_ends: also
+    remove loops that end at a pole (5+ edges); the pole stays, so the two faces beside the loop's last edge become a
+    pentagon: more reduction on a remeshed low full of poles, at the price of n-gons (counted in "ngons"). Returns
+    loops_removed, faces_before, faces_after, tris_before, tris_after, ngons and worst (the largest cost accepted, m)."""
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     me = ob.data
@@ -163,7 +168,7 @@ def loop_decimate(ob, tol, protect_uv="all", max_loops=None):
         faces0, tris0 = len(bm.faces), tris()
         removed, worst = 0, 0.0
         while max_loops is None or removed < max_loops:
-            cands = [c for c in _loops(bm, uvs, err) if c[0] <= tol]
+            cands = [c for c in _loops(bm, uvs, err, pole_ends) if c[0] <= tol]
             if not cands:
                 break
             cost, edges, verts = min(cands, key=lambda c: c[0])
@@ -177,7 +182,7 @@ def loop_decimate(ob, tol, protect_uv="all", max_loops=None):
             removed += 1
             worst = max(worst, cost)
         out = {"loops_removed": removed, "faces_before": faces0, "faces_after": len(bm.faces), "tris_before": tris0,
-               "tris_after": tris(), "worst": worst}
+               "tris_after": tris(), "ngons": sum(1 for f in bm.faces if len(f.verts) > 4), "worst": worst}
         bm.verts.layers.float.remove(bm.verts.layers.float[ERR_LAYER])
         bm.to_mesh(me)
         me.update()
