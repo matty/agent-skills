@@ -108,8 +108,11 @@ Aim between:
 
 - LODs: `<Piece>_LOD0`, `<Piece>_LOD1`, `<Piece>_LOD2` as siblings in the piece collection; Unity builds the LOD Group
   from the `_LODn` suffixes on import ("Importing LOD Meshes", Unity 2022.3:
-  https://docs.unity.cn/Manual/importing-lod-meshes.html, checked 2026-10-17). Decimate (Collapse) to about 50% and
-  20% of LOD0, then fix LOD1's silhouette by hand. Worth it for hero props, foliage and pieces repeated dozens of
+  https://docs.unity.cn/Manual/importing-lod-meshes.html, checked 2026-10-17). A quad LOD0 (Quad Remesher, hand
+  retopo): build LOD1 with `blender-mesh-topology`'s `lod_quads` (whole edge loops first) to about 50%. It keeps
+  every UV map, so the LOD shares LOD0's atlas and lightmap UVs. Decimate (Collapse) to about 50% and 20% of LOD0
+  turns quads into slivers and fans; use it only for a triangulated LOD0 or a last LOD, then fix the silhouette by
+  hand. Worth it for hero props, foliage and pieces repeated dozens of
   times; overkill for a wall.
 - Collision: prefer Unity primitive colliders (box, capsule), cheapest by far. Where a mesh collider is needed, model
   a low-poly shell `<Piece>_COL` in the piece collection: it exports with the piece and KitImport.cs turns it into a
