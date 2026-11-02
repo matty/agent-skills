@@ -73,7 +73,10 @@ budget, scored by irregular vertices (valence not 4) and how far quad corners ar
 So: remesh a cleaner cage first, never the raw high; `quad_remesh_to_budget(..., CurvatureAdaptivness=20.0)` with
 `SymAxis="X"` (and `SymLocal=1`; "XY" for a pot) when the piece is mirror-symmetric about its own origin. The outline
 (`review_render.outline_error`) barely moved between them: the settings buy flow, not silhouette. A lumpy high (a
-sack, a generated crate) keeps lumpy flow whatever the settings.
+sack, a generated crate) keeps lumpy flow whatever the settings. And check the result for faces that cut through each other
+(`quad_remesh_to_budget` does by default: it re-runs at targets a few percent either side and keeps a clean one): a
+cauldron's leg roots crossed its body on 0 to 19 faces depending only on the target. A wall thinner than the low's
+error crosses whatever the target: thicken it on the high first.
 
 Then, before UVs:
 

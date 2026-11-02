@@ -699,6 +699,39 @@ def _split_recesses(points, outside, low_tree, high_tree, cap=4000, floor=1e-4):
     return 0.0, recess
 
 
+def self_intersections(ob, evaluated=True, depsgraph=None):
+    """Faces of ob that cut through another face of the same mesh (faces sharing a vertex are neighbours and do not
+    count), as evaluated unless evaluated=False. A low must have none: a thin-walled piece (an open pot or cauldron)
+    remeshed coarser than its wall is thick gets its two walls crossing (measured 2026-11-02: a generated cauldron
+    with 0.5 mm walls, 602 of its 756 LOD0 faces), which shades as dark streaks and breaks the bake's cage. Returns
+    {"faces": count, "of": total, "sample": up to 10 face indices}."""
+    import bmesh
+    import bpy
+    from mathutils.bvhtree import BVHTree
+    bm = bmesh.new()
+    if evaluated:
+        dg = depsgraph or bpy.context.evaluated_depsgraph_get()
+        ev = ob.evaluated_get(dg)
+        me = ev.to_mesh()
+        bm.from_mesh(me)
+        ev.to_mesh_clear()
+    else:
+        bm.from_mesh(ob.data)
+    try:
+        bm.faces.ensure_lookup_table()
+        bvh = BVHTree.FromBMesh(bm)
+        bad = set()
+        for a, b in bvh.overlap(bvh):
+            if a == b or a in bad and b in bad:
+                continue
+            if set(bm.faces[a].verts) & set(bm.faces[b].verts):
+                continue
+            bad.update((a, b))
+        return {"faces": len(bad), "of": len(bm.faces), "sample": sorted(bad)[:10]}
+    finally:
+        bm.free()
+
+
 def bake_skew(low, limit_deg=15.0, depsgraph=None, highs=None, faces=None, relief_m=None):
     """Where a bake's rays leave a low poly at a slant. A cage built from averaged normals (Blender's Selected to
     Active with a cage, and bake_maps.py) casts each ray along the vertex normals interpolated across the triangle, so

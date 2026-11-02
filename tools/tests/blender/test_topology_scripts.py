@@ -1498,6 +1498,8 @@ def test_quad_remesh_density_map_puts_quads_where_painted():
     xs = sorted(round(p.x, 3) for p in sym)
     mirrored = sum(1 for x in xs if -x in set(xs)) / float(len(xs))
     check(mirrored > 0.9, "SymAxis=X mirrors the result about X (%.2f of vertices have a mirror twin)" % mirrored)
+    check(QR["crossings"](sym, _f) == 0 and all(len(t) == 3 for t in _t),
+          "the steered remesh is free of faces crossing each other and reports it per run: %s" % (_t,))
 
 
 def test_lod1_takes_clean_loops_first_and_says_which_route():
@@ -1550,6 +1552,25 @@ def test_lod1_takes_clean_loops_first_and_says_which_route():
     check(rep["faces"] < len(ball.data.polygons), "it reduced: %s" % rep)
 
 
+def test_self_intersections_finds_crossing_walls():
+    """A closed sphere has no faces through each other; a sphere joined with a squashed copy that pokes out of it
+    (two walls crossing, as a coarse low of a thin wall does) has many, and the count is per face of the evaluated
+    mesh."""
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=12, radius=0.2)
+    clean = object_from_bmesh("Clean", bm)
+    r = AUDIT["self_intersections"](clean)
+    check(r["faces"] == 0 and r["of"] == 288, "a sphere crosses nothing: %s" % r)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=12, radius=0.2)
+    inner = bmesh.ops.create_uvsphere(bm, u_segments=24, v_segments=12, radius=0.19)["verts"]
+    bmesh.ops.scale(bm, vec=(1.15, 1.15, 0.8), verts=inner)       # pokes out at the sides, sinks at the poles
+    crossed = object_from_bmesh("Crossed", bm)
+    r = AUDIT["self_intersections"](crossed)
+    check(r["faces"] > 40 and r["sample"], "crossing walls found: %s" % r)
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1567,7 +1588,7 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
            test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip,
            test_quad_remesh_density_map_puts_quads_where_painted,
-           test_lod1_takes_clean_loops_first_and_says_which_route, test_quad_remesher_page_recipe_runs,
+           test_lod1_takes_clean_loops_first_and_says_which_route, test_self_intersections_finds_crossing_walls, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
            test_outline_error_sees_a_lost_part_in_headset_pixels,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,

@@ -168,20 +168,54 @@ def quad_remesh(pts, faces, mats=None, engine=None, timeout=600, density=None, *
     return out
 
 
-def quad_remesh_to_budget(pts, faces, quads, tol=0.06, runs=4, **opts):
+def crossings(pts, faces):
+    """How many faces cut through another face of the same mesh (faces sharing a vertex do not count)."""
+    from mathutils.bvhtree import BVHTree
+    tree = BVHTree.FromPolygons([tuple(p) for p in pts], [tuple(f) for f in faces])
+    sets = [set(f) for f in faces]
+    bad = set()
+    for i, j in tree.overlap(tree):
+        if i != j and not sets[i] & sets[j]:
+            bad.update((i, j))
+    return len(bad)
+
+
+def quad_remesh_to_budget(pts, faces, quads, tol=0.06, runs=4, clean=True, nudges=(0.97, 1.03, 0.94, 1.06, 0.91, 1.09),
+                          **opts):
     """quad_remesh() steered to `quads` faces (within tol) with the engine's adaptive count left on: adaptive mode and a
     density map both ignore ExactQuadCount, so the target is scaled by quads / got and the engine run again (one to
-    three more runs). Returns (points, faces, materials, [(target, faces got), ...]); the last run if none landed.
-    Measured 2026-11-02 on four generated props at the same budget: adaptive count with CurvatureAdaptivness 20 and
-    SymAxis on the symmetric ones gave a cauldron 56 irregular vertices against 109 with ExactQuadCount=1 (mean quad
-    corner 7.1 against 10.2 degrees off square), a sack 96 against 127 (15.0 against 20.9 degrees)."""
-    target, tries, out = float(quads), [], None
-    for _ in range(int(runs)):
+    three more runs). clean=True: a result whose faces cut through each other (crossings(): a thin wall's two sides,
+    a leg's root through the body) is run again at the nudged targets, and the first clean one within tol is kept,
+    else the one with the fewest. Measured 2026-11-02 on a generated cauldron: the same settings gave 0, 8, 19, 18, 7
+    and 14 crossing faces at targets 1.0, 0.94, 1.06, 0.88, 1.12 and 1.2 x the budget: which runs cross is chance.
+    Returns (points, faces, materials, [(target, faces got, crossing faces), ...]).
+    Measured on four generated props at one budget: adaptive count with CurvatureAdaptivness 20 and SymAxis on the
+    symmetric ones gave a cauldron 56 irregular vertices against 109 with ExactQuadCount=1 (mean quad corner 7.1
+    against 10.2 degrees off square), a sack 96 against 127 (15.0 against 20.9 degrees)."""
+    def run(target):
         out = quad_remesh(pts, faces, TargetQuadCount=max(int(round(target)), 4), **opts)
-        tries.append((max(int(round(target)), 4), len(out[1])))
+        c = crossings(out[0], out[1]) if clean else 0
+        tries.append((max(int(round(target)), 4), len(out[1]), c))
+        return out, c
+    target, tries = float(quads), []
+    out, c = run(target)
+    for _ in range(int(runs) - 1):
         if abs(len(out[1]) / float(quads) - 1.0) <= tol:
             break
         target *= quads / float(max(len(out[1]), 1))
+        out, c = run(target)
+    best = (c, out)
+    if clean and c:
+        base = target
+        for f in nudges:
+            o2, c2 = run(base * f)
+            if abs(len(o2[1]) / float(quads) - 1.0) > tol:
+                continue
+            if c2 < best[0]:
+                best = (c2, o2)
+            if c2 == 0:
+                break
+    out = best[1]
     return out[0], out[1], out[2], tries
 
 

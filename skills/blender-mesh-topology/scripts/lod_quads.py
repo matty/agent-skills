@@ -18,7 +18,9 @@ Routes, in order; the first that passes is kept:
   3. "pole_loops": loop_decimate with pole_ends=True (loops may end at a pole): reaches the budget, UVs exact, but
      leaves a pentagon beside every pole end; the exporter's Triangulate turns them into triangles, three each, so it
      may stop short of the budget at 2 x tol ("short_of_budget"): measured, a sack's LOD1 kept 77% of its triangles.
-     Then the choice is the user's: accept it, or Decimate (Collapse) to the budget and live with slivers.
+     Then the choice is the user's: accept it, or Decimate (Collapse) to the budget and live with slivers. It never
+     keeps a step that makes faces cut through each other (a thin wall's two sides pulled together): measured on a
+     cauldron, a 2 x tol pass took its LOD1 from 16 crossing faces to 57.
 tol: metres, the most the LOD may leave off LOD0 (detail_scale.min_width_m at the distance LOD1 takes over). Returns
 (the new object <Piece>_LOD1 in LOD0's collections, report with "route", faces, ngons, irregular vertices, deviation
 and the routes tried).
@@ -157,6 +159,18 @@ def remesh_lod(lod0, ratio, name):
     return ob, {"tries": tries, "islands": max(isl) + 1, "uv_density_p5": round(float(np.percentile(d1, 5)), 3)}
 
 
+def crossing_faces(ob):
+    """Faces of ob's own mesh that cut through another (faces sharing a vertex do not count). Needs no engine."""
+    faces = [list(p.vertices) for p in ob.data.polygons]
+    tree = BVHTree.FromPolygons([v.co for v in ob.data.vertices], faces)
+    sets = [set(f) for f in faces]
+    bad = set()
+    for i, j in tree.overlap(tree):
+        if i != j and not sets[i] & sets[j]:
+            bad.update((i, j))
+    return len(bad)
+
+
 def lod1(lod0, ratio=0.5, tol=0.015, name=None):
     """A LOD1 of lod0 (see the module docstring for the routes). Replaces an object of the same name."""
     ld = _load("loop_decimate.py")
@@ -178,9 +192,10 @@ def lod1(lod0, ratio=0.5, tol=0.015, name=None):
         st.update(extra or {})
         return ob, st
 
+    base_x = crossing_faces(lod0)
     ob = _copy(lod0, name + "_loops")
     ld["loop_decimate"](ob, tol=tol)
-    if tris_of(ob) <= goal:
+    if tris_of(ob) <= goal and crossing_faces(ob) <= base_x:
         return done(ob, "loops")
     tried.append({"route": "loops", "triangles": tris_of(ob)})
     _remove(ob)
@@ -188,17 +203,28 @@ def lod1(lod0, ratio=0.5, tol=0.015, name=None):
         ob, extra = remesh_lod(lod0, ratio, name + "_remesh")
         dev = ld["deviation"](lod0, ob)["max"]
         st = _stats(ob)
-        if st["ngons"] == 0 and dev <= tol and extra["uv_density_p5"] >= 0.7 and tris_of(ob) <= goal:
+        if (st["ngons"] == 0 and dev <= tol and extra["uv_density_p5"] >= 0.7 and tris_of(ob) <= goal
+                and crossing_faces(ob) <= base_x):
             return done(ob, "remesh", extra)
         tried.append(dict(extra, route="remesh", faces=st["faces"], deviation_max=round(dev, 4)))
         _remove(ob)
     except RuntimeError as ex:                                      # no engine, or it failed
         tried.append({"route": "remesh", "error": str(ex)[:160]})
-    ob = _copy(lod0, name + "_pole_loops")
-    t = tol
-    for _ in range(12):                                           # loosen tol (up to 2 x) only as far as needed
-        ld["loop_decimate"](ob, tol=t, pole_ends=True)
+    ob, t = None, tol
+    for _ in range(12):                    # loosen tol (up to 2 x) only as far as needed, never into crossing faces
+        trial = _copy(lod0, name + "_pole_loops")
+        ld["loop_decimate"](trial, tol=t, pole_ends=True)
+        if crossing_faces(trial) > base_x:                        # a wall pulled through another: stop before it
+            _remove(trial)
+            break
+        if ob is not None:
+            _remove(ob)
+        ob, used = trial, t
         if tris_of(ob) <= goal or t >= 2 * tol:
             break
         t = min(t * 1.1, 2 * tol)
-    return done(ob, "pole_loops", {"tol_used": round(t, 4), "short_of_budget": tris_of(ob) > goal})
+    if ob is None:                                                # even tol crosses: the plain loops route
+        ob, used = _copy(lod0, name + "_pole_loops"), 0.0
+        ld["loop_decimate"](ob, tol=tol)
+    return done(ob, "pole_loops", {"tol_used": round(used, 4), "short_of_budget": tris_of(ob) > goal,
+                                   "crossing_faces": crossing_faces(ob)})
