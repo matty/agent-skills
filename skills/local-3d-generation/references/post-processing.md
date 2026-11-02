@@ -152,6 +152,24 @@ The same props, lows and colour, rebuilt with what the first pass lacked:
 | Silhouette gate failing at 5-11 mm | Measured instead as the rendered outline from the player (`blender-mesh-topology`'s `outline_error`, 1.5 m, 20 ppd) | The low's bulges were 0-4 px; the 3D number was counting faces across concave inner walls and the low over the pot's inner floor. The real fault was the other way: parts the low lost (cauldron leg tip and handle lugs, crate feet, sack ears: bands up to 18 px). A Quad Remesher density map painted on those parts (same budget) cut the worst band to 10-14 px; reaching 2 px needs about twice the triangles on these props |
 | `sheets` read thin iron walls as double sheets | `hidden_fraction` and a verdict (above) | cauldron 0.09: `thin walls`; udf barrels 0.52 and 0.78: `double sheets or hidden walls` |
 
+### Third pass: topology (2026-11-02)
+
+The lows looked messy in the KIT file: LOD1 was a Decimate (half its faces triangles, 92-171 poles), and LOD0's flow
+was uneven. Rebuilt with `blender-mesh-topology`'s settings for a whole organic low (`quad_remesh_to_budget` from the
+cage, adaptive count, `CurvatureAdaptivness` 20, `SymAxis` on the pot, cauldron and crate) and its `lod_quads` LOD1:
+
+| Piece | LOD0 irregular vertices, before / after | LOD1 |
+| --- | --- | --- |
+| Pot | 8 / 8 | whole loops: 260 quads, 44% of LOD0's triangles, UVs exact, 7.6 mm off LOD0 |
+| Cauldron | 94 / 56 | loops ending at poles: 59% of the triangles, 174 pentagons beside poles |
+| Sack | 122 / 95 | the same, but only to 77% (`short_of_budget`): Decimate to reach half, or accept |
+| Crate | 83 / 38 | the same: 61%, just short |
+
+The cleaner lows also baked cleaner and faster: 0 inward-pointing normal texels on the atlas (133 before), and the
+resolver's share of the bake fell from 1,616 to 727 s, with fewer faulty polygons to re-bake. The cauldron needed 43 UV
+islands instead of 82. Quad Remesher for LOD1, with each UV island a material so edge loops follow the seams, gave the
+pot clean quads but stray faces on the 30-40-island cauldron and sack, so `lod_quads` gates it.
+
 Tried and not kept: centring the low on the high (each vertex moved by the mean signed distance of its faces) cut
 the pot's worst bulge from 8.4 to 5.9 mm, but did nothing for the sack and crate and drifted on the cauldron's
 handle, where a thin part's nearest surface is often the wrong side.

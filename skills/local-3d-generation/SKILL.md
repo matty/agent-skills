@@ -140,7 +140,7 @@ sheets or hidden walls` means regenerate with `solid` (cheap, step 4) before bui
 
 | Step | Skill |
 | --- | --- |
-| Low poly: **Quad Remesher** on the whole closed high (`quad_remesh(..., ExactQuadCount=1)`), QuadriFlow without it (decimate to about 60k first); budget from the world; a hand-built low around it for hard-surface | `blender-mesh-topology` (organic route and high/low gate) |
+| Low poly: **Quad Remesher** from a cleaner Quad Remesher cage of the high (`quad_remesh_to_budget(..., CurvatureAdaptivness=20.0)`, `SymAxis` when symmetric); LOD1 by `lod_quads`; QuadriFlow without it (decimate to about 60k first); budget from the world; a hand-built low around it for hard-surface | `blender-mesh-topology` (organic route and high/low gate) |
 | UVs for the low: **RizomUV `organic`**; without RizomUV, hidden seams and a minimum-stretch unwrap, never Smart UV Project | `rizomuv-uv-pipeline`, `uv-unwrapping` |
 | Bake from the high: normal and AO, plus its own textures (`bake_maps.py` maps `basecolor`, `roughness`, `metallic` copy the generated material through the cage); PBR values, look-dev | `pbr-texturing` |
 | Formats and memory in the engine | `vrchat-texture-and-vram` for VRChat |
