@@ -1433,6 +1433,66 @@ def test_loop_decimate_tube_follows_the_chord_rule():
     check(not AUDIT["problems"](AUDIT["audit"](ob), allow_open=True), "audit: %s" % AUDIT["audit"](ob))
 
 
+def test_outline_error_sees_a_lost_part_in_headset_pixels():
+    """outline_error() renders high and low from the player's distance at 20 ppd: a coarse but faithful low reads
+    under 2 px either way; a low that lost a 4 cm knob on the high's side reads it as a high-only band of many pixels,
+    and a low 3% too big reads as a low-only band."""
+    fresh()
+    scene = bpy.context.scene
+    scene.world = bpy.data.worlds.new("White")
+    scene.world.color = (1.0, 1.0, 1.0)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=0.2)
+    high = object_from_bmesh("Ball_high", bm)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.2)
+    low = object_from_bmesh("Ball_low", bm)
+    low.location = (2.0, 0.0, 0.0)                                # built beside its high: framed from its own centre
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=32, v_segments=16, radius=0.206)
+    fat = object_from_bmesh("Ball_fat", bm)
+    fat.location = (-2.0, 0.0, 0.0)
+    for ob in (high, low, fat):
+        for f in ob.data.polygons:
+            f.use_smooth = True
+    good = RR["outline_error"]("Ball_high", "Ball_low", views=4)
+    check(good["high_only_px"] <= 2 and good["low_only_px"] <= 2, "faithful low %s" % good)
+    big = RR["outline_error"]("Ball_high", "Ball_fat", views=4)
+    check(big["low_only_px"] >= 2 and big["high_only_px"] <= 2, "a 3%% bigger low %s" % big)
+    bm = bmesh.new()
+    bmesh.ops.create_uvsphere(bm, u_segments=64, v_segments=32, radius=0.2)
+    knob = bmesh.ops.create_cube(bm, size=0.04)["verts"]
+    bmesh.ops.translate(bm, verts=knob, vec=(0.21, 0.0, 0.0))     # a knob on the side, 3 cm proud (one on top
+    # would sit inside the outline from a standing eye: it is not a silhouette there)
+    object_from_bmesh("Knob_high", bm).location = (0.0, 3.0, 0.0)
+    lost = RR["outline_error"]("Knob_high", "Ball_low", views=4)
+    check(lost["high_only_px"] >= 8, "the lost knob reads %s" % lost)
+
+
+def test_quad_remesh_density_map_puts_quads_where_painted():
+    """density_colour gives the add-on's paint colours (white 1, red 4, cyan 0.25); quad_remesh(density=...) writes
+    them and turns UseVertexColorMap on, so a sphere painted 4 x on its +X half comes back with most quads there."""
+    dc = QR["density_colour"]
+    check(dc(1.0) == (1.0, 1.0, 1.0) and dc(4.0) == (1.0, 0.0, 0.0) and dc(0.25) == (0.0, 1.0, 1.0)
+          and dc(9.0) == dc(4.0), "density colours %s %s %s" % (dc(1.0), dc(4.0), dc(0.25)))
+    engine = QR["find_engine"]()
+    if not os.path.exists(engine):
+        raise Skip("Quad Remesher engine not installed (%s)" % engine)
+    fresh()
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=4, radius=0.5)
+    pts = [v.co.copy() for v in bm.verts]
+    faces = [[v.index for v in f.verts] for f in bm.faces]
+    bm.free()
+    try:
+        qp, qf, _m = QR["quad_remesh"](pts, faces, TargetQuadCount=300, timeout=120,
+                                       density=[4.0 if p.x > 0 else 1.0 for p in pts])
+    except RuntimeError as exc:
+        raise Skip("engine did not run here: %s" % str(exc)[:200])
+    right = sum(1 for f in qf if sum(qp[i].x for i in f) > 0)
+    check(right > 2 * (len(qf) - right), "quads on the painted half %d of %d" % (right, len(qf)))
+
+
 for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_reduction_bands_audit_clean_with_the_documented_poles, test_flipped_faces_are_a_problem,
            test_inverted_islands_on_small_shells_far_from_the_origin, test_second_band_on_a_ring_needs_its_runs_reversed,
@@ -1448,8 +1508,10 @@ for fn in (test_audit_applies_modifiers, test_slivers_counted_on_flat_faces,
            test_hand_off_refusals_and_topology_types, test_scale_goes_before_the_stack_or_after_the_hand_off,
            test_point_cache_weld_points_at_survivors,
            test_flat_fill_returns_live_faces_covering_the_region, test_weld_layout_and_mirror_half,
-           test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip, test_quad_remesher_page_recipe_runs,
+           test_patch_input_walks_the_border, test_quad_remesh_engine_round_trip,
+           test_quad_remesh_density_map_puts_quads_where_painted, test_quad_remesher_page_recipe_runs,
            test_review_render_headless_wire_follows_modifiers, test_review_compare_frames_each_object_alone,
+           test_outline_error_sees_a_lost_part_in_headset_pixels,
            test_high_low_gap_reads_the_sagitta_and_a_fat_low, test_bake_skew_falls_with_a_bevel,
            test_high_poly_routes_run_headless, test_joint_normals_finds_the_crease_where_a_curve_meets_a_straight,
            test_joint_normals_on_closed_pieces_skips_the_caps_and_sees_the_front,

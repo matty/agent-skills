@@ -59,7 +59,7 @@ curves converted to mesh and voxel-merged into the trunk before the displacement
 | --- | --- | --- |
 | QuadriFlow | A closed organic mesh that may deform or will be hand-edited | `bpy.ops.object.quadriflow_remesh(target_faces=n, seed=0)`: on a closed mesh, *measured* 385 quads for a 400 target on an icosphere |
 | Decimate (Collapse) | Static props (rocks, stumps): triangles are fine and the silhouette is kept best per triangle | a Decimate modifier, `ratio` to the target count |
-| Quad Remesher | Patches with frozen borders (SKILL.md section 4) | `quad_remesh.py`; it refuses a closed mesh with no border |
+| Quad Remesher | Patches with frozen borders (SKILL.md section 4); also a whole closed organic low, where it beats QuadriFlow | `quad_remesh.py`: `patch_input` refuses a closed mesh, but `quad_remesh(pts, faces, TargetQuadCount=n, ExactQuadCount=1)` takes any mesh. *Measured* 2026-11-02 on a generated stump at 1.5 m against QuadriFlow at about the same count (2,162 vs 2,320 triangles): ray skew against its own faces 24% vs 43%, relief left to the bake p99 10.4 vs 16.9 mm, RizomUV 46 islands on 52% of the map vs 94 on 46%. Keep `ExactQuadCount=1` for a budget: adaptive, 1,300 asked gave 3,622 |
 
 Then, before UVs:
 

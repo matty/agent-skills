@@ -85,7 +85,8 @@ validates and retries other targets. Engine, settings, a worked call and the fai
 - Imperfection (sag, chipped corners, uneven boards) goes on the body only, never on joint faces; variants differ in it.
 - Mid-poly with custom normals for hard-surface kit pieces; a high-poly bake for ornament and organic or cloth props
   (the bake is `pbr-texturing`'s). The high is shaded smooth with every fold sharp (smoothing across a fold baked 41
-  deg off); the low holds the silhouette (`high_low_gap`) and leans its rays little (`bake_skew`); carving close up
+  deg off); the low holds the silhouette (`high_low_gap`; on organic and generated pieces `review_render.outline_error`,
+  2 px from the player) and leans its rays little (`bake_skew`); carving close up
   keeps its depth step in the low: `references/high-and-low-poly.md`.
 - Review from eye height (1.6-1.7 m) at the nearest walkable and the usual distance, beside the reference, and report
   every detail item with its measured size.
@@ -148,10 +149,10 @@ Audit keys, render limits and the approval grid for several pieces: `references/
 | --- | --- |
 | `scripts/grid_topology.py` | `zone_stations`, `arc_segments`, `blend_error`, `grid_faces`, `step_reduce` / `step_3to1` with `mid_along` / `mid_between`, `ladder`, `zipper`, `zipper_by`, `flat_fill`, `PointCache`, `thin_plate_heights`, `grid_triangles` |
 | `scripts/loop_decimate.py` | `loop_decimate(ob, tol, protect_uv="all", max_loops=None)` removes edge loops by least sag while it stays within `tol`, keeping seams, sharp edges, material boundaries and UV maps; `deviation(dense, low, samples="verts")` measures max, p95 and mean |
-| `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run, `weld_layout()`, `mirror_half()`, `find_engine()` |
+| `scripts/quad_remesh.py` | `patch_input(obj)` (points, triangles and border loop of a patch), `remesh_patch()` (remesh, validate, retry), `quad_remesh()` one engine run (`density=` a per-point quad-density map), `density_colour()`, `weld_layout()`, `mirror_half()`, `find_engine()` |
 | `scripts/hard_surface.py` | `smooth_by_angle_first(ob, angle_deg)`, `apply_for_uv_work(ob, add_triangulate=False)`, `apply_before_layout(ob)` |
 | `scripts/topology_audit.py` | `audit(obj, evaluated=True)`, `problems(result, allow_open=False, flat_tol=None)`, `audit_stack(obj, flat_tol=0.5, before=None)` for hard-surface pieces, `normals_snapshot(obj)`, `stack_route(obj)`, `flat_floor(obj)`, `audit_many(objects)`, `joint_match(a, b, select, matrix_a=None, matrix_b=None)`, `joint_normals(a, b, select, ...)`, `determinism_hash(obj)`, `high_low_gap(low, highs)` (how far high and low part: bulges, recesses, relief), `bake_skew(low, highs=, faces=)` (how far the bake's rays lean from the high) |
-| `scripts/review_render.py` | `render(path, eye, target, ..., cull=True)` live or headless, back faces culled as in the engine, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)` |
+| `scripts/review_render.py` | `render(path, eye, target, ..., cull=True)` live or headless, back faces culled as in the engine, `isolate(show, hide)`, `contact_sheet(paths, out, cols)`, `compare(before, after, views, out, wire=(True, False), silhouette=True)`, `outline_error(high, low, distance)` (outline error in headset pixels from the player) |
 | `scripts/detail_scale.py` | Plain Python, no Blender: `px_per_m(d)`, `texel_class(d)`, `stereo_relief_m(d)`, `min_width_m(d, px=2)`, each with `ppd=20` (25 for Quest 3); `python detail_scale.py 0.5 1 2 [--ppd 25]` prints the table |
 
 Load a Blender script into Blender with `exec(open(path, encoding="utf-8").read(), ns)` and call its functions

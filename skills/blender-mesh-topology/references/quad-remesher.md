@@ -44,6 +44,19 @@ on), `UseVertexColorMap`, `UseMaterialIds`, `UseIndexedNormals`, `AutoDetectHard
 `quad_remesh()` writes them too; its defaults differ from the add-on's in `TargetQuadCount` (1000, add-on 5000) and
 `AutoDetectHardEdges` (0, add-on 1). Any key can be passed as a keyword.
 
+**Density map** (`quad_remesh(..., density=[factor per point])`, 0.25 to 4): written as the add-on's painted vertex
+colours (white 1, red (1, 1 - t, 1 - t) up to 4 x as dense, cyan down to a quarter; its slider mapping, read from
+quad_remesher_1_4's `__init__.py`) with `UseVertexColorMap` on. Tested: a sphere painted 4 x on one half came back
+with most quads there. Two things *measured* on generated props (2026-11-02):
+- It overrides `ExactQuadCount`: a 450-quad target came back as 828 to 1,310 quads. Steer the target down by
+  goal / got and run again (one to three runs) to hold a budget.
+- At the same budget it moves detail, it does not add it. Painted 4 x where the high stood more than 4-12 mm
+  outside the first low (a cauldron's leg tips and handle lugs, a crate's feet, a sack's tied ears), the worst
+  outline band (`review_render.outline_error`, 1.5 m, 20 ppd) fell from 18 to 10-14 px, and the mean on the crate
+  from 5.4 to 3.1 px. Painted wherever it stood over 1 mm (28-49% of the surface), it only thinned the rest, and the
+  sack got worse (3.9 to 5.1 px). Paint only the parts the low lost. To reach about 2 px everywhere these props
+  needed about twice the quads.
+
 Read by the engine but not exposed (the names appear in `xremeshlib.dll` 1.4.1): **`FreezeBorders`** (tested: keeps
 every border vertex, 101/101 against 6/101 without), `FreezeBordersCoef`, `TargetEdgeLength`,
 `TargetQuadCountAsInputPercentage`, `VarDensityRatio`, `MaxQuadRatio`, `UseCurves` / `FileCurves` /

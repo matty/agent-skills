@@ -9,6 +9,7 @@ Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/review_render.py", encodi
     ns["contact_sheet"]([a.png, b.png, c.png, d.png], r"C:/.../sheet.png", cols=2)
     ns["compare"]("Cushion_dense", "Cushion_low", views=[(0, -1.2, 0.3), (1.2, 0, 0)], out=r"C:/.../compare.png",
                   light="MATCAP", matcap="check_reflection_horizontal.exr")   # before | after | silhouette
+    ns["outline_error"]("Stump_high", "Stump_low", distance=1.5)   # outline error in headset px from the player
 
 Pass absolute output paths. Live, it works while Blender's window is minimised (it draws through
 gpu.types.GPUOffScreen, not a screenshot) using a 3D viewport in the current screen, switched to Solid shading with
@@ -25,6 +26,7 @@ inside an open piece, or at cards a double-sided shader will draw).
 """
 
 import contextlib
+import math
 import os
 import shutil
 import tempfile
@@ -263,3 +265,56 @@ def compare(before, after, views, out, wire=(True, False), silhouette=True, **re
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {"sheet": out, "mismatch": mismatch}
+
+
+def _band_px(mask):
+    """About the width in pixels of the widest band in a mask: twice the 4-neighbour erosions it takes to empty it."""
+    k = 0
+    while mask.any() and k < 100:
+        mask = mask & np.roll(mask, 1, 0) & np.roll(mask, -1, 0) & np.roll(mask, 1, 1) & np.roll(mask, -1, 1)
+        k += 1
+    return 2 * k
+
+
+def outline_error(high, low, distance=1.5, eye_height=1.6, ppd=20.0, views=8, px=800):
+    """How far a low's outline strays from its high's, in headset pixels, from where the player stands: each object
+    rendered alone (flat, back faces culled) at `ppd` pixels per degree from `views` eyes around it, `distance`
+    metres away and `eye_height` above its floor (the bottom of the high's bounds), looking at the high's centre; the
+    low framed from the same point moved by the difference of the two objects' origins, so a low built in place or
+    moved beside its high works (not its own bounding-box centre: a part the low lost would move that). high, low: object
+    names. Per view and worst over the views: high_only_px (the widest band where the high shows and the low does
+    not: a part the low lost, which no bake brings back), low_only_px (the low bulging past the high), mean_px
+    (pixels that differ over the high's outline length). Gate a prop at its nearest viewing distance with the 2 px of
+    detail_scale's min_width (measured 2026-11-02: this read 0 to 4 px of bulge where high_low_gap's low_outside_max
+    read 5 to 10 mm on generated vessels, because that one also counts the low floating over a pot's inner floor,
+    and up to 18 px of lost parts it does not measure at all: a cauldron's leg tip and handle lugs)."""
+    hi_ob, lo_ob = bpy.data.objects[high], bpy.data.objects[low]
+    bpy.context.view_layer.update()                             # matrix_world of objects just moved, for the framing
+    fov = math.radians(px / float(ppd))
+    lens = 18.0 / math.tan(fov / 2.0)                           # the 36 mm sensor across px pixels
+    c_hi = _centre(hi_ob)
+    floor = min((hi_ob.matrix_world @ Vector(c)).z for c in hi_ob.bound_box)
+    others = [o.name for o in bpy.context.view_layer.objects if o.type == 'MESH' and o.visible_get()
+              and o.name not in (high, low)]
+    tmp = tempfile.mkdtemp(prefix="review_outline_")
+    out = []
+    try:
+        for k in range(int(views)):
+            a = 2.0 * math.pi * k / views
+            off = Vector((distance * math.cos(a), distance * math.sin(a), floor + eye_height - c_hi.z))
+            masks = []
+            for ob, other in ((hi_ob, lo_ob), (lo_ob, hi_ob)):
+                p = os.path.join(tmp, "v%d_%s.png" % (k, ob is lo_ob))
+                c = c_hi + (ob.matrix_world.translation - hi_ob.matrix_world.translation)
+                with isolate([ob.name], hide=[other.name] + others):
+                    render(p, eye=c + off, target=c, lens=lens, w=px, h=px, light="FLAT")
+                masks.append(_silhouette(_load(p)))
+            h_m, l_m = masks
+            edge = h_m & ~(np.roll(h_m, 1, 0) & np.roll(h_m, -1, 0) & np.roll(h_m, 1, 1) & np.roll(h_m, -1, 1))
+            out.append({"high_only_px": _band_px(h_m & ~l_m), "low_only_px": _band_px(l_m & ~h_m),
+                        "mean_px": round(float((h_m ^ l_m).sum()) / max(int(edge.sum()), 1), 2)})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {"views": out, "high_only_px": max(v["high_only_px"] for v in out),
+            "low_only_px": max(v["low_only_px"] for v in out), "mean_px": max(v["mean_px"] for v in out),
+            "distance": distance, "ppd": ppd}
