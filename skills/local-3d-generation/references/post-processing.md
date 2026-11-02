@@ -136,8 +136,8 @@ Mistakes made on the way, now rules:
   Unity's 255-triangle limit for a convex MeshCollider. The second try hulled a 64-vertex Decimate of the LOD0 and
   the cauldron's shell floated 44 mm over the floor: decimation had dropped its leg tips. The script keeps the
   extremes: 124 triangles, closed, on the floor, the mesh at most 6-11 mm outside it, 96-99% of the full hull.
-- **Thin gaps alone cannot tell a thin real wall from a double sheet.** The open cauldron read 0.65 thin gaps
-  (cast-iron walls a few mm thick), as many as a udf double skin. What differs is whether the inner surface can be
+- **Thin gaps alone cannot tell a thin real wall from a double sheet.** The open cauldron read 0.65 thin gaps, as
+  many as a udf double skin (its walls turned out to be 0.5 mm: see the fourth pass). What differs is whether the inner surface can be
   seen from outside: `sheets.hidden_fraction` read 0.09 on the cauldron against 0.52 and 0.78 on udf barrels (0.0
   on the solid one), so the intake now gives a `verdict` (SKILL.md step 5).
 
@@ -169,6 +169,21 @@ The cleaner lows also baked cleaner and faster: 0 inward-pointing normal texels 
 resolver's share of the bake fell from 1,616 to 727 s, with fewer faulty polygons to re-bake. The cauldron needed 43 UV
 islands instead of 82. Quad Remesher for LOD1, with each UV island a material so edge loops follow the seams, gave the
 pot clean quads but stray faces on the 30-40-island cauldron and sack, so `lod_quads` gates it.
+
+### Fourth pass: a low that cut through itself (2026-11-02)
+
+Found by eye in the KIT file: the cauldron's LOD0 showed two grids through each other. Measured: 602 of its 756 faces
+cut through another face of the same mesh, and LOD1 255 of 332. The generated iron was two sheets 0.5 mm apart
+(median wall), which no low of a few hundred quads can follow. Fixed in three places, each now checked:
+
+| Fix | Where | Result |
+| --- | --- | --- |
+| Thicken thin walls on the high, inner side into the cavity, outside unmoved | intake `--min-wall 0.008` (`thicken_walls`) | cauldron walls 0.5 to 8 mm median, 16 s; outline unchanged (under 0.05 px mean) |
+| Re-run a remesh whose faces cross, at targets a few percent either side | `blender-mesh-topology`'s `quad_remesh_to_budget` (default) | leg roots crossed the body on 0-19 faces by target alone; the cauldron took 6 runs to a clean one |
+| Never keep a LOD step that pulls walls through each other | `lod_quads` | cauldron LOD1 stopped at 91% of LOD0's triangles rather than cross |
+
+Every LOD0 and LOD1 of the set: 0 crossing faces (`topology_audit.self_intersections`, now in the pre-bake gate).
+The atlas still bakes 0 inward-pointing normal texels.
 
 Tried and not kept: centring the low on the high (each vertex moved by the mean signed distance of its faces) cut
 the pot's worst bulge from 8.4 to 5.9 mm, but did nothing for the sack and crate and drifted on the cauldron's

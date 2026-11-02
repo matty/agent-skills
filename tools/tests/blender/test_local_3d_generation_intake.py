@@ -9,7 +9,8 @@ Asserted: the import is welded (welded_vertices > 0); the report sees exactly 2 
 non-manifold edges; UVs survive welding; --height scales uniformly to the given Z extent with the bottom centre at
 the origin; --longest uses the largest extent; upright finds a 22 degree tilt about X and levels the box, and
 leaves a level model at 0, and leaves a sphere (no base) alone; a single closed skin shows no thin gaps (verdict clean), a double skin hides
-half its surface (verdict double sheets) and an open cup with 4 mm walls crosses thin gaps but hides little (thin walls); drop_floaters removes the small cube only past its fraction.
+half its surface (verdict double sheets) and an open cup with 4 mm walls crosses thin gaps but hides little (thin walls); a 0.5 mm wall is measured and
+thickened to 8 mm on the inside, the outside radius unmoved; drop_floaters removes the small cube only past its fraction.
 
 Repo tooling, not a skill file: it loads the skill's script by path.
 Host: Blender 4.2+ (bpy, bmesh), headless:
@@ -154,6 +155,11 @@ def main():
         sh = NS["sheet_check"](outer)
         check(sh["thin_gap_fraction"] > 0.3 and sh["hidden_fraction"] > 0.4
               and sh["verdict"] == "double sheets or hidden walls", f"double skin ({sh})")
+        outer.location = (1.2, 0.0, 0.0)                            # away from the origin: the same answer
+        bpy.context.view_layer.update()
+        moved = NS["sheet_check"](outer)
+        check(moved["lines_hit"] == sh["lines_hit"] and moved["verdict"] == sh["verdict"],
+              f"sheet check off the origin ({moved} vs {sh})")
         reset()
         bpy.ops.mesh.primitive_cylinder_add(vertices=48, radius=0.3, depth=0.5)
         cup = bpy.context.active_object
@@ -171,6 +177,31 @@ def main():
         sh = NS["sheet_check"](cup)
         check(sh["thin_gap_fraction"] > 0.1 and sh["hidden_fraction"] < 0.1 and sh["verdict"] == "thin walls",
               f"open cup with 4 mm walls ({sh})")
+
+        # a 0.5 mm wall (a generator's iron skin): measured, then thickened to 8 mm on the inside only
+        reset()
+        import bmesh
+        bm = bmesh.new()
+        bmesh.ops.create_cone(bm, cap_ends=True, segments=48, radius1=0.3, radius2=0.3, depth=0.5)
+        bmesh.ops.delete(bm, geom=[max(bm.faces, key=lambda f: f.calc_center_median().z)], context="FACES_ONLY")
+        bmesh.ops.subdivide_edges(bm, edges=[e for e in bm.edges if abs(e.verts[0].co.z - e.verts[1].co.z) > 0.1],
+                                  cuts=6)
+        me = bpy.data.meshes.new("thin_cup")
+        bm.to_mesh(me)
+        bm.free()
+        cup = bpy.data.objects.new("thin_cup", me)
+        bpy.context.scene.collection.objects.link(cup)
+        bpy.context.view_layer.objects.active = cup
+        sol = cup.modifiers.new("wall", "SOLIDIFY")
+        sol.thickness = 0.0005
+        bpy.ops.object.modifier_apply(modifier="wall")
+        w = NS["wall_thickness"](cup)
+        check(w["p50_m"] is not None and w["p50_m"] < 0.001, f"half-millimetre wall measured ({w})")
+        r_out = max((v.co.x ** 2 + v.co.y ** 2) ** 0.5 for v in cup.data.vertices)
+        t = NS["thicken_walls"](cup, 0.008)
+        r_out2 = max((v.co.x ** 2 + v.co.y ** 2) ** 0.5 for v in cup.data.vertices)
+        check(abs(t["after"]["p50_m"] - 0.008) < 0.001 and abs(r_out2 - r_out) < 1e-4,
+              f"thickened to 8 mm inside, the outside unmoved ({t}, radius {r_out:.4f} -> {r_out2:.4f})")
 
         # manual rotation: the tilted box levelled by hand
         reset()

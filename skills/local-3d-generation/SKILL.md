@@ -119,9 +119,13 @@ In order, it:
 2. Reports triangles, loose parts, open and non-manifold edges, textures, and `sheets`: seeded lines through the
    model (`thin_gap_fraction`: surfaces closer than 0.5% of its size) and `hidden_fraction`, the share of the
    surface no ray from outside reaches. Read `sheets.verdict`: **`double sheets or hidden walls`** (hidden 0.2 or
-   more: regenerate with `solid`, step 4), `thin walls` (thin gaps, little hidden: an open vessel's real walls,
-   keep it) or `clean`. *Measured*: udf barrels hid 0.52 and 0.78, the solid barrel 0.0; an open cast-iron cauldron
-   had 0.65 thin gaps but hid 0.09.
+   more: regenerate with `solid`, step 4), `thin walls` (thin gaps, little hidden: an open vessel) or `clean`.
+   *Measured*: udf barrels hid 0.52 and 0.78, the solid barrel 0.0; an open cauldron had 0.65 thin gaps but hid 0.09.
+   Then read `walls` (thickness through the material, p1 / p5 / p50). **Thin walls must be thickened before the low:**
+   a generated cauldron's iron came back 0.5 mm thick, and its Quad Remesher low crossed its own walls on 602 of 756
+   faces. `--min-wall 0.008` (metres, after sizing) moves each thin wall's inner side into the cavity so the wall is
+   at least that thick and the outside does not move (16 s on 700k faces). Use about twice the low's error: 8 mm
+   for a prop low of a few hundred quads.
 3. With `--upright`, levels a tilted single-image Pixal3D model on its largest flat base (*measured* 19.3 and 27.3
    degrees). It leaves the model alone (`rotated: false`) when there is no clear base, such as a cushion on its
    rounded edge: then give `--rotate X,Y,Z` (degrees, set by eye). A model with no base is a reason to use
@@ -177,6 +181,6 @@ lightness includes its studio lighting; check the result in `pbr-texturing`'s lo
 | Script | Host | Does |
 | --- | --- | --- |
 | `scripts/comfy.py` | Python 3.10+, standard library, ComfyUI server over HTTP | `status`, `launch-cmd`, `templates`, `convert` (UI to API: subgraphs, reroutes, bypass, dynamic combos, `control_after_generate`), `models [--download]`, `nodes`, `run` (upload, `--set`, wait, download outputs, JSON summary) |
-| `scripts/glb_intake.py` | Blender 4.2+ (`bpy`), headless or live | `intake(path, height=, longest=, name=, drop=, stand=, turn=)`, `report(ob)` (with `sheet_check`: thin gaps, `hidden_fraction`, verdict), `upright(ob)`, `rotate(ob, xyz)`, `drop_floaters(ob, fraction)`, `size_and_ground(ob, ...)` |
+| `scripts/glb_intake.py` | Blender 4.2+ (`bpy`), headless or live | `intake(path, height=, longest=, name=, drop=, stand=, turn=)`, `report(ob)` (with `sheet_check`: thin gaps, `hidden_fraction`, verdict; `walls`), `wall_thickness(ob)`, `thicken_walls(ob, min_wall)` (`--min-wall`), `upright(ob)`, `rotate(ob, xyz)`, `drop_floaters(ob, fraction)`, `size_and_ground(ob, ...)` |
 | `scripts/multiview.py` | Python 3.10+ and the ffmpeg CLI | `split` a turnaround sheet into square same-scale views by outline; `wire` view images into the multi-view template's API prompt |
 | `scripts/colour_match.py` | Blender 4.2+ (`bpy`, numpy) | `match(texture, references, out, lightness=False)`: Lab chroma transfer from the input images' object pixels |

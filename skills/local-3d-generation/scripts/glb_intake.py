@@ -4,7 +4,8 @@ high poly: report what arrived, size it to the real object, stand it on the grou
 Host: Blender 4.2+ (bpy, bmesh), run inside Blender or headless:
 
   blender -b --factory-startup --python-exit-code 1 --python glb_intake.py -- IN.glb --height 0.9 \
-      [--longest 1.2] [--name BARREL_high] [--upright [X]] [--drop-floaters 0.001]       [--save OUT.blend] [--json REPORT.json]
+      [--longest 1.2] [--name BARREL_high] [--upright [X]] [--drop-floaters 0.001] [--min-wall 0.008]
+      [--save OUT.blend] [--json REPORT.json]
 
 Size: give exactly one of --height (Z extent, metres) or --longest (largest extent).
 A generated model has no real scale: its numbers are the generator's normalised box.
@@ -180,8 +181,10 @@ def sheet_check(ob, lines: int = 300, gap: float = 0.005, seed: int = 0, hidden:
     import random
     from mathutils.bvhtree import BVHTree
     rng = random.Random(seed)
-    bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
-    lo, hi = _bounds(ob)
+    bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())     # object space, so the bounds too
+    vs = [v.co for v in ob.data.vertices]
+    lo = Vector((min(v.x for v in vs), min(v.y for v in vs), min(v.z for v in vs)))
+    hi = Vector((max(v.x for v in vs), max(v.y for v in vs), max(v.z for v in vs)))
     centre, radius = (lo + hi) / 2, (hi - lo).length / 2
     size = (hi - lo).length
     crossings, gaps = [], []
@@ -248,7 +251,103 @@ def report(ob) -> dict:
         "materials": [s.material.name for s in ob.material_slots if s.material],
         "images": images,
         "sheets": sheet_check(ob),
+        "walls": wall_thickness(ob),
     }
+
+
+def _mesh_arrays(ob):
+    import numpy as np
+    me = ob.data
+    co = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("co", co)
+    no = np.empty(len(me.vertices) * 3)
+    me.vertices.foreach_get("normal", no)
+    ed = np.empty(len(me.edges) * 2, np.int64)
+    me.edges.foreach_get("vertices", ed)
+    return co.reshape(-1, 3), no.reshape(-1, 3), ed.reshape(-1, 2)
+
+
+def _wall_rays(ob, co, no, idx):
+    """Per vertex in idx: distance along -normal through the material to the far wall (NaN when the ray leaves by
+    no back face), and the hit point."""
+    import numpy as np
+    from mathutils.bvhtree import BVHTree
+    bvh = BVHTree.FromObject(ob, bpy.context.evaluated_depsgraph_get())
+    eps = 1e-6 * float(np.linalg.norm(co.max(0) - co.min(0)))
+    t = np.full(len(idx), np.nan)
+    hit = np.zeros((len(idx), 3))
+    for k, i in enumerate(idx):
+        n = Vector(no[i])
+        loc, nrm, _f, d = bvh.ray_cast(Vector(co[i]) - n * eps, -n)
+        if loc is not None and nrm.dot(-n) > 0.0:                 # leaves the material: the far wall
+            t[k] = d
+            hit[k] = loc
+    return t, hit
+
+
+def wall_thickness(ob, samples: int = 4000, seed: int = 0) -> dict:
+    """Wall thickness at seeded vertices: the distance along -normal through the material to the far wall, metres.
+    A generator can return a vessel's wall as two sheets under a millimetre apart (measured 2026-11-02: a cast-iron
+    cauldron, median 0.5 mm), which no low poly can follow without its two walls crossing: thicken_walls() first."""
+    import numpy as np
+    co, no, _ed = _mesh_arrays(ob)
+    if not len(co):
+        return {"p1_m": None, "p5_m": None, "p50_m": None}
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(co), size=min(samples, len(co)), replace=False)
+    t, _h = _wall_rays(ob, co, no, idx)
+    t = t[~np.isnan(t)]
+    if not len(t):
+        return {"p1_m": None, "p5_m": None, "p50_m": None}
+    return {"p1_m": round(float(np.percentile(t, 1)), 5), "p5_m": round(float(np.percentile(t, 5)), 5),
+            "p50_m": round(float(np.percentile(t, 50)), 5)}
+
+
+def thicken_walls(ob, min_wall: float, smooth: int = 3) -> dict:
+    """Thicken every wall thinner than min_wall (metres) by moving its inner side into the cavity, so the outside, the
+    silhouette, stays where it is. Of the two sides of a wall, the inner is the one deeper below the model's convex
+    hull (a cauldron's inside wall is deeper than its outside one, even under the handle). The moves are smoothed
+    over the edges `smooth` times, never below what each vertex needs. Run it on the high before the low and the
+    bake, so both see the thicker wall. Returns vertices moved, the largest move and the thickness after."""
+    import numpy as np
+    co, no, ed = _mesh_arrays(ob)
+    idx = np.arange(len(co))
+    t, hit = _wall_rays(ob, co, no, idx)
+    thin = ~np.isnan(t) & (t < min_wall)
+    # convex hull planes from a subset of points (extremes plus a random sample) to measure depth below the hull
+    rng = np.random.default_rng(0)
+    sub = np.unique(np.concatenate([rng.choice(len(co), size=min(20000, len(co)), replace=False),
+                                    np.argmax(co @ np.random.default_rng(1).normal(size=(3, 64)), axis=0)]))
+    bm = bmesh.new()
+    res = bmesh.ops.convex_hull(bm, input=[bm.verts.new(tuple(p)) for p in co[sub]])
+    keep = set(res["geom"])
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if v not in keep], context="VERTS")
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    pn = np.array([tuple(f.normal) for f in bm.faces])
+    pd = np.array([f.normal.dot(f.verts[0].co) for f in bm.faces])
+    bm.free()
+
+    def depth(p):
+        return (pd[None, :] - p @ pn.T).min(1)                    # inside the hull: distance to its nearest plane
+    need = np.zeros(len(co))
+    side = np.zeros(len(co), bool)                                # vertices on the inner side of a thin wall
+    ti = np.where(thin)[0]
+    if len(ti):
+        inner = depth(co[ti]) > depth(hit[ti])
+        need[ti[inner]] = min_wall - t[ti[inner]]
+        side[ti[inner]] = True
+    move = need.copy()
+    a, b = ed[:, 0], ed[:, 1]
+    for _ in range(int(smooth)):                  # smooth the moves along the inner side only: the outside never moves
+        s, c = np.zeros(len(co)), np.zeros(len(co))
+        np.add.at(s, a, move[b]); np.add.at(s, b, move[a]); np.add.at(c, a, 1); np.add.at(c, b, 1)
+        move = np.where(side, np.maximum(need, 0.5 * move + 0.5 * s / np.maximum(c, 1)), 0.0)
+    moved = move > 0
+    ob.data.vertices.foreach_set("co", (co + no * move[:, None]).ravel())
+    ob.data.update()
+    bpy.context.view_layer.update()                               # later BVHs read the evaluated mesh
+    return {"min_wall_m": min_wall, "thin_vertices": int(thin.sum()), "moved": int(moved.sum()),
+            "max_move_m": round(float(move.max()), 5) if len(move) else 0.0, "after": wall_thickness(ob)}
 
 
 def drop_floaters(ob, fraction: float) -> int:
@@ -355,7 +454,7 @@ def size_and_ground(ob, height: float | None = None, longest: float | None = Non
 
 def intake(path: str, height: float | None = None, longest: float | None = None,
            name: str = "GEN_high", drop: float | None = None,
-           stand: str | None = None, turn=None) -> dict:
+           stand: str | None = None, turn=None, min_wall: float | None = None) -> dict:
     ob = _join_meshes(_import(path), name)
     raw_vertices = len(ob.data.vertices)
     welded = weld(ob)
@@ -365,11 +464,12 @@ def intake(path: str, height: float | None = None, longest: float | None = None,
         rotate(ob, turn)
     stood = upright(ob, stand) if stand else None
     k = size_and_ground(ob, height, longest)
+    thickened = thicken_walls(ob, min_wall) if min_wall else None    # in metres: after sizing
     final = report(ob)
     return {"source": str(path), "raw_vertices": raw_vertices, "welded_vertices": welded,
             "arrived": arrived, "dropped_faces": dropped, "rotated_by": list(turn) if turn else None,
             "upright": stood,
-            "scale_applied": round(k, 6), "final": final}
+            "scale_applied": round(k, 6), "thickened": thickened, "final": final}
 
 
 def _main():
@@ -387,6 +487,9 @@ def _main():
                          "needed for Pixal3D, which returns the model tilted to the camera")
     ap.add_argument("--rotate", type=lambda v: [float(x) for x in v.split(",")], metavar="X,Y,Z",
                     help="rotate by Euler XYZ degrees first (an up axis set by eye), e.g. --rotate -25,0,0")
+    ap.add_argument("--min-wall", type=float, default=None, metavar="M",
+                    help="thicken walls thinner than M metres (after sizing) by moving their inner side into the "
+                         "cavity: a low poly cannot follow two sheets under a millimetre apart without crossing them")
     ap.add_argument("--save")
     ap.add_argument("--json")
     ap.add_argument("--keep-scene", action="store_true",
@@ -394,7 +497,7 @@ def _main():
     a = ap.parse_args(argv)
     if not a.keep_scene:
         bpy.ops.wm.read_factory_settings(use_empty=True)
-    res = intake(a.glb, a.height, a.longest, a.name, a.drop_floaters, a.upright, a.rotate)
+    res = intake(a.glb, a.height, a.longest, a.name, a.drop_floaters, a.upright, a.rotate, a.min_wall)
     text = json.dumps(res, indent=1)
     print(text)
     if a.json:
