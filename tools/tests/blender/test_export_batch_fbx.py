@@ -4,7 +4,9 @@ modifiers applied, restores the visibility it changed, writes no texture copies 
 re-import at rotation 0 with the piece's size; --dir resolves against the current directory or, with //, the .blend's
 folder, and a // folder in a file never saved is refused; --set-status saves kit_status without a .blend1; a selection export skips hidden objects and, with Copy,
 writes the .fbm texture folder that Strip avoids; custom normals survive the export when the stack triangulates first
-(hard-surface routes A and B), and an untriangulated weighted-normal panel gets the re-triangulation warning.
+(hard-surface routes A and B), and an untriangulated weighted-normal panel gets the re-triangulation warning; the
+--shell export writes one triangulated FBX per SHELL_<Zone> and CEIL_<Zone> into <dir>/SHELL/ (hidden members, a concave n-gon,
+custom properties kept, --zones limiting it, a missing zone refused, the file not saved).
 
 Host: Blender 4.2+ (bpy; tested on 5.2.2), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_export_batch_fbx.py
@@ -291,6 +293,83 @@ def test_selection_export_skips_hidden_and_copy_writes_fbm():
     check([p for p in out.rglob("*.fbm")], "Copy wrote no .fbm folder (the fixture's material is textured)")
 
 
+SHELL_BLEND = TMP / "blender" / "MASTER.blend"
+
+
+def comb(name, coll, teeth=6):
+    """A flat comb-shaped floor: one concave n-gon of 4 * teeth corners (2 m deep, a 0.5 m notch between teeth)."""
+    pts = []
+    for i in range(teeth):
+        x = i * 1.0
+        pts += [(x, 0.0, 0.0), (x + 0.5, 0.0, 0.0), (x + 0.5, 1.5, 0.0), (x + 1.0, 1.5, 0.0)]
+    pts[-1] = (teeth * 1.0 - 0.5, 2.0, 0.0)
+    pts += [(0.0, 2.0, 0.0)]
+    me = bpy.data.meshes.new(name)
+    me.from_pydata(pts, [], [list(range(len(pts)))])
+    ob = bpy.data.objects.new(name, me)
+    coll.objects.link(ob)
+    return ob
+
+
+def build_shell():
+    """MASTER.blend with a kit piece, SHELL > SHELL_SCR (a hidden wall, a comb floor n-gon, a runner with
+    unity_collider = 0), SHELL > SHELL_HAL (one wall) and CEILINGS > CEIL_SCR (a ceiling slab)."""
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    scene = bpy.context.scene
+    piece = bpy.data.collections.new("INT_Wall_2x3_A")
+    scene.collection.children.link(piece)
+    box("INT_Wall_2x3_A", (2, 0.2, 3), piece)
+    shell = bpy.data.collections.new("SHELL")
+    scene.collection.children.link(shell)
+    scr, hal = bpy.data.collections.new("SHELL_SCR"), bpy.data.collections.new("SHELL_HAL")
+    shell.children.link(scr)
+    shell.children.link(hal)
+    box("SHL_W40", (0.3, 14, 5), scr).hide_set(True)
+    comb("SHL_T2", scr)
+    box("SHL_Runner", (1, 4, 0.01), scr)["unity_collider"] = 0
+    box("SHL_W30", (0.3, 11, 3.5), hal)
+    ceilings, ceil = bpy.data.collections.new("CEILINGS"), bpy.data.collections.new("CEIL_SCR")
+    scene.collection.children.link(ceilings)
+    ceilings.children.link(ceil)
+    box("SHL_C08", (30, 28, 0.2), ceil)
+    SHELL_BLEND.parent.mkdir(parents=True, exist_ok=True)
+    bpy.context.preferences.filepaths.save_version = 0
+    bpy.ops.wm.save_as_mainfile(filepath=str(SHELL_BLEND))
+
+
+def run_shell_cli(args):
+    cmd = [bpy.app.binary_path, "-b", "--factory-startup", str(SHELL_BLEND), "--python-exit-code", "1",
+           "--python", str(SCRIPT), "--", "--shell"] + args
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+
+def test_shell_export_one_fbx_per_zone():
+    build_shell()
+    stamp = SHELL_BLEND.stat().st_mtime
+    out = TMP / "export_shell"
+    res = run_shell_cli(["--dir", str(out), "--zones", "SCR"])
+    check(res.returncode == 0, "exit %d: %s" % (res.returncode, (res.stdout + res.stderr)[-2000:]))
+    files = sorted(str(p.relative_to(out)).replace("\\", "/") for p in out.rglob("*") if p.is_file())
+    check(files == ["SHELL/CEIL_SCR.fbx", "SHELL/SHELL_SCR.fbx"], "--zones SCR wrote %s" % files)
+    got = reimport(out / "SHELL" / "SHELL_SCR.fbx")
+    check(sorted(got) == ["SHL_Runner", "SHL_T2", "SHL_W40"], "objects %s (the hidden wall belongs in it)" % sorted(got))
+    want_t2 = 4 * 6 + 1 - 2                                        # the n-gon's corners - 2, triangulated in Blender
+    check(got["SHL_T2"][0] == want_t2, "SHL_T2: %s triangles, want %d" % (got["SHL_T2"][0], want_t2))
+    check(all(len(p.vertices) == 3 for o in bpy.context.scene.objects for p in o.data.polygons),
+          "the shell FBX is not triangulated")
+    check(bpy.data.objects["SHL_Runner"].get("unity_collider") == 0, "unity_collider did not survive the export")
+    check("unity_collider" not in bpy.data.objects["SHL_W40"], "a custom property appeared on the wall")
+    res = run_shell_cli(["--dir", str(out)])
+    check(res.returncode == 0, res.stdout + res.stderr)
+    files = sorted(str(p.relative_to(out)).replace("\\", "/") for p in out.rglob("*") if p.is_file())
+    check(files == ["SHELL/CEIL_SCR.fbx", "SHELL/SHELL_HAL.fbx", "SHELL/SHELL_SCR.fbx"], "all zones wrote %s" % files)
+    res = run_shell_cli(["--dir", str(out), "--zones", "XYZ"])
+    check(res.returncode != 0 and "no shell zone collection SHELL_XYZ or CEIL_XYZ" in res.stdout + res.stderr,
+          "a missing zone was not refused: %s" % (res.stdout + res.stderr)[-500:])
+    check(SHELL_BLEND.stat().st_mtime == stamp and not SHELL_BLEND.with_suffix(".blend1").exists(),
+          "the shell export saved the file")
+
+
 def test_unsaved_file_refuses_blend_relative_dir():
     # bpy.path.abspath("//x") in a file never saved is "x", relative to Blender's current directory: from
     # C:\Windows\System32, //../../export/fbx wrote into C:\export\fbx
@@ -312,6 +391,7 @@ for fn in (test_kit_export_writes_every_member_and_restores_visibility,
            test_cli_blend_relative_dir_and_set_status,
            test_selection_export_skips_hidden_and_copy_writes_fbm,
            test_custom_normals_survive_when_triangulated_in_the_stack,
+           test_shell_export_one_fbx_per_zone,
            test_unsaved_file_refuses_blend_relative_dir):
     case(fn)
 failed = [r for r in RESULTS if r[0] == "FAIL"]

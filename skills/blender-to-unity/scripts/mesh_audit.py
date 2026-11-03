@@ -10,8 +10,8 @@ ns["audit"]().
 Per mesh object (modifiers applied, as batch_export_fbx.py --kit writes it), named by name_full so a local object
 never hides a linked one of the same name. That includes meshes the view layer does not show (hidden with H or in a
 collection hidden with the eye: flagged hidden; excluded or viewport-disabled collections and objects: flagged
-not-in-view-layer), meshes in local collections outside the scene (flagged outside-scene), and in a MASTER or ASM file
-the mesh objects inside instanced collections, linked or local (flagged instanced, with how many times they are
+not-in-view-layer), meshes in local collections outside the scene (flagged outside-scene), and in a MASTER.blend or ASM
+file the mesh objects inside instanced collections, linked or local (flagged instanced, with how many times they are
 placed): all are measured with their modifiers, exactly as the export evaluates them, and the scene is restored
 afterwards. Members a linked KIT disables in viewports are not instanced, so they are only listed (unseen): audit the
 KIT itself for them.
@@ -20,13 +20,13 @@ KIT itself for them.
   changes them), non-planar faces of 4+ corners, unapplied rotation (any rotation mode) or scale, negative scale,
   empty meshes, heavy meshes, many slots.
 Scene-wide:
-  render triangles = meshes the view layer shows plus collection instances (a MASTER or ASM file holds only
+  render triangles = meshes the view layer shows plus collection instances (a MASTER.blend or ASM file holds only
   instances), leaving out <Piece>_LOD1+ and <Piece>_COL meshes, which never render alongside LOD0, and the hidden or
   excluded source of an instanced collection; instanced meshes with their counts; collection instancers the view
   layer does not show (hidden, or in hidden, excluded or disabled collections: Blender shows nothing for them, so
   they are not in the total, but placement sync ships every instancer, so Unity renders them too);
   unique materials; and mesh datablocks shared by several objects.
-In a kit, repeats are collection instances (MASTER) that become prefab instances of one FBX in Unity; objects that
+In a kit, repeats are collection instances (PLACEMENTS) that become prefab instances of one FBX in Unity; objects that
 share a mesh datablock matter only when a whole scene goes out as one FBX.
 """
 

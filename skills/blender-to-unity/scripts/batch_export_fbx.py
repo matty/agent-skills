@@ -1,4 +1,5 @@
-"""Batch-export Blender meshes to Unity-ready FBX files: one FBX per kit piece, per object or per collection.
+"""Batch-export Blender meshes to Unity-ready FBX files: one FBX per kit piece, per shell zone, per object or per
+collection.
 
 Host: Blender 4.2+ (bpy; tested on 5.2.2), live or headless. Every exporter keyword it sets is in FBX_SETTINGS below,
 and ../references/fbx-export.md has one row per keyword saying why.
@@ -11,13 +12,24 @@ Headless, a whole KIT file, one FBX per piece collection into <dir>/<FAMILY>/<Pi
   folder is printed. Every mesh in the piece collection is exported, hidden or not (LODs, <Piece>_COL), with its
   modifiers applied, Path Mode Strip, and the written object names are printed. A mesh that reaches the exporter with
   custom normals on faces of 4+ corners gets a warning: the exporter's own triangulation changes them.
-  A single MASTER (blender-kit-library's default layout) holds every family: export one family from a work file
-  checked out of it (kit_library.py checkout), and set kit_status in MASTER itself rather than with --set-status.
+  A single MASTER.blend (blender-kit-library's default layout) holds every family: export one family from a work file
+  checked out of it (kit_library.py checkout), and set kit_status in MASTER.blend itself rather than with --set-status.
+
+Headless, the world shell (each room's envelope), one FBX per zone collection SHELL_<Zone> or CEIL_<Zone> into
+<dir>/SHELL/<collection>.fbx:
+    blender -b --factory-startup blender/MASTER.blend --python-exit-code 1 --python batch_export_fbx.py
+            -- --shell --dir <dir> [--zones SCR STR]   # default every shell zone; SCR = SHELL_SCR and CEIL_SCR
+  The shell is each room's envelope (walls, floors, tiers, stairs, openings; greybox or finished): a top-level SHELL
+  collection with one child per zone, and ceilings under CEILINGS with one CEIL_<Zone> per zone. Same settings as
+  --kit (every mesh in the zone collection and its child collections, hidden or not, modifiers applied, triangulated,
+  Path Mode Strip) plus Custom Properties on (SHELL_SETTINGS): an object property unity_collider = 0 reaches Unity's
+  ShellImport.cs, which then gives that object no MeshCollider. The file is not saved.
 
 Blender Text Editor: set EXPORT_DIR, MODE and PATH_MODE below, select mesh objects, press Run.
 Blender MCP (execute_blender_code): run the file as is to export the selection, or load the functions only:
     ns = {"BATCH_EXPORT_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
     ns["export_kit"]("//../../export/fbx")       # returns {fbx path: [object names]}
+    ns["export_shell"]("//../export/fbx")        # from blender/MASTER.blend: export/fbx/SHELL/SHELL_<Zone>.fbx
 
 MODE (interactive runs; only selectable objects are exported, hidden ones are reported and skipped):
     "object"     one FBX per selected mesh object, named after the object
@@ -66,6 +78,11 @@ FBX_SETTINGS = dict(
     embed_textures=False,
 )
 KIT_PATH_MODE = "STRIP"         # kit pieces use the family's shared Unity material: no texture copies
+# The shell: FBX_SETTINGS plus these (one row in ../references/fbx-export.md). Custom properties carry
+# unity_collider = 0 to ShellImport.cs.
+SHELL_SETTINGS = dict(use_custom_props=True)
+SHELL_ROOT = "SHELL"
+SHELL_ZONE_RE = re.compile(r"^(?:SHELL|CEIL)_([A-Za-z0-9]+)$")
 
 
 def resolve_dir(path):
@@ -157,11 +174,13 @@ def _evaluated(coll):
         vl.update()
 
 
-def _export(filepath, objects=None, collection=None, path_mode=PATH_MODE, colors=VERTEX_COLORS):
+def _export(filepath, objects=None, collection=None, path_mode=PATH_MODE, colors=VERTEX_COLORS, extra=None):
     """Write one FBX and return the mesh object names in it. collection: every mesh in that collection and its child
     collections, visible or not, with no selection involved. objects: exactly these, which must be selectable
-    (visible and in the view layer); the others are reported and skipped."""
+    (visible and in the view layer); the others are reported and skipped. extra: exporter keywords over
+    FBX_SETTINGS (SHELL_SETTINGS)."""
     kw = dict(FBX_SETTINGS, filepath=filepath, path_mode=path_mode, colors_type=colors)
+    kw.update(extra or {})
     if collection is not None:
         names = sorted(o.name for o in collection.all_objects if o.type == "MESH")
         kw.update(collection=collection.name, use_selection=False, use_visible=False)
@@ -221,6 +240,41 @@ def export_kit(out_dir, set_status=False):
     return written
 
 
+def shell_zones():
+    """The local shell zone collections, SHELL_<Zone> and CEIL_<Zone>, sorted by name ([(zone, collection)])."""
+    return [(m.group(1), c) for c in sorted(bpy.data.collections, key=lambda c: c.name)
+            if c.library is None for m in [SHELL_ZONE_RE.match(c.name)] if m]
+
+
+def export_shell(out_dir, zones=None):
+    """One FBX per shell zone collection, SHELL_<Zone> or CEIL_<Zone> (all, or those of the `zones` named), with every
+    mesh in it, hidden or not, into <out_dir>/SHELL/<collection>.fbx with Path Mode Strip and SHELL_SETTINGS. Returns
+    {fbx path: [object names]}. Raises KeyError for a zone named in `zones` that has no collection."""
+    out_dir = resolve_dir(out_dir)
+    if bpy.context.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    found = shell_zones()
+    lacking = [z for z in (zones or []) if z not in {zone for zone, _c in found}]
+    if lacking:
+        raise KeyError("no shell zone collection %s" % ", ".join("SHELL_%s or CEIL_%s" % (z, z) for z in lacking))
+    written = {}
+    folder = os.path.join(out_dir, SHELL_ROOT)
+    for zone, coll in found:
+        if zones and zone not in zones:
+            continue
+        obs = [o for o in coll.all_objects if o.type == "MESH"]
+        if not obs:
+            print("[export] %s: no meshes, skipped" % coll.name)
+            continue
+        for ob in obs:
+            _warn_transform(ob)
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, coll.name + ".fbx")
+        written[path] = _export(path, collection=coll, path_mode=KIT_PATH_MODE, extra=SHELL_SETTINGS)
+    print("[export] shell: %d zone(s) into %s" % (len(written), folder))
+    return written
+
+
 def export_selected(export_dir=EXPORT_DIR, mode=MODE, path_mode=PATH_MODE):
     """The interactive modes (see MODE above) on the current selection. Returns {fbx path: [object names]}."""
     out_dir = resolve_dir(export_dir)
@@ -268,6 +322,15 @@ def main(argv=None):
             print("[export] --tangents is ignored: Unity calculates MikkTSpace tangents (references/fbx-export.md)")
         out = argv[argv.index("--dir") + 1] if "--dir" in argv else EXPORT_DIR
         return export_kit(out, set_status="--set-status" in argv)
+    if "--shell" in argv:
+        out = argv[argv.index("--dir") + 1] if "--dir" in argv else EXPORT_DIR
+        zones = []
+        if "--zones" in argv:
+            for a in argv[argv.index("--zones") + 1:]:
+                if a.startswith("--"):
+                    break
+                zones.append(a)
+        return export_shell(out, zones=zones or None)
     return export_selected()
 
 

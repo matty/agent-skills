@@ -14,10 +14,10 @@ the sizes they have in Blender.
 
 | Field | Value | Why |
 |---|---|---|
-| Limit to / Source Collection | kit pieces: the piece collection by name (`collection=<Piece>` with `use_selection=False`); interactive runs: Selected Objects (`use_selection=True`) | Exporting the collection takes every mesh in it, hidden or not: a selection silently drops hidden LODs and `_COL` shells, because Blender cannot select hidden objects |
+| Limit to / Source Collection | kit pieces: the piece collection by name (`collection=<Piece>` with `use_selection=False`); the shell: the zone collection `SHELL_<Zone>` the same way; interactive runs: Selected Objects (`use_selection=True`) | Exporting the collection takes every mesh in it, hidden or not: a selection silently drops hidden LODs and `_COL` shells, because Blender cannot select hidden objects |
 | Visible Objects | off (`use_visible=False`) | Hidden LODs and `_COL` shells belong in the FBX |
 | Object Types | Mesh only (`object_types={"MESH"}`); add Armature only for a rigged asset | Cameras, lights and empties would become GameObjects in the prefab. LOD meshes need no parent empty |
-| Custom Properties | off (`use_custom_props=False`) | Noise |
+| Custom Properties | off (`use_custom_props=False`) for kit pieces and assets; on (`use_custom_props=True`, the script's `SHELL_SETTINGS`) for the shell | Noise, except on the shell: an object property `unity_collider = 0` tells `ShellImport.cs` to give that object no MeshCollider |
 | Path Mode | kit pieces: Strip (`path_mode="STRIP"`); a one-off asset that brings its own textures: Copy (`path_mode="COPY"`) | Copy writes a `<name>.fbm` folder with a copy of every texture beside each FBX. Strip copies nothing, but the FBX still names each texture: an absolute FileName (the export folder plus the file name, which does not exist), the bare RelativeFilename, and the source .blend path in the header. Harmless when Unity remaps materials by name (`unity-packaging.md`); it does record the machine's folder layout |
 | Embed Textures | off (`embed_textures=False`) | Only meaningful with Copy, and it bloats the FBX |
 
@@ -45,10 +45,34 @@ runs into -X and -Z (a 2 x 3 m wall 0.2 m thick spans x -2..0, z -0.2..0): that 
 | Apply Modifiers | on (`use_mesh_modifiers=True`) | What you see is what ships. Blender only evaluates modifiers on objects the view layer evaluates; the kit export makes hidden, disabled and excluded members evaluable while it writes them (measured on 5.2.2) |
 | Export Subdivision Surface | off (`use_subsurf=False`) | Bake subdivision down yourself and control the count |
 | Loose Edges | off (`use_mesh_edges=False`) | Not renderable |
-| Triangulate Faces | on (`use_triangles=True`), for pieces that arrive triangulated where it matters | The exporter splits each face of 4+ corners its own way (Blender's triangulate defaults), so a quad's diagonal is the exporter's, not necessarily the one the viewport drew (measured on a non-planar quad), and custom normals change with the new diagonals (measured, 5.2.2: a weighted-normal panel 0.00 -> 10.42 deg off flat; Harden Normals chamfers up to 12.6 deg). Precondition: a piece with custom normals (Weighted Normal, Harden Normals) or non-planar faces arrives already triangulated in its modifier stack (stack: `blender-mesh-topology`), and then exports unchanged (0.00 deg). `batch_export_fbx.py` warns about custom normals on faces of 4+ corners; `mesh_audit.py` counts non-planar faces |
+| Triangulate Faces | on (`use_triangles=True`), for pieces that arrive triangulated where it matters | The exporter splits each face of 4+ corners its own way (Blender's triangulate defaults), so a quad's diagonal is the exporter's, not necessarily the one the viewport drew (measured on a non-planar quad), and custom normals change with the new diagonals (measured, 5.2.2: a weighted-normal panel 0.00 -> 10.42 deg off flat; Harden Normals chamfers up to 12.6 deg). Precondition: a piece with custom normals (Weighted Normal, Harden Normals) or non-planar faces arrives already triangulated in its modifier stack (stack: `blender-mesh-topology`), and then exports unchanged (0.00 deg). `batch_export_fbx.py` warns about custom normals on faces of 4+ corners; `mesh_audit.py` counts non-planar faces. Never turn it off for the shell or any mesh with large concave n-gons: Unity's own triangulation of them fails (measured in Unity 2022.3.22f1, 2026-11-03: a seating tier's 384-corner top face exported untriangulated arrived with half its area and no upward faces, and the console warned "A polygon of Mesh ... is self-intersecting and has been discarded") |
 | Tangent Space | off (`use_tspace=False`) | Unity calculates MikkTSpace tangents on import (Tangents row below), the same algorithm Blender bakes normal maps with |
 | Vertex Colors | None (`colors_type="NONE"`) | The default, sRGB, exports every colour attribute as an extra vertex stream. Use sRGB or Linear only when the Unity shader reads vertex colours, matching what it expects |
 | Add Leaf Bones | off (`add_leaf_bones=False`) | Armatures only |
+
+## The world shell
+
+The shell is each room's envelope, greybox or finished: whatever would leave a hole or an open room if removed
+(walls, floors, tiers, stairs, the screen or end wall, door and arch openings, ceilings). Reusable pieces placed in or
+on it (linings, trims, lights, seats, props) are kit pieces under `PLACEMENTS` instead. It sits in the top-level
+Blender collection `SHELL`, one child `SHELL_<Zone>` per zone (ceilings may sit in `CEILINGS/CEIL_<Zone>` for a
+one-click hide), objects `SHL_<id>`, materials a shared `M_<FAMILY>_*` (finished) or `M_SHL_*` (greybox);
+`blender-kit-library` owns that structure. A shell object evolves in place, greybox to finished in the same zone, and
+gets the same preparation as a piece: hygiene, smooth shading with sharp by angle, UV0 and an authored UV2, materials,
+applied rotation and scale (it stays at its world position). Export:
+
+- `batch_export_fbx.py -- --shell --dir <dir> [--zones SCR STR]` writes `<dir>/SHELL/<collection>.fbx` per zone
+  collection (`SHELL_<Zone>`, `CEIL_<Zone>`):
+  every mesh in the zone collection, hidden or not, with the settings above (triangulated, Path Mode Strip) plus
+  Custom Properties on. From a live Blender, `export_shell("//../export/fbx")` from `blender/MASTER.blend`.
+- Copy each FBX over its file in `Assets/World/Shell/`. `scripts/unity/Editor/ShellImport.cs` applies the kit
+  import settings below, with these differences: Tangents always Calculate (MikkTSpace); every mesh gets a static,
+  non-convex MeshCollider of its own mesh unless it carries `unity_collider = 0`; every GameObject is fully static;
+  materials remap by name from anywhere in the project (`M_<FAMILY>_*` or `M_SHL_*`).
+- In the scene, one instance of each zone FBX under a root GameObject `SHELL` (ceiling zones under `CEILINGS`),
+  outside the placement-sync root (`PLACEMENTS`). Every change is made in Blender and re-exported: a change made on
+  the instance in Unity (an object disabled, a material swapped) is an override that a renamed or removed object
+  orphans.
 
 ## Animation
 
