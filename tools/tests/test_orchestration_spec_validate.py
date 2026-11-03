@@ -737,6 +737,29 @@ class SpecChecks(unittest.TestCase):
         self.assertFalse(any("ZONE_Niche_Free_A" in m for m in warnings), warnings)
         self.assertTrue(any("Free prop PROP_Chair_Free_A" in m and "probe-lit" in m for m in warnings), warnings)
 
+    def test_zone_shell_objects(self):
+        """zones[].shell lists the envelope built in place in SHELL_<zone>: SHL_ names, unique, never a piece."""
+        spec = study_spec()
+        piece = spec["pieces"][0]["name"]
+        spec["zones"][0]["shell"] = [
+            {"name": "SHL_W01", "desc": "south wall", "kind": "wall", "material": "M_SHL_Wall"},
+            {"name": "SHL_C01", "desc": "ceiling", "ceiling": True, "collision": "none"}]
+        f, _ = run(spec)
+        self.assertEqual([m for m in messages(f, "ERROR") if "shell" in m], [])
+        self.assertFalse(any("unknown key 'shell'" in m for m in messages(f, "WARN")), f.items)
+        spec["zones"][0]["shell"] += [
+            {"name": "Wall.001"}, {"name": "SHL_W01"}, {"name": "SHL_X", "material": "brick", "collision": "box",
+                                                         "ceiling": "yes"}]
+        spec["pieces"].append(dict(spec["pieces"][0], name="SHL_Piece"))
+        spec["zones"][0]["shell"].append({"name": "SHL_Piece"})
+        f, _ = run(spec)
+        errors = " | ".join(messages(f, "ERROR"))
+        for want in ("shell object 'Wall.001': name must be SHL_<id>", "shell object SHL_W01 is listed twice",
+                     "shell SHL_X: material must be M_<FAMILY>_<Name>", "shell SHL_X: collision must be mesh",
+                     "shell SHL_X: ceiling must be true or false"):
+            self.assertIn(want, errors)
+        self.assertTrue(piece)
+
     def test_unknown_keys_are_warned_with_a_hint(self):
         spec = study_spec()
         spec["zones"][0]["lighting_state"] = 2

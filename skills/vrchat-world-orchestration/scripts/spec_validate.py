@@ -22,7 +22,7 @@ What it checks:
     (zones[].lighting_state: did you mean lighting_states?);
   - piece, assembly, family and material names (M_TRIM_ materials allowed in any family); everything lives in one
     blender/MASTER.blend, so a family or assembly `file` other than that (a split KIT or ASM file) is an ERROR and
-    one naming MASTER a NOTE (no longer needed); with --ledger, no task writes blender/kits/ or blender/asm/ and the
+    one naming MASTER.blend a NOTE (no longer needed); with --ledger, no task writes blender/kits/ or blender/asm/ and the
     ledger records no other intake.blend_layout;
   - piece sizes against the grid (a one-number Size needs `size`); grid.sub_module divides grid.module; grid
     placements on the module (TRIM on the sub-module) in 90-degree turns; every piece in an elevation, placement or
@@ -305,7 +305,8 @@ KNOWN_KEYS = {
     "look_material": ("ref", "albedo_srgb", "roughness", "metal", "wear"),
     "assembly": ("name", "file", "size", "uses"),                                                         # file: legacy
     "zone": ("id", "name", "kind", "bounds", "floor_z", "placements", "rooms", "lighting_states", "switch",
-             "mirrors"),
+             "mirrors", "shell"),
+    "shell": ("name", "kind", "material", "collision", "lightmap_scale", "ceiling"),
     "placement": ("ref", "pos", "rot", "scale", "mirror"),
     "room": ("id", "name", "bounds", "height", "openings"),
     "opening": ("type", "at", "width", "height", "sill"),
@@ -994,7 +995,7 @@ def check_tile_placement(zid, ref, pos, rot, pieces, module, families, floor_z, 
     """A tiling family's grid piece (tile_phase grid or variants) continues the world pattern: its pivot on whole
     tiles along its own +X (a phase variant _P<k> k modules on) and up, and a floor or ceiling unturned (or turned by
     the family's turn_symmetry). Each piece is projected with phase 0 at its pivot, so anything else jumps at its
-    joints (QA U7 checks the same in MASTER)."""
+    joints (QA U7 checks the same in MASTER.blend)."""
     m = NAME_RE.match(ref)
     fam = families.get(m.group(1)) if m and isinstance(families, dict) else None
     if not (isinstance(fam, dict) and fam.get("texturing") == "tiling"
@@ -1136,9 +1137,34 @@ def check_mirror(zid, mi, b, mirror_ids, f):
         f.error("%s: size must be [width, height] in metres" % where)
 
 
+SHELL_OBJ_RE = re.compile(r"^SHL_[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def check_shell_object(zid, so, pieces, names, f):
+    """One object of a zone's envelope (zones[].shell): built in place in SHELL_<zone> (ceiling: true, in
+    CEIL_<zone>) in MASTER.blend, not a kit piece. Named SHL_<id>, unique in the world, never a piece name."""
+    where = "zone %s shell %s" % (zid, so.get("name"))
+    check_keys(so, "shell", where, f)
+    name = so.get("name")
+    if not (isinstance(name, str) and SHELL_OBJ_RE.match(name)):
+        f.error("zone %s shell object %r: name must be SHL_<id> (letters, digits, _ and -)" % (zid, name))
+        return
+    if name in names:
+        f.error("shell object %s is listed twice: one name per object in the whole world" % name)
+    names.add(name)
+    if name in pieces:
+        f.error("%s: a shell object is built in place, not a kit piece" % where)
+    if "material" in so and not (isinstance(so["material"], str) and MAT_RE.match(so["material"])):
+        f.error("%s: material must be M_<FAMILY>_<Name> (M_SHL_<Name> on greybox)" % where)
+    if "collision" in so and so["collision"] not in ("mesh", "none"):
+        f.error("%s: collision must be mesh (the default, a MeshCollider of the object) or none" % where)
+    if "ceiling" in so and not isinstance(so["ceiling"], bool):
+        f.error("%s: ceiling must be true or false" % where)
+
+
 def check_zones(spec, pieces, asms, grid, used, f, families=None):
     """Zones with their placements, rooms, openings and mirrors; returns the zone ids."""
-    zone_ids, mirror_ids = set(), set()
+    zone_ids, mirror_ids, shell_names = set(), set(), set()
     for z in entries(spec, "zones", f, "zones"):
         zid = z.get("id")
         if not (isinstance(zid, str) and ID_RE.match(zid)) or zid in zone_ids:
@@ -1174,6 +1200,9 @@ def check_zones(spec, pieces, asms, grid, used, f, families=None):
             for mi in entries(z, "mirrors", f, "zone %s mirrors" % zid):
                 with Guard(f, "zone %s mirror %s" % (zid, mi.get("id"))):
                     check_mirror(zid, mi, b, mirror_ids, f)
+            for so in entries(z, "shell", f, "zone %s shell" % zid):
+                with Guard(f, "zone %s shell %s" % (zid, so.get("name"))):
+                    check_shell_object(zid, so, pieces, shell_names, f)
     by_switch = {}
     for z in zone_list(spec):
         if zone_switch(z):
@@ -1459,15 +1488,15 @@ def check_spec(spec, f, root=None):
     placed_refs = {pl["ref"] for z in zone_list(spec) for pl in placements_of(z)}
     for name in asms:
         if name not in placed_refs:
-            f.warn("assembly %s is never placed in a zone: nothing puts it in MASTER, and its pieces are not in the "
-                   "lightmap fill" % name)
+            f.warn("assembly %s is never placed in a zone: nothing puts it in PLACEMENTS, and its pieces are not in "
+                   "the lightmap fill" % name)
     placed = placement_counts(spec, pieces, asms)
     for e in dicts_in(spec.get("elevations")):
         names = {n for course in course_lists(e.get("courses")) for n in course if isinstance(n, str)}
         only = sorted(n for n in names if n in pieces and n not in placed)
         if only:
-            f.warn("elevation %s: %s never placed (in a zone, or in a placed assembly), so MASTER will not hold them "
-                   "and the lightmap fill leaves them out: place the facade in zones[].placements"
+            f.warn("elevation %s: %s never placed (in a zone, or in a placed assembly), so PLACEMENTS will not hold "
+                   "them and the lightmap fill leaves them out: place the facade in zones[].placements"
                    % (e.get("id"), ", ".join(only)))
 
     with Guard(f, "world.quality"):

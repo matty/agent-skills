@@ -37,9 +37,13 @@ zones:
     kind: exterior                 # exterior | interior
     bounds: [0, 0, 30, 27]
     floor_z: 0
-    placements:                    # coarse layout; the greybox integrator builds MASTER from these
+    placements:                    # coarse layout; the greybox integrator builds PLACEMENTS from these
       - {ref: ASM_ShopFront_A, pos: [2, 20, 0], rot: 0}     # pivot position (bottom-left corner)
       - {ref: FOL_Bush_Free_A, pos: [12, 4, 0], rot: 35, scale: 1.2, mirror: true}   # Free: even scale, mirrored
+    shell:                         # the zone's envelope, built in place in SHELL_square (not kit pieces)
+      - {name: SHL_W01, desc: bakery south wall with the door and window cuts, material: M_EXT_Brick}
+      - {name: SHL_F01, desc: square paving, kind: floor}
+      - {name: SHL_C01, desc: bakery ceiling, ceiling: true, collision: none}   # ceiling: CEIL_square
     rooms:
       - id: bakery
         name: Bakery
@@ -49,6 +53,15 @@ zones:
           - {type: door, at: [4.4, 20.3], width: 1.2, height: 2.2}
           - {type: window, at: [6.4, 20.3], width: 1.2, height: 1.5, sill: 0.9}
 ```
+
+`shell` lists each zone's envelope: whatever would leave a hole or an open room if removed (walls, a fabric or
+acoustic surface that is the wall, floors, tiers, stairs, landings, the screen or end wall, door and arch openings,
+ceilings). Each object is named `SHL_<id>` (unique in the world, never a piece name), built in place in the zone's
+`SHELL_<zone>` collection (`ceiling: true`: `CEIL_<zone>` under `CEILINGS`), with optional `kind`, `material` (a
+shared `M_<FAMILY>_*`, or `M_SHL_*` on greybox), `collision` (`mesh`, the default, or `none`) and `lightmap_scale`.
+What sits in or on the envelope (linings and panelling over a wall, trims, lights, seats, furniture, props, guards,
+handrails) is a kit piece in `placements`. A piece modelled once for one spot is shell, not a piece: a KIT piece is
+reusable or repeated.
 
 An opening's `at` is its low end on a room edge (the smaller x on a south or north edge, the smaller y on a west or
 east edge), and it runs `width` m along that edge; the validator rejects one that does not lie along an edge.
@@ -71,7 +84,7 @@ from the front. `facing` is the direction the facade faces (`south` means you lo
 north, with +X to your right). `origin` is the facade's bottom-left corner in world space. Elevations take grid
 pieces only, and every course should come out the same width. An elevation documents a facade; what builds it is its
 placements (the facade's assembly, or its pieces, in `zones[].placements`), so the validator warns about a piece that
-appears only in an elevation: nothing would place it in MASTER, and the lightmap check cannot count it. Agents build
+appears only in an elevation: nothing would place it in PLACEMENTS, and the lightmap check cannot count it. Agents build
 a facade's assembly by walking the courses.
 
 An elevation's `zone` is the zone its facade is placed in, usually the one the viewer stands in (a shop front placed
@@ -203,7 +216,13 @@ validator errors on a family or assembly `file` other than that, which older spe
 |---|---|---|
 | KIT | `KIT/KIT_<FAMILY>/<piece>`, `KIT` excluded from the view layer | One collection per piece, at the origin, with its LODs, collision and the family materials |
 | ASM | `ASM/ASM_<Name>_<Variant>`, `ASM` excluded from the view layer | The one collection `ASM_<Name>_<Variant>`, built from instances of kit pieces, plus socket empties. Its Unity prefab is `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab` |
-| MASTER | The `MASTER` collection (zones may get `MASTER_<Zone>` children); `REF` beside it | Instances of pieces and assemblies placed in the world, zone empties; scale figures in `REF`. No geometry |
+| SHELL | `SHELL/SHELL_<Zone>`, and `CEILINGS/CEIL_<Zone>` for ceilings (hidden in one click) | Each zone's envelope from `zones[].shell`, greybox or finished: objects `SHL_<id>` at their world position, materials a shared `M_<FAMILY>_*` (finished) or `M_SHL_*` (greybox), `kit_status` on the zone collection. An object evolves in place (greybox to finished, same zone, same name) through the same stages as a piece. Exported per zone collection to `export/fbx/SHELL/`; in Unity under its own `SHELL` root (ceilings under `CEILINGS`), never synced |
+| PLACEMENTS | The `PLACEMENTS` collection (zones may get `PLACEMENTS_<Zone>` children), the placement-sync scope; `REF` beside it | Instances of pieces and assemblies placed in or on the envelope (linings, trims, lights, seats, props), zone empties. No geometry |
+| REF | `REF`, `REF_<Name>` | Review aids only: scale figures, cameras, reference images. Never exported, never holds anything meant to stay |
+
+Before 2026-11-03 the placements collection was called `MASTER`, like the file; a world that still has it migrates
+(`blender-kit-library` and `blender-unity-placement-sync`, "Migrating from MASTER") before any task writes it: the
+scripts refuse the old name.
 
 Place collection instances, never copies. The scene property `kit_layout = "single"` marks the file, and every task
 that writes it keeps the user's edits (`SKILL.md`, rule 5).
@@ -219,7 +238,8 @@ M_<FAMILY>_<Name>                   M_EXT_Brick
 ```
 
 - `FAMILY`: 2-5 capitals, declared in `families`. Common: `EXT`, `INT`, `STR` (floors, stairs, roofs), `TRIM`,
-  `PROP`, `FOL`, `ZONE` (unique shells, still authored as pieces).
+  `PROP`, `FOL`; `ZONE` (unique shells authored as pieces) is legacy: a zone's unique envelope now goes in
+  `zones[].shell`. A KIT piece is reusable or repeated.
 - `Size`: whole modules in X, Y, Z order, skipping any axis under one module (that axis is thickness: a 2 x 0.3 x
   3 m wall is `2x3` at a 1 m module and `4x6` at 0.5 m; a 0.5 x 0.5 x 2.5 m post at 0.5 m is `1x1x5`). Walls are
   `WxH`, floor tiles `WxD` (family `STR`), volumes `WxDxH`; `Free` for off-grid pieces. A family whose `thickness`

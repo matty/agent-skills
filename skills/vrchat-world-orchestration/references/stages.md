@@ -13,12 +13,12 @@ the minimum acceptance checks at the end of this file instead.
 | 2 | `T-SPEC-01` |
 | 3 | `T-KIT-PLAN` |
 | 1-3, `small` scale | `T-PLAN-01` in place of the three above |
-| 4 | `T-GREY-<FAMILY>`, `T-GREY-ASM-<NAME>`, `T-GREY-MASTER` |
-| 5 | `T-MOD-<FAMILY>`, `T-MOD-MASTER` |
-| 6 | `T-UV-<FAMILY>` |
-| 7 | `T-TEX-TRIM-LAYOUT` (a trim family only), `T-TEX-<FAMILY>` |
+| 4 | `T-GREY-SHELL-<ZONE>`, `T-GREY-<FAMILY>`, `T-GREY-ASM-<NAME>`, `T-GREY-MASTER` |
+| 5 | `T-MOD-SHELL-<ZONE>`, `T-MOD-<FAMILY>`, `T-MOD-MASTER` |
+| 6 | `T-UV-SHELL-<ZONE>`, `T-UV-<FAMILY>` |
+| 7 | `T-TEX-TRIM-LAYOUT` (a trim family only), `T-TEX-SHELL-<ZONE>`, `T-TEX-<FAMILY>` |
 | 8 | `T-ASM-<NAME>`, `T-DRESS-<ZONE>` |
-| 9 | `T-EXP-<FAMILY>` |
+| 9 | `T-EXP-SHELL`, `T-EXP-<FAMILY>` |
 | 10 | `T-UNITY-IMPORT`, `T-UNITY-SYNC-ASM-<NAME>` per assembly then `T-UNITY-SYNC-MASTER`, `T-UNITY-SETUP`, `T-UNITY-PLATFORM` |
 | 11 | `T-LIGHT` |
 | 12 | `T-UDON-<ID>`, one per `interactivity` id |
@@ -42,8 +42,8 @@ Draft every task so that it waits for the gates through its `deps`:
 |---|---|
 | `T-KIT-PLAN` (full scale) | `gate:spec` |
 | The first stage-4 tasks: `T-GREY-<FAMILY>` in small scale (full scale: they depend on `T-KIT-PLAN`) | `gate:spec` |
-| Every `T-MOD-<FAMILY>` | `gate:greybox` |
-| Every `T-TEX-<FAMILY>` but the lead family's (`look.lead_family`; `T-TEX-TRIM-LAYOUT` never waits), and every `T-EXP-<FAMILY>` | `gate:look` (`gates.look.after: [T-TEX-<LEAD FAMILY>]`; small scale: `[T-TEX-WORLD]`) |
+| Every `T-MOD-<FAMILY>` and `T-MOD-SHELL-<ZONE>` | `gate:greybox` |
+| Every `T-TEX-<FAMILY>` but the lead family's (`look.lead_family`; `T-TEX-TRIM-LAYOUT` never waits), every `T-TEX-SHELL-<ZONE>`, every `T-EXP-<FAMILY>` and `T-EXP-SHELL` | `gate:look` (`gates.look.after: [T-TEX-<LEAD FAMILY>]`; small scale: `[T-TEX-WORLD]`) |
 | Everything else | Its real predecessors, which lead back to those |
 
 The validator warns when a task of stage 4 or later cannot reach `gate:spec` through its `deps`, a task of stage 5
@@ -64,10 +64,11 @@ Put these exact paths in each task's `writes` (relative to `<world>/`, or to the
 `ProjectSettings/`). The validator warns on anything outside `world/`, `blender/`, `export/`, `Assets/`,
 `ProjectSettings/` and the `@` editors.
 
-**MASTER** in the table stands for `blender/MASTER.blend`, `blender/MASTER.snapshot.json` and
-`blender/work/<task id>/` (the task's work files), plus `@blender-live` when `tools.blender_mcp` is true. Every task
-that writes MASTER takes its turn, so the planner chains them through `deps` (families in the order the spec lists
-them, then the assemblies, then the MASTER task of the stage); the validator rejects two that could run at once. A
+**MASTER** in the table stands for the file and its companions: `blender/MASTER.blend`, `blender/MASTER.snapshot.json`
+and `blender/work/<task id>/` (the task's work files), plus `@blender-live` when `tools.blender_mcp` is true (the
+collection of placed instances inside it is `PLACEMENTS`). Every task that writes MASTER.blend takes its turn, so the
+planner chains them through `deps` (families in the order the spec lists them, then the assemblies, then the layout
+task of the stage); the validator rejects two that could run at once. A
 task that runs long or headless tools (modelling, UVs, texturing, export) checks its family's pieces out to
 `blender/work/<task id>/KIT_<FAMILY>.blend`, works there, and integrates them back (`blender-kit-library`, "Work
 files"). Nothing writes `blender/kits/` or `blender/asm/`: the pipeline has no separate KIT or ASM files, and the
@@ -79,12 +80,13 @@ validator rejects a task that writes there.
 | 2-3 (or `T-PLAN-01`) | `world/spec.yaml` (every section but `version`, `world` and `tools`), `world/diagrams/`, `world/briefs/draft-tasks.yaml`; `world/mockups/` too for `T-PLAN-01` when `world.mockups` is true |
 | 4-6, 8 | MASTER |
 | 7 | `blender/textures/<FAMILY>/`, `blender/substance/<FAMILY>/` (also with the Blender fallback, which keeps its node-setup `.blend` there), and MASTER (the family's materials); `T-TEX-TRIM-LAYOUT` only `blender/substance/<FAMILY>/layout.md` |
-| 9 | `export/fbx/<FAMILY>/`, and MASTER (`kit_status` only, with the export run on a checked-out work file) |
-| 10 import | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Editor/` (`blender-to-unity`'s `KitImport.cs`, first import only), `@unity` |
-| 10 sync | `Assets/World/PlacementSync/` (the sync scripts, first sync only), `Assets/World/Assemblies/` (`ASM_<Name>_<Variant>.prefab`), `Assets/World/Scenes/`, `world/placements/`, `@unity`; its apply step also writes MASTER (placement sync runs its Blender steps through the MCP when the live Blender has MASTER open) |
+| 9 | `export/fbx/<FAMILY>/` (`T-EXP-SHELL`: `export/fbx/SHELL/`), and MASTER (`kit_status` only, with the export run on a checked-out work file) |
+| 10 import | `Assets/World/Kits/<FAMILY>/`, `Assets/World/Editor/` (`blender-to-unity`'s `KitImport.cs`, and `ShellImport.cs` with a shell, first import only), `Assets/World/Shell/` and `export/fbx/SHELL/` (a world with a shell), `@unity` |
+| 10 sync | `Assets/World/PlacementSync/` (the sync scripts, first sync only), `Assets/World/Assemblies/` (`ASM_<Name>_<Variant>.prefab`), `Assets/World/Scenes/`, `world/placements/`, `@unity`; its apply step also writes MASTER (placement sync runs its Blender steps through the MCP when the live Blender has MASTER.blend open) |
 | 10 setup | `Assets/World/Scenes/`, `Assets/World/Kits/<FAMILY>/` (static flags, instancing), `ProjectSettings/` (layers, collision matrix), `@unity` |
 | 10 platform | `Assets/World/Kits/<FAMILY>/` (Android and iOS import overrides, mobile materials), `Assets/World/Scenes/` (per-platform objects), `ProjectSettings/`, `@unity` |
-| 11 | `Assets/World/Scenes/` (lighting objects, lighting settings asset, lightmaps, occlusion data; with lighting states the baked copies under a `LIGHT_STATES` root outside MASTER's scope root, and the Mesh Renderers of the switched originals under MASTER turned off, the originals never moved, deleted or deactivated), `ProjectSettings/`, `@unity` |
+| 11 | `Assets/World/Scenes/` (lighting objects, lighting settings asset, lightmaps, occlusion data; with lighting states the baked copies under a `LIGHT_STATES` root outside the `PLACEMENTS` root, and the Mesh Renderers of the switched originals under `PLACEMENTS` turned off, the originals never moved, deleted or deactivated), `ProjectSettings/`, `@unity` |
+| A shell change after stage 10 (`T-<STAGE>-SHELL-<ZONE>-<n>`) | MASTER, `export/fbx/SHELL/` (the re-exported zone), `Assets/World/Shell/`, `@unity` |
 | `T-RENAME-<PIECE>` | MASTER, the piece's `export/fbx/<FAMILY>/` file and `Assets/World/Kits/<FAMILY>/<Piece>/` folder (once they exist), `world/placements/` (after stage 10: the merge that carries the rename), `@unity` |
 | 12 | `Assets/World/Scripts/`, `Assets/World/Scenes/`, `@unity` |
 | 13 `T-OPT` | `world/reports/optimisation.md`, `Assets/World/Kits/<FAMILY>/` (import settings), `Assets/World/Scenes/`, `Assets/World/Editor/` (build-time scripts), `ProjectSettings/`, `@unity` |
@@ -190,24 +192,33 @@ agent keeps its own scripts and scratch renders in the scratch folder its brief 
 
 - The first stage-4 task makes `blender/MASTER.blend` with `kit_library.py`'s `new_master()` (organising
   collections, `kit_layout = "single"`) and writes the first snapshot.
-- `T-GREY-<FAMILY>`, one per family, one after another, each in `KIT/KIT_<FAMILY>` in MASTER: create each piece as a
+- `T-GREY-<FAMILY>`, one per family, one after another, each in `KIT/KIT_<FAMILY>` in MASTER.blend: create each piece as a
   collection with simple box geometry at the exact extents of its Size, pivot at the bottom-left corner, openings cut
   where the spec says, `kit_status = grey`. Live through the MCP or headless (`mechanics.md`): `blender -b
   --factory-startup --python-exit-code 1 <file> --python <task>.py`, saving at the end with
   `preferences.filepaths.save_version = 0` set, so no `.blend1` backup appears beside the file.
 - `T-GREY-ASM-<NAME>` (after the kits it uses): build the assembly as the one collection `ASM_<Name>_<Variant>` under
-  `ASM` in MASTER, from instances of the pieces, with its `uses` counts.
+  `ASM` in MASTER.blend, from instances of the pieces, with its `uses` counts.
 - `T-GREY-MASTER` (after all of the above; integrator): place assemblies and pieces from the spec's placements in the
-  `MASTER` collection. Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF`
+  `PLACEMENTS` collection. Add a 1.6 m and a 1.9 m scale figure per zone (local empties or simple meshes in a `REF`
   collection).
-- QA: B1 for each KIT task (on MASTER's pieces of that family); B2-B3 for each `T-GREY-ASM` (on its assembly) and
-  for `T-GREY-MASTER`; B4-B7 for MASTER.
+- `T-GREY-SHELL-<ZONE>` (first, one per zone; integrator): build the zone's envelope from `zones[].shell` in place
+  in `SHELL/SHELL_<Zone>` (ceilings with `ceiling: true` in `CEILINGS/CEIL_<Zone>`): `SHL_<id>` objects at their
+  world position, rotation and scale applied, openings cut, `M_SHL_*` greybox materials, `kit_status = grey` on the
+  zone collection. A greybox or stand-in the user already built on is the start of this envelope: move it into the
+  zones and name it, never clear it. Every later stage changes the same objects in place (greybox to finished, same
+  name, same zone); nothing moves them to `PLACEMENTS` or deletes the envelope.
+- QA: B1 for each KIT task (on MASTER.blend's pieces of that family); B2-B3 for each `T-GREY-ASM` (on its assembly)
+  and for `T-GREY-MASTER`; B8 for each `T-GREY-SHELL-<ZONE>`; B4-B7 for the envelope and the `PLACEMENTS` layout
+  together.
 - **Greybox gate**: walkthrough renders from every view plus top and elevation overlays. Show them to the user.
   This is the last cheap moment to change layout or scale.
 
 Kit rules agents need even without other skills: piece = one collection named `<FAMILY>_<Type>_<Size>_<Variant>`,
 mesh objects at identity transform, `instance_offset` zero, walls run along X with thickness in +Y, Size counts
-modules in X, Y, Z skipping any axis under one module (thickness); MASTER and ASM never hold geometry. Full rules:
+modules in X, Y, Z skipping any axis under one module (thickness); `PLACEMENTS` and `ASM` never hold geometry (the envelope goes in `SHELL`). Shell rules: `SHL_<id>`
+objects in `SHELL_<Zone>` at their world position, rotation and scale applied, `kit_status` on the zone collection,
+audited with the pieces (`audit_kit` reports each zone under `shell`). Full rules:
 `world-spec.md`. Give kit agents this skill's `scripts/kit_library.py` path in the brief: `new_piece`, `place_piece`,
 `changes_since`, `checkout`, `integrate`, `save_snapshot`, `save_file` (a headless save without a `.blend1`), and
 `audit_kit` (`--audit --module <grid.module>` from the command line) to self-check before reporting.
@@ -225,7 +236,7 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
 - Brief: load `blender-mesh-topology` (finishing the form: what is geometry and at what size, real-world sizes for
   anything the detail list leaves open; then topology). Paste each piece's `detail` and `ref` into the brief.
 - A piece with `bake: true` (ornament, carving, rivets, sculpted or cloth forms) also gets its high poly here, in
-  `blender/bake/<FAMILY>_high.blend` (`<Part>_high` objects, one vertex group per part on the low), never in MASTER or
+  `blender/bake/<FAMILY>_high.blend` (`<Part>_high` objects, one vertex group per part on the low), never in MASTER.blend or
   a KIT file: built and gated by `blender-mesh-topology`'s high-and-low-poly reference (shading that bakes clean, the
   low's outline within 2 px, carving seen close keeping its depth step in the low). Gate and bake in that file with
   the piece's current low appended into it from the work file (never linked; an older copy removed first), and
@@ -235,11 +246,21 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
 - `T-MOD-MASTER` (integrator, after every `T-MOD-<FAMILY>`, writes `blender/MASTER.blend`): spot-check the greybox
   views again with the modelled pieces. QA: M9.
 
+- `T-MOD-SHELL-<ZONE>` (checked out to a work file like a family: `checkout(work, ["SHELL_<Zone>"])`, integrated
+  back): each `SHL_` object of the zone gets its final geometry in place, same name, same zone, same position (the
+  envelope's openings, reveals and profiles), shaded smooth with a sharp-by-angle step, `kit_status = modelled` on
+  the zone collection. It never moves an object to `PLACEMENTS` or deletes the envelope. QA: M3-M6 on the zone's
+  objects, and B8.
+
 ## 6 - UVs (UV artists)
 
 - `T-UV-<FAMILY>`: UV0 by the family's texturing approach (tiling to `texel_density`, trim onto the trim sheet
   layout, atlas or unique packed to `map_px`); a UV2 on every kit render mesh (LODs and probe-lit props too, not
   `_COL`), whose gaps matter on the lightmapped ones. `kit_status = uv`.
+- `T-UV-SHELL-<ZONE>`: the same on each shell object of the zone (UV0 to the material's texel density or trim layout,
+  UV2 packed for the object's own lightmap footprint; shell objects are large and lightmapped, so size their UV2 gaps
+  for the footprint `vrchat-lighting-and-baking` gives them), `kit_status = uv` on the zone collection. QA: U1-U7 on
+  the zone's objects.
 - Tiling UV0 with `uv-unwrapping`'s `tile_project` (U from each piece's own axes, phase 0 at its pivot), never Cube
   Projection, which centres on each piece so pieces of different sizes start out of phase; the family's tile divides
   `grid.module` and `grid.storey_height` (the validator holds the spec to it) or its `tile_phase` says how the pattern
@@ -282,8 +303,11 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
 ## 7 - Texturing (texture artist)
 
 - `T-TEX-<FAMILY>`: the family's materials (`M_<FAMILY>_<Name>`), trim sheet or tiling sets or atlas, unique prop
-  textures, a detail map where the family has `detail_map: true`. `kit_status = textured`. Integrated with
-  `materials="work"`, so the new materials replace MASTER's of the same name. Brief: load
+  textures, a detail map where the family has `detail_map: true`. `kit_status = textured`. `T-TEX-SHELL-<ZONE>`
+  (after the families whose materials the envelope shares): each shell object's greybox `M_SHL_*` swapped for its
+  finished material, a shared `M_<FAMILY>_*` from `zones[].shell[].material` (new ones only when no family has
+  it), `kit_status = textured` on the zone collection; QA X1-X5 on the zone. Integrated with
+  `materials="work"`, so the new materials replace MASTER.blend's of the same name. Brief: load
   `pbr-texturing` (without it, `texturing.md`), with the spec's `look` and the family's `look.materials` targets.
 - **Lead family first.** `look.lead_family`'s `T-TEX-<FAMILY>` runs alone; when its QA passes, the master stops at
   the **look gate** with QA's X5 look-dev renders and X8 numbers beside the mockups or `look.references`. Every other
@@ -307,7 +331,7 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
 
 - `T-ASM-<NAME>`: finish each assembly with final pieces (usually nothing to do but check, since pieces improved in
   place), add sockets. QA: A1-A5, M9.
-- `T-DRESS-<ZONE>`: props and trims placed in MASTER from the spec's placements plus dressing for life (clutter,
+- `T-DRESS-<ZONE>`: props and trims placed in `PLACEMENTS` from the spec's placements plus dressing for life (clutter,
   foliage), within budget. Variants ordered so no two identical ones touch and no sequence repeats; breakers
   (pilasters, doors, downpipes, props, decals) at irregular spacing along any run long enough to show the repeat
   (*practice*: one every 4-8 m along a facade, never at a fixed interval). QA: A1-A5, M9.
@@ -315,8 +339,11 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
 ## 9 - Export (exporter)
 
 - `T-EXP-<FAMILY>`: one FBX per piece collection into `export/fbx/<FAMILY>/<Piece>.fbx`. `kit_status = exported`.
-  Export from a work file checked out just before, then set `kit_status` on the pieces in MASTER (live, or
-  headless when MASTER is open nowhere); never integrate a work file only to carry the status.
+- `T-EXP-SHELL`: one FBX per shell zone collection into `export/fbx/SHELL/` (`blender-to-unity`'s
+  `batch_export_fbx.py --shell`: triangulated, custom properties on), `kit_status = exported` on each zone; a later
+  change to a zone re-exports that zone only.
+  Export from a work file checked out just before, then set `kit_status` on the pieces in MASTER.blend (live, or
+  headless when MASTER.blend is open nowhere); never integrate a work file only to carry the status.
 - Brief: load `blender-to-unity` (its batch export exports each piece collection whole). Without it, use these
   settings: Limit to Selected, with every LOD and `_COL` object of the piece unhidden and selected (the exporter skips
   hidden objects without a word), Object Types Mesh, Scale 1.0, Apply Scalings FBX All, -Z Forward, Y Up, Apply Unit
@@ -340,8 +367,14 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
   variant per FBX. `blender-to-unity` ships this as `KitImport.cs` (an import postprocessor plus prefab variants);
   its `Check()` output is N1-N3 evidence. QA: N1-N3.
 - `T-UNITY-SYNC-ASM-<NAME>` for each assembly (it makes `Assets/World/Assemblies/ASM_<Name>_<Variant>.prefab`), then
-  `T-UNITY-SYNC-MASTER`. Brief: load `blender-unity-placement-sync`; the first sync installs its Unity scripts.
-  QA: N4-N5.
+  `T-UNITY-SYNC-MASTER` (scope `PLACEMENTS`, Unity root `PLACEMENTS`). Brief: load `blender-unity-placement-sync`;
+  the first sync installs its Unity scripts. QA: N4-N5.
+- `T-UNITY-IMPORT` also copies `export/fbx/SHELL/*.fbx` to `Assets/World/Shell/` (`blender-to-unity`'s
+  `ShellImport.cs`: colliders, static flags, materials remapped by name) and instances each `SHELL_<Zone>` under a
+  root `SHELL` and each `CEIL_<Zone>` under a root `CEILINGS`. Scene roots stay one job each: `VRCWorld` (descriptor,
+  spawns), `SHELL` and `CEILINGS` (the envelope, never synced; changed only by re-exporting a zone), `PLACEMENTS` (the
+  sync scope: kit prefab instances only), `LIGHT_STATES` when a zone has lighting states, and the world's own roots
+  for lighting, AV or debug objects. A Unity-only test copy never goes under `PLACEMENTS`.
 - `T-UNITY-SETUP`: VRChat project and scene setup (first: the SDK's Setup Layers for VRChat and Setup Collision
   Matrix, which a build otherwise fails on; then scene descriptor, spawns, respawn height, reference camera, layers,
   colliders for walkable areas), static flags, GPU instancing on the materials of repeated pieces, and a VRC Mirror
@@ -358,8 +391,8 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
   from Standard keeps Metallic 0 and renders non-metal (`vrchat-world-sdk-setup`). Brief: load `vrchat-texture-and-vram` and `vrchat-world-sdk-setup` (cross-platform).
   Done here, not at the end, so every later stage is measured on the platform that is hardest to fit. QA: N8.
 - Every Unity task lists `@unity` in `writes`: one Unity editor, one writer at a time.
-- From here on, layout edits happen on either side and go through placement sync, never by re-exporting MASTER.
-  After stage 11, in a zone with lighting states, edit the originals under MASTER (select them in the Hierarchy:
+- From here on, layout edits happen on either side and go through placement sync, never by re-exporting MASTER.blend.
+  After stage 11, in a zone with lighting states, edit the originals under `PLACEMENTS` (select them in the Hierarchy:
   their renderers are off, so a click in the Scene view picks a `LIGHT_STATES` copy, which sync never sees) or edit
   in Blender; a `T-LIGHT-<n>` then rebuilds the copies from the originals and re-bakes.
 
@@ -377,8 +410,8 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
   Brief: load `vrchat-lighting-and-baking`, and give it the `--footprints` table and the spec's `look`.
 - A zone with `lighting_states` (the method is `vrchat-lighting-and-baking`'s):
   - The state copies, one set of the zone's static geometry per state, are made here in Unity under a `LIGHT_STATES`
-    root outside MASTER's scope root, render-only (no colliders), so placement sync never sees them.
-  - The placed originals under MASTER keep their place, their colliders and their placement-sync role, with their
+    root outside the `PLACEMENTS` root, render-only (no colliders), so placement sync never sees them.
+  - The placed originals under `PLACEMENTS` keep their place, their colliders and their placement-sync role, with their
     Mesh Renderers off. Never move, delete or deactivate them: moved or deleted, the next merge loses them;
     deactivated, their colliders go too.
   - During the bake, the copy whose state avatars should match sits at the origin inside the light probe group
@@ -386,7 +419,7 @@ modules in X, Y, Z skipping any axis under one module (thickness); MASTER and AS
   - A later placement sync that changes a switched piece needs a new `T-LIGHT-<n>`: rebuild the copies from the
     originals and re-bake. After stage 12 it keeps the state parents, which the `T-UDON` scripts reference, and
     rebuilds only their contents; its QA runs I1 as well as L1-L6.
-  - Hand-off: tell the user that a layout edit in a switched zone goes to the originals under MASTER (selected in
+  - Hand-off: tell the user that a layout edit in a switched zone goes to the originals under `PLACEMENTS` (selected in
     the Hierarchy) or to Blender, never to a copy, which the next `T-LIGHT-<n>` would overwrite.
 - QA: L1-L7 (L6 checks the UV2 gaps at the square Unity actually gave each renderer, its `lightmapScaleOffset`; L7
   the final lit spec views in Unity against the mockups or `look`).
@@ -431,8 +464,8 @@ deeper checklist was unavailable.
 | Every task | Every output the brief lists exists; nothing outside its `writes` changed (file times against the dispatch time); names follow `world-spec.md`; the result matches the spec and its diagrams; the report's claims match what was measured |
 | 1 | One image per requested view (a hero per zone, key interiors, swatches), each with its prompt file, consistent in style |
 | 2-3 | `spec_validate.py` reports no errors, with `--draft` on the drafted tasks; the diagrams regenerate identically; budgets no looser than the platform targets; doors at least 1 x 2.1 m, ceilings at least 2.6 m; every family has 1-3 materials and a texturing approach; pieces are whole modules, with corners and ends or a reason |
-| 4 | `kit_library.py --audit` reports no problems on MASTER, layout checks included; assemblies and the layout hold only instances (and `REF` aids); a top render of MASTER matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
-| 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; every feature in each piece's `detail` list there at its size, judged against its `ref` images from eye height at the nearest walkable distance; nothing in MASTER is linked from another file |
+| 4 | `kit_library.py --audit` reports no problems on MASTER.blend, layout checks included; assemblies and `PLACEMENTS` hold only instances (`REF` holds review aids, `SHELL` and `CEILINGS` the envelope); a top render of MASTER.blend matches each plan, and each facade its elevation, within half a module; the 1.6 m and 1.9 m figures fit the doors and ceilings |
+| 5 | The same audit with `kit_status` `modelled`; LOD0 triangles within budget; no n-gons, no edges shared by three faces, no loose geometry; pieces that meet share boundary vertices; LODs and collision as the spec says; every feature in each piece's `detail` list there at its size, judged against its `ref` images from eye height at the nearest walkable distance; nothing in MASTER.blend is linked from another file |
 | 6 | UV0 texel density within 10% of the family's (tiling and trim); no folded or badly stretched faces; a UV2 on every kit render mesh (not `_COL`), inside 0-1, no overlaps; on lightmapped ones, gaps of at least 2 texels at the mesh's real lightmap square (stage 6 above) and 1 texel to the tile edge |
 | 7 | 1-3 materials per family, named `M_<FAMILY>_<Name>`; maps no larger than `map_px`; metallic in R and smoothness in A, normal maps OpenGL; dielectric base colours within 30-240 sRGB luma, raw metal 160 or more, metallic 0 or 1 except blends; colour, value and roughness against the mockups or `look` in a render that shows roughness (EEVEE or Cycles, not Workbench); tiling maps seamless in a 3 x 3 repeat; source files kept |
 | 8 | No greybox left (every placed piece `textured` or later); grid pieces on the grid in 90-degree turns; no z-fighting at joints seen from walkable areas |
@@ -446,6 +479,6 @@ deeper checklist was unavailable.
 
 | Can run together | Must wait |
 |---|---|
-| Mockup tasks for different zones; `T-TEX-TRIM-LAYOUT` beside any task (it writes only its `layout.md`) | Every task that writes MASTER (stages 4-9: kit, assembly, texturing, export and layout tasks), or drives the live Blender (`@blender-live`): one at a time |
-| QA of one task while other tasks build, unless the QA drives a live editor: then it holds `@unity` or `@blender-live` like a task until it returns | ASM tasks wait for the kits they use; MASTER waits for ASMs; UVs of a trim family wait for its trim layout |
+| Mockup tasks for different zones; `T-TEX-TRIM-LAYOUT` beside any task (it writes only its `layout.md`) | Every task that writes MASTER.blend (stages 4-9: kit, assembly, texturing, export and layout tasks), or drives the live Blender (`@blender-live`): one at a time |
+| QA of one task while other tasks build, unless the QA drives a live editor: then it holds `@unity` or `@blender-live` like a task until it returns | ASM tasks wait for the kits they use; the layout task waits for ASMs; UVs of a trim family wait for its trim layout |
 | Planning an Udon system (behaviour, sync, events) for its brief while other tasks build | Anything that drives the Unity editor (`@unity`) or writes into the open project's `Assets/` (a script dropped there recompiles the editor under another task): one at a time; lighting bake waits for final geometry and placements |

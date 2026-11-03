@@ -39,10 +39,10 @@ Anything else is out of bounds, including files you think need fixing. Report th
 - Blender CLI: <path>. Run headless: blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py
   (the exit code then shows an uncaught exception), the script in your scratch folder, and set
   bpy.context.preferences.filepaths.save_version = 0 before saving (no .blend1 backup).
-- <a task that writes MASTER: "The user may edit MASTER too. Before changing it, run
+- <a task that writes MASTER.blend: "The user may edit MASTER.blend too. Before changing it, run
   kit_library.py's changes_since on blender/MASTER.snapshot.json and keep everything the user changed; if your task
   must change the same thing, stop and return blocked with the diff lines. Edit live through the Blender MCP when it
-  has MASTER open (never headless then), or check the pieces out to blender/work/<task id>/KIT_<FAMILY>.blend, work
+  has MASTER.blend open (never headless then), or check the pieces out to blender/work/<task id>/KIT_<FAMILY>.blend, work
   there, and integrate them back (it refuses if they changed meanwhile). End with changes_since once more (report
   anything you did not do), save, then save_snapshot." Paste blender-kit-library's "Editing alongside the user" when
   that skill is not installed.>
@@ -114,7 +114,7 @@ place of the per-task lines, one row per task: id, checks, brief, report, writab
 one verdict block per task, as a YAML list, go in `world/reports/qa/stage-<n>/verdict.yaml`, `<n>` being the tasks'
 `stage` (`T-PLAN-01`: stage 2).
 
-## Filled example: stage 5, one family in MASTER
+## Filled example: stage 5, one family in MASTER.blend
 
 ```markdown
 # T-MOD-EXT: Model the exterior kit
@@ -124,7 +124,7 @@ Do the work yourself: do not spawn subagents.
 ## Goal
 Every EXT piece (KIT/KIT_EXT in blender/MASTER.blend) has final geometry in place of its greybox, inside the same
 collection, with the same name, pivot and extents. kit_status = modelled on each piece collection. Everything else in
-MASTER, including anything the user changed, is as it was.
+MASTER.blend, including anything the user changed, is as it was.
 
 ## Project
 All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/Users/me/AppData/Local/Temp/T-MOD-EXT/.
@@ -151,7 +151,7 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
 
 ## You may write ONLY
 - blender/MASTER.blend, blender/MASTER.snapshot.json, blender/work/T-MOD-EXT/
-- @blender-live (the user's Blender has MASTER open; drive it only through the Blender MCP)
+- @blender-live (the user's Blender has MASTER.blend open; drive it only through the Blender MCP)
 - your scratch folder
 
 ## Steps
@@ -173,10 +173,10 @@ All paths are relative to C:/Users/me/Worlds/ExampleMarket. Scratch folder: C:/U
    your report), bpy.ops.wm.save_mainfile(), save_snapshot(r"//MASTER.snapshot.json").
 
 ## Tools and hosts
-- Blender CLI: C:/Users/me/.blender/blender-5.2.2/blender.exe, headless on the work file only (never on MASTER,
+- Blender CLI: C:/Users/me/.blender/blender-5.2.2/blender.exe, headless on the work file only (never on MASTER.blend,
   which is open in the live Blender): blender -b --factory-startup --python-exit-code 1 <file> --python <script>.py,
   with bpy.context.preferences.filepaths.save_version = 0 set before saving.
-- Blender MCP (execute_blender_code) for MASTER: changes_since, checkout, integrate, save, save_snapshot.
+- Blender MCP (execute_blender_code) for MASTER.blend: changes_since, checkout, integrate, save, save_snapshot.
 
 ## Acceptance checks
 - M1 names, identity transforms, pivot at the bottom-left corner, extents match Size
@@ -228,13 +228,13 @@ P1-P4, plus C1-C4 with mockups; QA writes `world/reports/qa/stage-2/`.
 pivot bottom-left, openings cut, `kit_status = grey`. Load: `blender-kit-library`. Checks: B1. Fallback: the kit rules
 in `world-spec.md` and this skill's `scripts/kit_library.py`.
 
-**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A` under `ASM` in MASTER,
+**Stage 4, T-GREY-ASM-SHOPFRONT-A (integrator).** Goal: the one collection `ASM_ShopFront_A` under `ASM` in MASTER.blend,
 built from instances of the pieces with the spec's `uses` counts, plus socket empties. Load: `blender-kit-library`.
 Checks: B2-B3 on the assembly.
 
-**Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: the `MASTER`
+**Stage 4, T-GREY-MASTER (integrator, live Blender or headless without the Blender MCP).** Goal: the `PLACEMENTS`
 collection laid out from `zones[].placements` with instances of pieces and assemblies, scale figures per zone in
-`REF`. Checks: B2-B7, with overlays against `plan_<zone>.svg` and
+`REF`. Pieces sit in or on the envelope built by `T-GREY-SHELL-<ZONE>`, never in place of it. Checks: B2-B7, with overlays against `plan_<zone>.svg` and
 `elevation_<id>.svg`.
 
 **Stage 5, T-MOD-MASTER (integrator).** Goal: the greybox views spot-checked with the modelled pieces. Checks: M9.
@@ -272,7 +272,7 @@ variants ordered so no two identical ones touch and no sequence repeats, breaker
 Checks: A1-A5, M9.
 
 **Stage 9, T-EXP-EXT (exporter).** Goal: one FBX per EXT piece in `export/fbx/EXT/`, `kit_status = exported`
-(exported from a work file checked out just before, the status then set in MASTER). Load:
+(exported from a work file checked out just before, the status then set in MASTER.blend). Load:
 `blender-to-unity`. Checks: E1-E4. Fallback: the export settings listed in `stages.md`.
 
 **Stage 10, T-UNITY-IMPORT (Unity integrator).** Goal: one folder, FBX and prefab variant per piece, family materials
@@ -280,8 +280,8 @@ in `_Shared/`, import settings as `stages.md` lists. Load: `blender-to-unity` (i
 its `Check()` output in the report). Writes: the stage-table row, which includes `Assets/World/Editor/` for
 `KitImport.cs` on the first import. Checks: N1-N3.
 
-**Stage 10, T-UNITY-SYNC-MASTER (Unity integrator).** Goal: Unity's MASTER root matches Blender's MASTER, snapshot
-committed (ASM scopes synced first). Load: `blender-unity-placement-sync`. Writes include MASTER.blend only through
+**Stage 10, T-UNITY-SYNC-MASTER (Unity integrator).** Goal: Unity's `PLACEMENTS` root matches Blender's `PLACEMENTS`
+collection (scope `PLACEMENTS`), snapshot committed (ASM scopes synced first). Load: `blender-unity-placement-sync`. Writes include MASTER.blend only through
 the sync's apply step. Checks: N4, N5. Conflicts go to the master, who asks the user.
 
 **Stage 10, T-UNITY-SETUP (Unity integrator).** Goal: VRChat layers and collision matrix set up first (self-check:
@@ -301,9 +301,9 @@ lightmapped renderer keeping its UV2 gaps at 2 texels (paste the `--footprints` 
 and Turn Off Mirror Occlusion unticked on each mirror unless objects flicker. Lights, colours and contrast follow
 `look.lighting_mood` (paste it); bake with the lighting skill's final-quality settings. A piece with `lod_lightmap:
 false`: Receive Global Illumination = Light Probes on its LOD1+ renderers. A zone with `lighting_states`: paste the
-lighting-states list from `stages.md`, stage 11 (copies under `LIGHT_STATES` outside MASTER's scope root, originals
+lighting-states list from `stages.md`, stage 11 (copies under `LIGHT_STATES` outside the `PLACEMENTS` root, originals
 kept with their renderers off), and have the report tell the user that layout edits in a switched zone go to the
-originals under MASTER (selected in the Hierarchy) or to Blender, never to the copies. A `T-LIGHT-<n>` after stage 12
+originals under `PLACEMENTS` (selected in the Hierarchy) or to Blender, never to the copies. A `T-LIGHT-<n>` after stage 12
 keeps the state parents the `T-UDON` scripts reference and adds I1 to its checks. Writes: the stage-table row. Load:
 `vrchat-lighting-and-baking`. Checks: L1-L7.
 
@@ -323,7 +323,7 @@ Manager keeps the world's blueprint ID across target switches in this one projec
 build task ends by switching the build target back to Windows. Load: `vrchat-world-sdk-setup`. Checks: O5.
 
 **Any stage after 4, T-RENAME-EXT-DOOR-2X3-A (integrator).** Goal: the piece renamed, and its FBX and Unity asset
-once they exist: its collection renamed in MASTER, which every instance follows. Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
+once they exist: its collection renamed in MASTER.blend, which every instance follows. Never deleted and re-placed, so placement ids survive; after stage 10, a placement merge that carries the rename into Unity. Ordering: `stages.md`, "Gate
 dependencies"; its `stage` is the ledger's stage when it is added. Load: `blender-kit-library`,
 `blender-unity-placement-sync`. Writes: the stage-table row, with `world/placements/`. Checks: B2-B3, M9 (every
 earlier placement keeps its id, position and rotation), and N4-N5 after stage 10.

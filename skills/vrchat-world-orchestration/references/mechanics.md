@@ -39,7 +39,7 @@ Claude Code subagents with MCP for Unity). Brief Unity subagents to read editor 
   blender/
     MASTER.blend                        the one Blender file: KIT, ASM and MASTER collections, all in here
     MASTER.snapshot.json                what MASTER held at the last agent save (kit_library.py save_snapshot)
-    work/<task id>/KIT_<FAMILY>.blend   pieces checked out of MASTER for a task; deleted once integrated
+    work/<task id>/KIT_<FAMILY>.blend   pieces checked out of MASTER.blend for a task; deleted once integrated
     textures/<FAMILY>/  substance/<FAMILY>/
   export/fbx/<FAMILY>/<Piece>.fbx
 ```
@@ -61,7 +61,7 @@ with the script's full path inside this skill:
 | `... spec_validate.py world/spec.yaml --ledger world/ledger.yaml --mermaid world/diagrams/tasks.mmd` | Also checks the task graph and draws it |
 | `... spec_validate.py world/spec.yaml --ledger world/ledger.yaml --draft world/briefs/draft-tasks.yaml` | Checks the planner's draft tasks merged with the ledger, without writing either; a draft task replaces the ledger task with the same id |
 | `.venv/Scripts/python <skill>/scripts/spec_to_svg.py world/spec.yaml --out world/diagrams` | Regenerates the plans and elevations; removes drawings of zones and elevations no longer in the spec |
-| `blender -b --factory-startup --python-exit-code 1 <file.blend> --python <skill>/scripts/kit_library.py -- --audit --module <grid.module>` | Audits the pieces of MASTER (with the layout checks) or of a work file (Blender's Python; no venv; `--module` is required) |
+| `blender -b --factory-startup --python-exit-code 1 <file.blend> --python <skill>/scripts/kit_library.py -- --audit --module <grid.module>` | Audits the pieces of MASTER.blend (with the layout checks) or of a work file (Blender's Python; no venv; `--module` is required) |
 | `... kit_library.py -- --changes blender/MASTER.snapshot.json` | What changed in MASTER since the last agent save; exit 1 when anything did. Only on a file no Blender has open: through the MCP otherwise |
 
 Run the validator and `spec_to_svg.py` after every spec change; a spec that does not validate blocks the stage.
