@@ -22,6 +22,7 @@ tools:                              # detected at intake, confirmed by the user
   substance_designer: false
   substance_painter: false
   rizomuv: false
+  mesh_baker: auto                  # toolbag | substance | cycles | auto (pbr-texturing bakers.py picks)
   unity_packages: [com.vrchat.worlds]   # installed packages the plan may use (UdonSharp and ClientSim ship inside it)
   build_modules: [windows]             # Unity build support installed: windows, android, ios
 

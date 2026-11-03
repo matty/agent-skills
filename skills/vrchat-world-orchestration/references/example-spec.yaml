@@ -20,6 +20,7 @@ tools:                              # detected at intake, confirmed by the user
   substance_designer: true
   substance_painter: true
   rizomuv: true
+  mesh_baker: toolbag               # Marmoset Toolbag detected (a probe script ran in it)
   unity_packages: [com.vrchat.worlds]   # installed packages the plan may use (UdonSharp and ClientSim ship inside it)
   build_modules: [windows, android]    # Unity build support installed for the platforms
 

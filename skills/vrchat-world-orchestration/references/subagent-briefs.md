@@ -259,8 +259,8 @@ metallic-smoothness maps at the family's `map_px` (channel plan in `texturing.md
 has `detail_map: true`, matching the swatch mockups, `look.references` and the `look.materials` targets, worn to
 `look.wear`. Every signal of a unique map from 3D space (bakes, Object-coordinate procedurals, Box-projected
 images); the tiling maps even at tile scale (`pbr_check.py --tiling`, `tile_flatten.py` when it fails); `bake: true`
-pieces baked from their highs with `bake_maps.py` (`--explode` where parts sit close), the report kept beside the
-maps. Load: `pbr-texturing` (without it, paste `texturing.md`); the Substance MCP if available. Paste the
+pieces baked from their highs with `bake_maps.py --engine auto --prefer <tools.mesh_baker>` (`--explode` where parts
+sit close; one baker per texture set), the report, with the baker that ran and why, kept beside the maps. Load: `pbr-texturing` (without it, paste `texturing.md`); the Substance MCP if available. Paste the
 spec's `look`. Self-check with `pbr_check.py` and `texture_seams.py` before reporting. When EXT is
 `look.lead_family`, its QA's look-dev renders go to the user at the look gate. Checks: X1-X5, X7-X10.
 
