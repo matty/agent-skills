@@ -14,19 +14,22 @@ too.
 
 | Target | Scope root |
 |---|---|
-| `scene:MASTER` | The root GameObject called MASTER in the open scenes |
-| `scene:Assets/World/Scenes/Study.unity#MASTER` | The same, in that scene: needed when more than one open scene has such a root (otherwise refused) |
+| `scene:PLACEMENTS` | The root GameObject called PLACEMENTS in the open scenes |
+| `scene:Assets/World/Scenes/Study.unity#PLACEMENTS` | The same, in that scene: needed when more than one open scene has such a root (otherwise refused) |
 | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab` | That prefab asset, edited in place. The first Apply creates it (one empty root named after the file, identity transform); a Dump before that writes an empty dump |
 
 ## Scope roots
 
 A `scene:` target needs its root before the first sync: until it exists, Check says "no root GameObject called
-MASTER". Create an empty root GameObject called `MASTER` at identity (position 0, rotation 0, scale 1) in the world
-scene. ASM scopes need nothing: their first Apply creates the prefab.
+PLACEMENTS". Create an empty root GameObject called `PLACEMENTS` at identity (position 0, rotation 0, scale 1) in the
+world scene. ASM scopes need nothing: their first Apply creates the prefab. A scene that still has the old root name
+`MASTER` is not ready ("legacy placements root MASTER"): rename it (SKILL.md, "Migrating from MASTER"). Other roots
+beside it are never synced: `SHELL` and `CEILINGS` (each room's envelope, re-exported per zone), `LIGHT_STATES`,
+players and Udon.
 
 Everything under the scope root syncs, so Unity-only duplicates that must never reach Blender (a switchable light's
 per-state copies of the static geometry, for example) go under a separate root outside it, such as `LIGHT_STATES`
-beside `MASTER`. Inside the scope they would get fresh ids and be created in the .blend; the merge report flags
+beside `PLACEMENTS`. Inside the scope they would get fresh ids and be created in the .blend; the merge report flags
 several placements of one asset at one pose.
 
 - No world scene yet: the agent creates one under `Assets/World/Scenes/`, adds the root and saves it. A scene the
@@ -40,20 +43,20 @@ several placements of one asset at one pose.
 ```csharp
 const string path = "Assets/World/Scenes/World.unity";
 if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) != null)
-    return path + " already exists: open it and add MASTER there (never overwrite a scene)";
+    return path + " already exists: open it and add PLACEMENTS there (never overwrite a scene)";
 for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
     if (UnityEngine.SceneManagement.SceneManager.GetSceneAt(i).isDirty) return "an open scene has unsaved changes: ask the user";
 if (!AssetDatabase.IsValidFolder("Assets/World")) AssetDatabase.CreateFolder("Assets", "World");
 if (!AssetDatabase.IsValidFolder("Assets/World/Scenes")) AssetDatabase.CreateFolder("Assets/World", "Scenes");
 var scene = UnityEditor.SceneManagement.EditorSceneManager.NewScene(
     UnityEditor.SceneManagement.NewSceneSetup.DefaultGameObjects, UnityEditor.SceneManagement.NewSceneMode.Single);
-new GameObject("MASTER");                                    // at the origin, rotation 0, scale 1
+new GameObject("PLACEMENTS");                                // at the origin, rotation 0, scale 1
 UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene, path);
-return PlacementSync.PlacementSyncTool.Check("scene:MASTER");
+return PlacementSync.PlacementSyncTool.Check("scene:PLACEMENTS");
 ```
 
 Run through MCP for Unity's `execute_code` wrapper in Unity 2022.3.22f1 batch mode on 2026-10-17: with an unsaved
-scene open it changes nothing and says so; otherwise it saves `World.unity` with MASTER at identity and Check reports
+scene open it changes nothing and says so; otherwise it saves `World.unity` with PLACEMENTS at identity and Check reports
 ready. The existence guard was added after a re-run overwrote a saved scene.
 
 ## Calls
@@ -126,7 +129,7 @@ not exist are listed by Check and in the dump's `note`.
 | Overrides > Apply All on a placement | Pushes its PlacementId into the kit prefab: every instance shares one id and the merge re-issues ids | Apply overrides selectively, never the PlacementId component |
 | Overrides > Revert All on a placement | Removes its PlacementId; the merge gives the id back if the instance did not move, otherwise it reads as deleted plus new | Revert selectively |
 | Unpack Prefab, deleting or moving the prefab out of the roots | The instance stops being a placement and reads as deleted (refused above the deletion budget) | Keep kit prefabs under the roots |
-| Editing pieces inside an assembly instance in the MASTER scene | Overrides on the assembly instance that no scope syncs | Edit the assembly prefab and sync its ASM scope |
+| Editing pieces inside an assembly instance under the PLACEMENTS root | Overrides on the assembly instance that no scope syncs | Edit the assembly prefab and sync its ASM scope |
 
 ## APIs relied on (Unity 2022.3 script reference, checked 2026-10-17)
 

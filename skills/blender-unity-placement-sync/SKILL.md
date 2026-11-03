@@ -1,6 +1,6 @@
 ---
 name: blender-unity-placement-sync
-description: A Blender layout and a Unity scene disagree - pieces moved, added or deleted in Unity that Blender must get (or the reverse), a layout to rebuild as prefab instances, placements lost after a re-export, CONFLICT, BLOCKED or REFUSED in a sync report. Stable ids, a three-way merge, MASTER and ASM scopes. .blend structure (blender-kit-library); FBX export and prefabs (blender-to-unity).
+description: A Blender layout and a Unity scene disagree - pieces moved, added or deleted in Unity that Blender must get (or the reverse), a layout to rebuild as prefab instances, placements lost after a re-export, CONFLICT, BLOCKED or REFUSED in a sync report. Stable ids, a three-way merge, PLACEMENTS and ASM scopes, migrating from MASTER. .blend structure (blender-kit-library); FBX export and prefabs (blender-to-unity).
 ---
 
 # Blender <-> Unity placement sync
@@ -26,7 +26,7 @@ Set up with `blender-kit-library` and `blender-to-unity`; this skill only needs 
 | Script | Host | Does |
 |---|---|---|
 | `scripts/export_placements.py` | Blender (bpy), headless or live | `dump` placements, `apply` a plan; `--collection` names the collection a scope covers |
-| `scripts/placement_merge.py` | Plain Python 3.9+, stdlib | `merge` (a dry run: plans and report), `commit` (verify both sides and write the snapshot) |
+| `scripts/placement_merge.py` | Plain Python 3.9+, stdlib | `merge` (a dry run: plans and report), `commit` (verify both sides and write the snapshot), `migrate-master` (rename a placements folder's legacy `MASTER.*` files) |
 | `scripts/unity/PlacementId.cs` | Unity, runtime folder | The id component (`IEditorOnly` in VRChat projects, so SDK validation ignores it: https://creators.vrchat.com/sdk/build-pipeline-callbacks-and-interfaces, checked 2026-10-17) |
 | `scripts/unity/Editor/PlacementSync.cs` | Unity editor | `Check`, `Dump`, `Apply`, menu `Tools > Placement Sync` |
 
@@ -37,24 +37,26 @@ snapshot.
 
 | Scope | Blender, single MASTER (default) | Blender, split files | Unity target |
 |---|---|---|---|
-| `MASTER` | `blender/MASTER.blend`, the `MASTER` collection (world origin = root) | `blender/MASTER.blend`, the whole scene | `scene:MASTER`, a root GameObject called MASTER (`scene:<scene path>#MASTER` when two open scenes have one) |
+| `PLACEMENTS` | `blender/MASTER.blend`, the `PLACEMENTS` collection (world origin = root) | `blender/MASTER.blend`, the whole scene | `scene:PLACEMENTS`, a root GameObject called PLACEMENTS (`scene:<scene path>#PLACEMENTS` when two open scenes have one) |
 | `ASM_ShopFront_A` | `blender/MASTER.blend`, the collection `ASM_ShopFront_A` under `ASM` | `blender/asm/ASM_ShopFront_A.blend`, its collection `ASM_ShopFront_A` | `prefab:Assets/World/Assemblies/ASM_ShopFront_A.prefab`, created by the scope's first Apply |
 
-Sync every ASM scope before MASTER, so assembly prefabs exist when MASTER places them. The Blender side of a scope is
-the collection named like the scope when the file has one, else (split MASTER only) the whole scene; `--collection
-NAME` names another. A single MASTER (`kit_layout = "single"`) refuses a scope it has no collection for, and lists its
-own pieces and assemblies as assets, so it needs no `--libraries`.
+Sync every ASM scope before PLACEMENTS, so assembly prefabs exist when PLACEMENTS places them. The Blender side of a
+scope is the collection named like the scope when the file has one, else (split MASTER.blend only) the whole scene;
+`--collection NAME` names another. A single MASTER.blend (`kit_layout = "single"`) refuses a scope it has no collection
+for, and lists its own pieces and assemblies as assets, so it needs no `--libraries`. Its `SHELL` and `CEILINGS` collections (each
+room's envelope, `blender-kit-library`) never sync: in Unity the envelope's zone FBX instances sit under their own roots
+`SHELL` and `CEILINGS`, outside `PLACEMENTS` (`blender-to-unity`). What sits in or on the envelope is placed here.
 
 Everything under a scope root syncs. Unity-only copies that must never reach Blender (the duplicated static geometry of
 a switchable-light setup, one copy per lighting state, or any other Unity-only duplicate) live under a separate root
-outside the scope root, for example a root GameObject `LIGHT_STATES` beside `MASTER`. Copies left inside the scope get
+outside the scope root, for example a root GameObject `LIGHT_STATES` beside `PLACEMENTS`. Copies left inside the scope get
 fresh ids and are created in the .blend; the merge report flags several placements of one asset at one pose.
 
 ## Before the first sync
 
 1. Back up the .blend files or keep them under version control: headless applies save them.
 2. Install the Unity pair (`references/unity-apply.md`, Install).
-3. Create the Unity scope root for MASTER: an empty root GameObject called `MASTER` at identity (position 0,
+3. Create the Unity scope root for PLACEMENTS: an empty root GameObject called `PLACEMENTS` at identity (position 0,
    rotation 0, scale 1) in the world scene. With no world scene yet, the agent creates one and saves it under
    `Assets/World/Scenes/` (a scene the agent created itself, at a path it chose, is its own to save); in a scene the
    user already works in, add the root and let the user save. Snippet: `references/unity-apply.md`, Scope roots.
@@ -67,28 +69,30 @@ Run it in one go, with nobody editing either side: Unity keys in a dump are only
 One writer per .blend: the Blender file must not be open in a live Blender session while a headless apply writes it
 (a live session's next save would overwrite the sync). If it is open there, run the Blender steps in that session
 through Blender MCP instead (`dump` and `apply` from the script's header) and save. The sync itself keeps the user's
-moves (they are what it merges), but a MASTER the user also edits gets `blender-kit-library`'s routine around it:
+moves (they are what it merges), but a MASTER.blend the user also edits gets `blender-kit-library`'s routine around it:
 `changes_since` before the dump, and `save_snapshot` after the apply's save.
 
 Placeholders: `<skill>` this skill's folder, `<project>` the project root, `<p>` the absolute placements folder,
-`B` = `blender -b --factory-startup --python-exit-code 1`. MASTER shown, for split files; in a single MASTER drop
+`B` = `blender -b --factory-startup --python-exit-code 1`. PLACEMENTS shown, for split files; in a single MASTER.blend drop
 `--libraries`. An ASM scope differs only in `--scope ASM_ShopFront_A`, its `prefab:` target and, with split files, the
 file (`<project>/blender/asm/ASM_ShopFront_A.blend`) and `--libraries "../kits/*.blend"`.
 
 ```
-1. check   Unity MCP execute_code: return PlacementSync.PlacementSyncTool.Check("scene:MASTER");
+1. check   Unity MCP execute_code: return PlacementSync.PlacementSyncTool.Check("scene:PLACEMENTS");
            -> must start "[placements] ready"; otherwise tell the user what it says and stop.
 2. dump    B <project>/blender/MASTER.blend --python <skill>/scripts/export_placements.py --
-               dump --dir <p> --scope MASTER --libraries "kits/*.blend" "asm/*.blend"
-           execute_code: return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "<p>/MASTER.unity.json", "MASTER");
-3. merge   python <skill>/scripts/placement_merge.py merge --dir <p> --scope MASTER
-           -> read <p>/MASTER.report.txt and act on the exit code (table below). Nothing has changed anywhere yet.
-4. apply   Unity first: execute_code: return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "<p>/MASTER.plan.unity.json");
+               dump --dir <p> --scope PLACEMENTS --libraries "kits/*.blend" "asm/*.blend"
+           execute_code: return PlacementSync.PlacementSyncTool.Dump("scene:PLACEMENTS", "<p>/PLACEMENTS.unity.json",
+                                                                     "PLACEMENTS");
+3. merge   python <skill>/scripts/placement_merge.py merge --dir <p> --scope PLACEMENTS
+           -> read <p>/PLACEMENTS.report.txt and act on the exit code (table below). Nothing has changed anywhere yet.
+4. apply   Unity first: execute_code: return PlacementSync.PlacementSyncTool.Apply("scene:PLACEMENTS",
+                                                                                "<p>/PLACEMENTS.plan.unity.json");
            -> "[placements] REFUSED" means nothing changed anywhere: fix it with the user, restart at step 1.
 5. apply   Blender: B <project>/blender/MASTER.blend --python <skill>/scripts/export_placements.py --
-               apply --dir <p> --scope MASTER --libraries "kits/*.blend" "asm/*.blend"
+               apply --dir <p> --scope PLACEMENTS --libraries "kits/*.blend" "asm/*.blend"
 6. dump    both sides again (step 2).
-7. commit  python <skill>/scripts/placement_merge.py commit --dir <p> --scope MASTER
+7. commit  python <skill>/scripts/placement_merge.py commit --dir <p> --scope PLACEMENTS
            -> refuses, leaving the snapshot alone, unless both sides now match the plan.
 ```
 
@@ -104,7 +108,7 @@ then discards the result).
 | merge exit 2, `CONFLICT` lines | Show them to the user. Re-run merge with `--take-id ID=blender` or `--take-id ID=unity` per conflict (`--take blender` or `--take unity` for all). The rest of the plan is ready either way |
 | merge exit 3, only `BLOCKED` lines | The receiving side has no such asset yet; each line says which case (table in `references/merge-rules.md`). A new piece, or a placement swapped to a piece the other side lacks: export and package it (`blender-to-unity`), or add it as a KIT piece; never rename the old asset, other placements still use it. An assembly: sync its ASM scope first. A rename made on one side only (the old asset is gone from that side): finish (or undo) the rename on the other side (`blender-kit-library` has the rename procedure; an assembly: `references/merge-rules.md`, Renaming an assembly). You may apply and commit now: blocked items stay pending and the next merge retries them |
 | merge exit 4, `REFUSED` | Too many deletions or renames, an empty side, or a dump from another file, collection or Unity target than this scope's. Check the dumps (right file and scene, prefab roots). Only if the user confirms the deletions are real: `--allow-deletes`; the renames and folder moves (expected on the first sync after names began to sync): `--allow-renames`; a scope that really moved: `--accept-source` |
-| merge exit 1 | Bad input (a missing or swapped dump, a malformed `--take-id`): fix it and re-run |
+| merge exit 1 | Bad input (a missing or swapped dump, a malformed `--take-id`): fix it and re-run. "legacy placements scope MASTER": migrate first (Migrating from MASTER, below) |
 | Unity Apply returns `REFUSED` | Nothing changed. Tell the user why (Play mode, an unsaved or never-saved scene, Prefab Mode open, an ambiguous root) and restart at step 1 once they fixed it. Never save the user's scene for them; `save: false` and `force: true` are in `references/unity-apply.md` |
 | Unity Apply lists `ERRORS` | `references/unity-apply.md` has each one. A stale key or changed object: restart at step 1. A swap that would discard Unity-side changes: ask the user, then take one of three ways out (otherwise every loop plans the same swap again): **force**, re-run Apply on the same plan with `force: true`, then step 5; **swap by hand** in Unity, keeping the `PlacementId` component on the new instance, then step 5; **keep the old piece**, re-point that Blender instance back to the old collection (`blender-kit-library`), then restart at step 2 |
 | Blender apply exits 1 | It printed `ERROR` lines (a missing collection, an object changed since the dump) and still saved what did apply. Fix the cause and restart at step 1 |
@@ -139,7 +143,7 @@ Full table, id handling, exit codes and file formats: `references/merge-rules.md
   which then sync as new placements. An object that lost its id takes it back when it still matches its placement.
 - **Only the kit counts**: collection instances (Blender) and outermost instances of prefabs under the prefab roots
   (Unity) are placements. Lights, Udon objects and folder empties are ignored. Pieces inside an assembly instance
-  belong to the assembly's own scope: edit the assembly prefab, not the instance in the MASTER scene.
+  belong to the assembly's own scope: edit the assembly prefab, not the instance under the PLACEMENTS root.
 - **These break identity, so avoid them**: in Blender, a library override of a placed instance (it replaces the
   instance: the dump skips overrides and warns; make a variant piece instead); in Unity, Overrides > Apply All or
   Revert All on a placement, Unpack Prefab, or moving a kit prefab out of the prefab roots
@@ -154,3 +158,29 @@ above: a piece placed in Blender at `(2, 3, 0)`, rotated +90 deg about Z, appear
 -90 deg about Y. Scale maps the same way: Blender `(sx, sy, sz)` is Unity `(sx, sz, sy)`. The conversion assumes the
 prefab root has identity rotation. If pieces arrive mirrored or turned, check the FBX axis settings before touching
 the matrix in `scripts/export_placements.py`.
+
+## Migrating from MASTER
+
+Before 2026-11-03 this scope was called `MASTER`: the Blender collection, the Unity root and target (`scene:MASTER`)
+and the files in the placements folder (`MASTER.blender.json`, `MASTER.unity.json`, `MASTER.synced.json`, ...). It is
+now `PLACEMENTS` everywhere; the file `blender/MASTER.blend` keeps its name. Nothing falls back: `--scope MASTER`, a
+`scene:...MASTER` target, a single MASTER.blend whose placements are still in a `MASTER` collection, and a placements
+folder holding only `MASTER.*` files are all refused with "legacy placements scope MASTER" (Unity Check: "not ready:
+legacy placements root MASTER"). With the user's go-ahead, and nobody editing either side:
+
+1. Blender, in MASTER.blend (live through the MCP when it is open, then save and `save_snapshot`):
+
+   ```python
+   import bpy
+   for c in list(bpy.data.collections):
+       if c.library is None and (c.name == "MASTER" or c.name.startswith("MASTER_")):
+           c.name = "PLACEMENTS" + c.name[len("MASTER"):]
+   ```
+
+2. Unity: rename the root GameObject `MASTER` to `PLACEMENTS` (in every scene that has one) and let the user save the
+   scene; in `PlacementSync.json`, `"name": "PLACEMENTS", "target": "scene:PLACEMENTS"`.
+3. The placements folder: `python <skill>/scripts/placement_merge.py migrate-master --dir <p>`. It renames every
+   `MASTER.<suffix>` to `PLACEMENTS.<suffix>` and rewrites the snapshot's scope and source (collection `PLACEMENTS`,
+   target `scene:PLACEMENTS` or `scene:<path>#PLACEMENTS`), so the next merge needs no `--accept-source`. It refuses
+   (exit 2) when `PLACEMENTS.*` files already exist.
+4. Run the sync loop from step 1. It should report nothing to do.

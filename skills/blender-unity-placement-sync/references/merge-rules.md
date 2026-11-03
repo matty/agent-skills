@@ -60,14 +60,14 @@ names the case:
 | BLOCKED line says | Cause | Do |
 |---|---|---|
 | `no Unity prefab called X yet: a new piece, so export and package it` | A piece new to Unity | Export and package it (`blender-to-unity`) |
-| `no Unity prefab called ASM_... yet: sync that assembly's own ASM scope first` | An assembly placed in MASTER before its scope synced | Sync the ASM scope, then MASTER |
+| `no Unity prefab called ASM_... yet: sync that assembly's own ASM scope first` | An assembly placed in PLACEMENTS before its scope synced | Sync the ASM scope, then PLACEMENTS |
 | `no Unity prefab called X: a placement was swapped from Y to a piece Unity lacks, so export and package X; never rename Y` | Some placements swapped in Blender to a new piece; Blender still has Y | Export and package X. Renaming Y would turn every other Y placement into X |
 | `Unity has no prefab called X (it has Y, which Blender no longer has): finish (or undo) the rename on the Unity side` | A piece renamed in Blender only (Y is gone from Blender) | Rename the prefab and its FBX in Unity (or rename the collection back) |
-| `no Unity prefab called ASM_X: a placement was swapped from Y to an assembly whose scope has not synced, so sync ASM_X's own scope first; never rename Y` | A placement swapped in Blender to an assembly variant made before its scope synced | Sync the ASM_X scope (its first Apply creates the prefab), then MASTER again |
+| `no Unity prefab called ASM_X: a placement was swapped from Y to an assembly whose scope has not synced, so sync ASM_X's own scope first; never rename Y` | A placement swapped in Blender to an assembly variant made before its scope synced | Sync the ASM_X scope (its first Apply creates the prefab), then PLACEMENTS again |
 | `no Blender collection called X: a placement was swapped in Unity from Y to a prefab Blender lacks ...` | Some instances swapped in Unity to a Unity-only prefab; Unity still has Y | Add X as a KIT piece (`blender-kit-library`), or undo the swap in Unity; never rename Y |
-| `no Blender collection called ASM_X: a placement was swapped in Unity from Y to an assembly Blender lacks, so build it (under ASM in MASTER, or in blender/asm/ASM_X.blend with split files) and sync its scope, or undo the swap` | An instance swapped in Unity to an assembly prefab Blender has no collection for | Build the assembly (single MASTER: under `ASM`; split: its own ASM file) and sync its scope, or undo the swap in Unity |
-| `Blender has no collection called X (it has Y, which Unity no longer has): finish (or undo) the rename on the Blender side` | A prefab renamed in Unity only (Y is gone from Unity) | Rename the collection (single MASTER: in place, its instances follow; split: in its KIT or ASM file, then re-point its instances; `blender-kit-library`), or undo it in Unity |
-| `no Blender collection called X: add it as a piece under KIT in MASTER ...` | A piece Blender has never had | Add the collection (single MASTER: under `KIT`; split: to a KIT file, and dump with `--libraries` naming it) |
+| `no Blender collection called ASM_X: a placement was swapped in Unity from Y to an assembly Blender lacks, so build it (under ASM in MASTER.blend, or in blender/asm/ASM_X.blend with split files) and sync its scope, or undo the swap` | An instance swapped in Unity to an assembly prefab Blender has no collection for | Build the assembly (single MASTER.blend: under `ASM`; split: its own ASM file) and sync its scope, or undo the swap in Unity |
+| `Blender has no collection called X (it has Y, which Unity no longer has): finish (or undo) the rename on the Blender side` | A prefab renamed in Unity only (Y is gone from Unity) | Rename the collection (single MASTER.blend: in place, its instances follow; split: in its KIT or ASM file, then re-point its instances; `blender-kit-library`), or undo it in Unity |
+| `no Blender collection called X: add it as a piece under KIT in MASTER.blend ...` | A piece Blender has never had | Add the collection (single MASTER.blend: under `KIT`; split: to a KIT file, and dump with `--libraries` naming it) |
 
 A swap is told from a rename by the old asset Y: still on the sending side (other placements, its prefab or its
 collection) means a swap; gone means a rename. Only new names the receiving side lacks count: when Y is gone and its
@@ -80,13 +80,13 @@ as a KIT piece: it has its own collection (split: its own ASM file) and scope.
 
 An assembly's name is its collection (split: and its ASM file), its prefab and its sync scope at once.
 
-1. Blender: single MASTER, rename its collection (every instance follows); split, rename the ASM file and its
+1. Blender: single MASTER.blend, rename its collection (every instance follows); split, rename the ASM file and its
    collection together, and re-point its instances in every file that places it (`blender-kit-library`, Naming).
 2. Unity: rename the prefab in place (`Assets/World/Assemblies/ASM_<New>.prefab`: an assembly prefab has no FBX). Its
    GUID stays, so the scenes that place it follow.
 3. In the placements folder, rename the old scope's files (`ASM_<Old>.*`) to the new scope name, then sync the new
    scope once with `--accept-source`: the snapshot recorded the old file, collection and target. Its ids survive.
-4. Sync MASTER: its instances of the assembly changed to the new name on both sides, so there is nothing to do.
+4. Sync PLACEMENTS: its instances of the assembly changed to the new name on both sides, so there is nothing to do.
 
 ## Ids
 

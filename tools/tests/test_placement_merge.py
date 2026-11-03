@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MERGE = ROOT / "skills" / "blender-unity-placement-sync" / "scripts" / "placement_merge.py"
-S = "MASTER"
+S = "PLACEMENTS"
 H = math.sqrt(0.5)
 QI = [0.0, 0.0, 0.0, 1.0]
 Q90Y = [0.0, H, 0.0, H]
@@ -109,7 +109,7 @@ class Scope:
     """One scope's placements folder in a temp dir."""
 
     def __init__(self, tc, blender, unity, snapshot=None, b_assets=None, u_assets=None, b_file="MASTER.blend",
-                 b_collection=None, target="scene:MASTER"):
+                 b_collection=None, target="scene:PLACEMENTS"):
         self.tc = tc
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = self.tmp.name
@@ -512,7 +512,7 @@ class Blocked(unittest.TestCase):
         self.assertNotIn("export and package", sc.out)
 
     def test_assembly_swapped_in_blender_points_at_its_scope(self):
-        """A MASTER stall swapped to ASM_Stall_B before B's own scope synced: never 'export and package' an assembly."""
+        """A placed stall swapped to ASM_Stall_B before B's own scope synced: never 'export and package' an assembly."""
         b = [it("s%d" % n, "ASM_Stall_A", (4 * n, 0, 0), key="S%d" % n) for n in range(3)]
         base_items = copy.deepcopy(b)
         b[2]["asset"] = "ASM_Stall_B"
@@ -529,7 +529,7 @@ class Blocked(unittest.TestCase):
         sc = Scope(self, copy.deepcopy(base_items), u, snapshot_of(base_items),
                    u_assets={"ASM_Stall_A", "ASM_Stall_B"})
         self.assertEqual(sc.merge(), 3)
-        self.assertIn("so build it (under ASM in MASTER, or in blender/asm/ASM_Stall_B.blend with split files) and "
+        self.assertIn("so build it (under ASM in MASTER.blend, or in blender/asm/ASM_Stall_B.blend with split files) and "
                       "sync its scope, or undo the swap in Unity", sc.out)
         self.assertNotIn("KIT piece", sc.out)
 
@@ -590,7 +590,7 @@ class SafetyRefusals(unittest.TestCase):
         self.assertEqual(len(sc.pu["delete"]), 3)
 
     def test_dump_from_another_blender_file_is_refused(self):
-        src = {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:MASTER"}
+        src = {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:PLACEMENTS"}
         sc = Scope(self, blender_layout(), unity_layout(), snapshot_of(blender_layout(), src),
                    b_file="ASM_Shop_A.blend")
         sc.merge()
@@ -598,7 +598,7 @@ class SafetyRefusals(unittest.TestCase):
         self.assertEqual(sc.merge("--accept-source"), 0)
 
     def test_dump_from_another_unity_target_is_refused(self):
-        src = {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:MASTER"}
+        src = {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:PLACEMENTS"}
         sc = Scope(self, blender_layout(), unity_layout(), snapshot_of(blender_layout(), src),
                    target="prefab:Assets/World/Assemblies/ASM_Shop_A.prefab")
         sc.merge()
@@ -608,7 +608,7 @@ class SafetyRefusals(unittest.TestCase):
         sc = Scope(self, blender_layout(), unity_layout(), base())
         self.assertEqual(sc.loop(), 0)
         self.assertEqual(sc.load("synced.json")["source"],
-                         {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:MASTER"})
+                         {"blender_file": "master.blend", "blender_collection": None, "unity_target": "scene:PLACEMENTS"})
 
 
 class LostIdsAndRecovery(unittest.TestCase):
@@ -654,7 +654,7 @@ class LostIdsAndRecovery(unittest.TestCase):
 
 class SamePoseCopies(unittest.TestCase):
     def test_copies_at_one_pose_are_reported(self):
-        """A lighting-state copy of the desk made inside MASTER: the merge says where such copies belong."""
+        """A lighting-state copy of the desk made inside PLACEMENTS: the merge says where such copies belong."""
         u = unity_layout() + [dict(unity_layout()[2], id="", key="3", name="DESK_A (lights on)")]
         sc = Scope(self, blender_layout(), u, base())
         sc.merge()
@@ -910,6 +910,84 @@ class BadInput(unittest.TestCase):
         rc, out = sc.run("commit")
         self.assertEqual(rc, 2, out)
         self.assertIn("on more than one object", out)
+
+
+def legacy_folder(tc, with_placements=False):
+    """A placements folder from before the rename: MASTER.* dumps and a snapshot whose source names MASTER."""
+    tmp = tempfile.TemporaryDirectory()
+    tc.addCleanup(tmp.cleanup)
+    src = {"blender_file": "master.blend", "blender_collection": "MASTER", "unity_target": "scene:Assets/W.unity#MASTER"}
+    files = {"MASTER.blender.json": {"scope": "MASTER", "side": "blender", "file": "C:/w/blender/MASTER.blend",
+                                     "collection": "MASTER", "items": blender_layout(),
+                                     "assets": ["DESK_A", "WALL_A"], "warnings": []},
+             "MASTER.unity.json": {"scope": "MASTER", "side": "unity", "target": "scene:Assets/W.unity#MASTER",
+                                   "items": unity_layout(), "assets": ["DESK_A", "WALL_A"]},
+             "MASTER.synced.json": dict(snapshot_of(blender_layout(), src), scope="MASTER")}
+    if with_placements:
+        files["PLACEMENTS.synced.json"] = snapshot_of(blender_layout())
+    for name, data in files.items():
+        with open(os.path.join(tmp.name, name), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    with open(os.path.join(tmp.name, "MASTER.report.txt"), "w", encoding="utf-8") as f:
+        f.write("old report")
+    return tmp.name
+
+
+def run_merge(*args):
+    p = subprocess.run([sys.executable, "-B", str(MERGE), *args], capture_output=True, text=True)
+    return p.returncode, p.stdout + p.stderr
+
+
+class LegacyMasterScope(unittest.TestCase):
+    """The placements scope was called MASTER: no silent fallback, and migrate-master renames a folder for it."""
+
+    def test_scope_master_is_refused(self):
+        d = legacy_folder(self)
+        rc, out = run_merge("merge", "--dir", d, "--scope", "MASTER")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("legacy placements scope MASTER", out)
+        self.assertIn("migrate-master", out)
+        rc, out = run_merge("commit", "--dir", d, "--scope", "MASTER")
+        self.assertEqual(rc, 2, out)
+        self.assertIn("legacy placements scope MASTER", out)
+
+    def test_placements_scope_over_an_unmigrated_folder_is_refused(self):
+        d = legacy_folder(self)
+        rc, out = run_merge("merge", "--dir", d, "--scope", "PLACEMENTS")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("legacy placements scope MASTER", out)
+
+    def test_migrate_renames_files_and_sources_then_merges_clean(self):
+        d = legacy_folder(self)
+        rc, out = run_merge("migrate-master", "--dir", d)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(sorted(os.listdir(d)), ["PLACEMENTS.blender.json", "PLACEMENTS.report.txt",
+                                                 "PLACEMENTS.synced.json", "PLACEMENTS.unity.json"])
+        with open(os.path.join(d, "PLACEMENTS.synced.json"), encoding="utf-8") as f:
+            snap = json.load(f)
+        self.assertEqual(snap["scope"], "PLACEMENTS")
+        self.assertEqual(snap["source"], {"blender_file": "master.blend", "blender_collection": "PLACEMENTS",
+                                          "unity_target": "scene:Assets/W.unity#PLACEMENTS"})
+        # The renamed ends, as the appliers now dump them, match the migrated snapshot: no --accept-source needed.
+        for name, side in (("PLACEMENTS.blender.json", "collection"), ("PLACEMENTS.unity.json", "target")):
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                self.assertIn("PLACEMENTS", json.load(f)[side])
+        rc, out = run_merge("merge", "--dir", d, "--scope", "PLACEMENTS")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("REFUSED", out)
+
+    def test_migrate_refuses_when_placements_files_exist(self):
+        d = legacy_folder(self, with_placements=True)
+        rc, out = run_merge("migrate-master", "--dir", d)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("PLACEMENTS.synced.json", out)
+        self.assertIn("MASTER.synced.json", os.listdir(d))
+
+    def test_migrate_without_legacy_files_does_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out = run_merge("migrate-master", "--dir", d)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("nothing to migrate", out)
 
 
 if __name__ == "__main__":

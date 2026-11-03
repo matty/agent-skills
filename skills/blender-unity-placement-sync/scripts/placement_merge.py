@@ -3,9 +3,10 @@
 Host: plain Python 3.9+, standard library only. Reads the dumps written by export_placements.py (Blender) and
 PlacementSync.cs (Unity); writes one plan per side and a pending file; never touches Blender or Unity itself.
 
-    python placement_merge.py merge  --dir <placements> --scope MASTER [--take blender|unity] [--take-id ID=SIDE ...]
-                                     [--allow-deletes] [--allow-renames] [--accept-source]
-    python placement_merge.py commit --dir <placements> --scope MASTER
+    python placement_merge.py merge  --dir <placements> --scope PLACEMENTS [--take blender|unity]
+                                     [--take-id ID=SIDE ...] [--allow-deletes] [--allow-renames] [--accept-source]
+    python placement_merge.py commit --dir <placements> --scope PLACEMENTS
+    python placement_merge.py migrate-master --dir <placements>
 
 Files, all in --dir, all named after the scope:
     <scope>.blender.json   dump from Blender            (input)
@@ -15,6 +16,14 @@ Files, all in --dir, all named after the scope:
     <scope>.pending.json   the state both sides should reach, for commit           (merge output)
     <scope>.report.txt     human-readable diff, also printed                       (merge output)
     <scope>.synced.prev.json   the snapshot before the last commit                 (commit output)
+
+The placements scope was called MASTER before 2026-11-03 (collection, Unity root and files). merge and commit refuse
+--scope MASTER, and a folder that still holds MASTER.* files but no PLACEMENTS.* dumps, with LEGACY_MESSAGE.
+migrate-master renames MASTER.<suffix> to PLACEMENTS.<suffix> in --dir and rewrites the scope and source fields of
+the snapshots (scope MASTER -> PLACEMENTS, blender_collection MASTER -> PLACEMENTS, unity_target scene:MASTER or
+scene:<path>#MASTER -> the same with PLACEMENTS), so the next merge accepts the renamed ends without
+--accept-source. It refuses (exit 2) when any PLACEMENTS.* file already exists, and does nothing when there is no
+MASTER.* file. Rename the Blender collection and the Unity root (and any PlacementSync.json entry) first.
 
 merge is a dry run: it only writes plans and the report. commit re-reads fresh dumps after both sides applied
 their plans, checks they agree with each other and with pending, and only then replaces the snapshot.
@@ -62,6 +71,11 @@ RENAME_SHARE = 0.2   # likewise for renames and folder moves (a folder renamed w
 RENAME_MIN = 10      # ... unless --allow-renames
 NAME_BYTES = 255     # Blender's longest data-block name (measured in 5.2.2: 255 bytes)
 SIDES = ("blender", "unity")
+SCOPE, LEGACY_SCOPE = "PLACEMENTS", "MASTER"
+LEGACY_MESSAGE = ("legacy placements scope MASTER: the placements collection, Unity root and scope are now PLACEMENTS. "
+                  "Rename the MASTER collection to PLACEMENTS (MASTER_<Zone> to PLACEMENTS_<Zone>) and the Unity root "
+                  "MASTER to PLACEMENTS, then run: placement_merge.py migrate-master --dir <placements> "
+                  "(placement-sync skill, 'Migrating from MASTER')")
 
 
 def new_id():
@@ -344,8 +358,70 @@ def _moved(group, renames):
     return group
 
 
+def legacy_refusal(d, s):
+    """LEGACY_MESSAGE when `s` is the old scope name, or `s` is PLACEMENTS and the folder still holds only MASTER.*
+    files; else None."""
+    if s == LEGACY_SCOPE:
+        return LEGACY_MESSAGE
+    if s == SCOPE and os.path.isdir(d):
+        names = os.listdir(d)
+        if not any(n.startswith(SCOPE + ".") for n in names) and any(n.startswith(LEGACY_SCOPE + ".") for n in names):
+            return LEGACY_MESSAGE
+    return None
+
+
+def _rename_target(target):
+    """scene:MASTER -> scene:PLACEMENTS, scene:<path>#MASTER -> scene:<path>#PLACEMENTS; anything else unchanged."""
+    if target == "scene:" + LEGACY_SCOPE:
+        return "scene:" + SCOPE
+    if isinstance(target, str) and target.startswith("scene:") and target.endswith("#" + LEGACY_SCOPE):
+        return target[:-len(LEGACY_SCOPE)] + SCOPE
+    return target
+
+
+def migrate_master(args):
+    """Rename a placements folder's MASTER.* files to PLACEMENTS.* and the snapshots' scope and source fields."""
+    d = args.dir
+    names = sorted(os.listdir(d)) if os.path.isdir(d) else []
+    old = [n for n in names if n.startswith(LEGACY_SCOPE + ".")]
+    clash = [n for n in names if n.startswith(SCOPE + ".")]
+    if not old:
+        print("nothing to migrate: no %s.* files in %s" % (LEGACY_SCOPE, d))
+        return 0
+    if clash:
+        print("migrate refused: %s already holds %s; move them aside first" % (d, ", ".join(clash)))
+        return 2
+    for n in old:
+        new = SCOPE + n[len(LEGACY_SCOPE):]
+        src, dst = os.path.join(d, n), os.path.join(d, new)
+        if n.endswith(".json"):
+            data = _read(src)
+            if isinstance(data, dict):
+                if data.get("scope") == LEGACY_SCOPE:
+                    data["scope"] = SCOPE
+                src_info = data.get("source")
+                if isinstance(src_info, dict):
+                    if src_info.get("blender_collection") == LEGACY_SCOPE:
+                        src_info["blender_collection"] = SCOPE
+                    src_info["unity_target"] = _rename_target(src_info.get("unity_target"))
+                if data.get("collection") == LEGACY_SCOPE:
+                    data["collection"] = SCOPE
+                if "target" in data:
+                    data["target"] = _rename_target(data["target"])
+            _write(dst, data)
+            os.remove(src)
+        else:
+            os.replace(src, dst)
+        print("%s -> %s" % (n, new))
+    return 0
+
+
 def merge(args):
     d, s = args.dir, args.scope
+    why = legacy_refusal(d, s)
+    if why:
+        print(why)
+        return 1
     path = lambda suffix: os.path.join(d, "%s.%s" % (s, suffix))
     bdump, udump = _read(path("blender.json")), _read(path("unity.json"))
     if bdump.get("side", "blender") != "blender" or udump.get("side", "unity") != "unity":
@@ -423,7 +499,7 @@ def merge(args):
         rename the sending side no longer has it; after a swap of some placements it still does. Only targets the
         receiving side lacks count: when the old asset's placements went to several of those, no rename is suggested.
         An assembly (ASM_) is never exported or added as a KIT piece: it has its own sync scope (its collection
-        under ASM in a single MASTER, or its ASM file when split)."""
+        under ASM in a single MASTER.blend, or its ASM file when split)."""
         name = item["asset"]
         sender, sender_has = ("Blender", blender_assets) if side == "unity" else ("Unity", unity_assets)
         receiver_has = unity_assets if side == "unity" else blender_assets
@@ -465,18 +541,18 @@ def merge(args):
             return "no Unity prefab called %s yet: a new piece, so export and package it" % name
         if old and asm:                                     # swapped in Unity to an assembly Blender lacks
             return ("no Blender collection called %s: a placement was swapped in Unity from %s to an assembly Blender "
-                    "lacks, so build it (under ASM in MASTER, or in blender/asm/%s.blend with split files) and sync "
-                    "its scope, or undo the swap in Unity; never rename %s, which Unity still has"
+                    "lacks, so build it (under ASM in MASTER.blend, or in blender/asm/%s.blend with split files) and "
+                    "sync its scope, or undo the swap in Unity; never rename %s, which Unity still has"
                     % (name, old, name, old))
         if old:                                             # swapped in Unity to a prefab Blender lacks
             return ("no Blender collection called %s: a placement was swapped in Unity from %s to a prefab Blender "
                     "lacks, so add %s as a KIT piece or undo the swap in Unity; never rename %s, which Unity still has"
                     % (name, old, name, old))
         if asm:
-            return ("no Blender collection called %s: build it under ASM in MASTER (split files: in "
+            return ("no Blender collection called %s: build it under ASM in MASTER.blend (split files: in "
                     "blender/asm/%s.blend, and dump with --libraries naming that file)" % (name, name))
-        return ("no Blender collection called %s: add it as a piece under KIT in MASTER (split files: to a KIT file, "
-                "and dump with --libraries naming that file)" % name)
+        return ("no Blender collection called %s: add it as a piece under KIT in MASTER.blend (split files: to a KIT "
+                "file, and dump with --libraries naming that file)" % name)
 
     def send(side, kind, pid, item, current=None):
         """Plan `kind` of `pid` on `side`; `item` is the new state (for a delete: the state being deleted) and
@@ -677,6 +753,10 @@ def _report(path, report, unresolved):
 
 def commit(args):
     d, s = args.dir, args.scope
+    why = legacy_refusal(d, s)
+    if why:
+        print("commit refused: " + why)
+        return 2
     path = lambda suffix: os.path.join(d, "%s.%s" % (s, suffix))
     pending = _read(path("pending.json"))
     if pending.get("refused"):
@@ -728,8 +808,10 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge")
     c = sub.add_parser("commit")
-    for p in (m, c):
+    g = sub.add_parser("migrate-master", help="rename a folder's MASTER.* sync files to PLACEMENTS.*")
+    for p in (m, c, g):
         p.add_argument("--dir", required=True)
+    for p in (m, c):
         p.add_argument("--scope", required=True)
     m.add_argument("--take", choices=SIDES, help="resolve every conflict this way")
     m.add_argument("--take-id", action="append", default=[], metavar="ID=SIDE", help="resolve one conflict")
@@ -740,6 +822,8 @@ def main():
     m.add_argument("--accept-source", action="store_true",
                    help="this scope's Blender file, collection or Unity target really changed")
     args = ap.parse_args()
+    if args.cmd == "migrate-master":
+        sys.exit(migrate_master(args))
     sys.exit(merge(args) if args.cmd == "merge" else commit(args))
 
 
