@@ -146,7 +146,7 @@ sheets or hidden walls` means regenerate with `solid` (cheap, step 4) before bui
 | --- | --- |
 | Low poly: **Quad Remesher** from a cleaner Quad Remesher cage of the high (`quad_remesh_to_budget(..., CurvatureAdaptivness=20.0)`, `SymAxis` when symmetric); LOD1 by `lod_quads`; QuadriFlow without it (decimate to about 60k first); budget from the world; a hand-built low around it for hard-surface | `blender-mesh-topology` (organic route and high/low gate) |
 | UVs for the low: **RizomUV `organic`**; without RizomUV, hidden seams and a minimum-stretch unwrap, never Smart UV Project | `rizomuv-uv-pipeline`, `uv-unwrapping` |
-| Bake from the high: normal and AO, plus its own textures (`bake_maps.py` maps `basecolor`, `roughness`, `metallic` copy the generated material through the cage); PBR values, look-dev | `pbr-texturing` |
+| Bake from the high: normal and AO, plus its own textures (maps `basecolor`, `roughness`, `metallic` copy the generated material through the cage), with the project's baker: `bake_maps.py --engine auto --prefer <tools.mesh_baker>` (Marmoset Toolbag when installed: about 1 s at 2048 from a 700k-triangle high; it reads FBX, never the .glb, and bake_maps hands it the textures); PBR values, look-dev | `pbr-texturing` |
 | Formats and memory in the engine | `vrchat-texture-and-vram` for VRChat |
 
 *Measured* on a whole run (`references/post-processing.md`): Decimate plus Smart UV Project gave 583 islands on 25% of
