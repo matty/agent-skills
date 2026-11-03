@@ -30,10 +30,11 @@ the build lives in files, so any session can resume it.
    ledger, and `references/stages.md` ("Where each stage writes") has the paths. A `.blend` the live Blender has open
    is written only through the MCP, never headless. A QA pass that drives an editor holds it like a task.
 4. **One Blender file, instanced, never copied.** `blender/MASTER.blend` holds every piece (`KIT/KIT_<FAMILY>`),
-   assembly (`ASM`) and the layout (`MASTER`) as collections, placed as collection instances; nothing is linked from
-   other `.blend` files. Tasks edit it in the live Blender when the Blender MCP is connected (`tools.blender_mcp`),
+   assembly (`ASM`), each zone's envelope (`SHELL/SHELL_<Zone>`, ceilings in `CEILINGS/CEIL_<Zone>`) and the placed
+   pieces (`PLACEMENTS`) as collections, pieces placed as collection instances; nothing is linked from other `.blend`
+   files. The envelope is built in place and evolves there, greybox to finished, through the same stages as a piece. Tasks edit it in the live Blender when the Blender MCP is connected (`tools.blender_mcp`),
    else headless; long work runs on a work file checked out of it and integrated back (`blender-kit-library`).
-5. **The user's edits survive.** Every task that writes MASTER reads what changed since the last agent save first
+5. **The user's edits survive.** Every task that writes MASTER.blend reads what changed since the last agent save first
    (`changes_since`), keeps it, and ends with save and snapshot (`blender-kit-library`, "Editing alongside the
    user"); one that would have to change what the user changed stops and asks (`flags.user_actions`).
 6. **Nothing is done until QA passes it**, checked by an agent that did not build it.
@@ -117,11 +118,11 @@ Inputs, outputs, task ids, write paths and QA checks per stage: `references/stag
 | 1 | Mockups (skipped when no image tool) | concept artist | Hero images per zone, key interiors, material swatches |
 | 2 | Spec and diagrams | planner | `spec.yaml`, SVG plans and elevations, drafted tasks. **Spec gate** |
 | 3 | Kit plan | planner | Full piece list, families, materials, texel density, assemblies, sockets |
-| 4 | Greybox | kit modellers, integrator | Greybox pieces, assemblies and the MASTER layout from the plans. **Greybox gate** |
+| 4 | Greybox | kit modellers, integrator | Greybox envelope (`SHELL`), pieces, assemblies and the `PLACEMENTS` layout from the plans. **Greybox gate** |
 | 5 | Kit modelling | kit modellers, one family at a time | Final geometry to each piece's detail list and references, LODs, collision |
 | 6 | UVs | UV artists | UV0 to the family's texel density, UV2 with gaps of 2 texels at each piece's worst-case lightmap square |
 | 7 | Texturing | texture artist | The lead family first, then the **look gate**, then the other families' materials, trim sheets, unique prop textures |
-| 8 | Assemblies and dressing | integrator | Assemblies and the MASTER layout complete with final pieces |
+| 8 | Assemblies and dressing | integrator | Assemblies and the `PLACEMENTS` layout complete with final pieces |
 | 9 | Export | exporter | One FBX per piece |
 | 10 | Unity assembly | Unity integrator | Prefabs, materials, placements synced, VRChat scene set up, Android and iOS overrides in place |
 | 11 | Lighting and bake | lighting artist | Baked lighting, light probes (plus Light Volumes when installed) |
@@ -156,7 +157,7 @@ installs or declines it.
 | Stage | Load | If it is not installed |
 |---|---|---|
 | 2-3 | `vrchat-lighting-and-baking` when the brief has a light players switch (`zones[].lighting_states`) | A baked copy per state (`references/world-spec.md`, "Lightmap check") |
-| 4, 5, 8, 9 | `blender-kit-library` (the kit in MASTER), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md`, the export settings in `references/stages.md` (stage 9) |
+| 4, 5, 8, 9 | `blender-kit-library` (the kit in MASTER.blend), `blender-to-unity` (export) | `scripts/kit_library.py` here, the kit rules in `references/world-spec.md`, the export settings in `references/stages.md` (stage 9) |
 | 5 | `blender-mesh-topology` (finishing each piece's form to its detail list, and clean topology) | The stage 5 minimum checks (`references/stages.md`) in the brief |
 | 6 | `uv-unwrapping`; `rizomuv-uv-pipeline` if RizomUV is installed | Smart UV Project with Margin Method Fraction, UV2 gaps sized per modelled mesh, a manual texel-density pass (`references/stages.md`, stage 6) |
 | 7 | `pbr-texturing` (values, bakes, Designer, Painter, wear, trim sheets); the Substance MCP when it answers | `references/texturing.md`: Blender procedural materials and bakes, the channel plan |
@@ -170,7 +171,7 @@ installs or declines it.
 
 1. Read `world/ledger.yaml`, then `world/spec.yaml`. Run `spec_validate.py` with `--ledger`.
 2. Check the live editors first: a dead task may have left Unity (unsaved scene, Play mode) or the live Blender
-   (unsaved MASTER) dirty, and the user may have edited MASTER since (`changes_since`: theirs to keep). Do not save
+   (unsaved MASTER.blend) dirty, and the user may have edited MASTER.blend since (`changes_since`: theirs to keep). Do not save
    or discard on a guess: tell the user what you found and ask.
 3. Then go through the tasks by status:
 
@@ -197,5 +198,5 @@ change (`T-RENAME-<PIECE>`, or one in a resized piece's latest stage), never a r
 | `references/world-spec.md`, `references/example-spec.yaml` | Spec schema, the look, the quality tier, the lightmap check, kit rules (files, names, pivots), changing the spec; a complete spec that validates |
 | `references/mechanics.md`, `references/mockups.md`, `references/texturing.md` | Spawning subagents in Claude Code and Codex, the project layout, running the scripts; stage 1 and stage 7 |
 | `scripts/spec_validate.py`, `scripts/spec_to_svg.py` (Python + PyYAML) | Validates the spec and the task graph (`--footprints` for lightmap planning, `--draft` for drafted tasks, `--mermaid` for `tasks.mmd`); regenerates `world/diagrams/` |
-| `scripts/kit_library.py` (Blender) | Piece collections and placing, MASTER snapshots, work-file checkout and integrate, auditing |
+| `scripts/kit_library.py` (Blender) | Piece collections and placing, MASTER.blend snapshots, work-file checkout and integrate, auditing |
 | `templates/spec.yaml`, `templates/ledger.yaml` | Copied into `world/` at stage 0 |

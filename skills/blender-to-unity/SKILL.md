@@ -1,6 +1,6 @@
 ---
 name: blender-to-unity
-description: Blender to Unity FBX export and import - models 100x too big or rotated X -90/270, faceted shading after import, missing LOD or collision meshes, stray .fbm or Materials folders, unshared materials, kit pieces as prefabs. Headless batch export, import postprocessor, prefab variants, mesh audit. Kit .blend structure (blender-kit-library); layout sync (blender-unity-placement-sync); UVs (uv-unwrapping).
+description: Blender to Unity FBX export and import - models 100x too big or rotated X -90/270, faceted shading after import, missing LOD or collision meshes, stray .fbm or Materials folders, unshared materials, kit pieces as prefabs, a world shell exported per zone. Headless batch export, import postprocessors, prefab variants, mesh audit. Kit .blend structure (blender-kit-library); layout sync (blender-unity-placement-sync); UVs (uv-unwrapping).
 ---
 
 # Blender to Unity
@@ -29,16 +29,21 @@ importer setting, with sources, is in `references/fbx-export.md`; folders, prefa
 8. **Check in Unity.** `KitImport.KitImportTool.Check()`: settings, materials, collision, roots at identity, one
    variant per FBX.
 
-## Kit piece or one-off asset
+## Kit piece, shell or one-off asset
 
-| | Kit piece (`<FAMILY>_<Type>_<Size>_<Variant>`) | One-off asset (a hero prop, a kitbash import) |
-|---|---|---|
-| Export | `batch_export_fbx.py --kit`: one FBX per piece collection, hidden members included | the script's `object` or `collection` mode on the selection |
-| Path Mode | Strip: the FBX carries no textures | Copy with Embed Textures off: it brings its own textures |
-| Material | the family's shared `M_<FAMILY>_*` in `<FAMILY>/_Shared/`, remapped by name | its own, in its own folder |
-| UV2 | authored in Blender on every render mesh (LOD1+ too: the Progressive Lightmapper gives each LOD its own lightmap space at half the texel scale per level, so pack a LOD's UV2 gaps for that smaller footprint; measured 2026-10-17 in Unity 2022.3.22f1); Generate Lightmap UVs off | authored, or Unity's Generate Lightmap UVs with Margin Method Calculate |
-| Unity folder | `Assets/World/Kits/<FAMILY>/<Piece>/` (KitImport.cs applies the settings) | outside `Kits/`: set the import settings by hand |
-| Prefab | a variant of the FBX, root at identity | the same |
+| | Kit piece (`<FAMILY>_<Type>_<Size>_<Variant>`: reusable or repeated) | Shell zone (`SHELL_<Zone>` or `CEIL_<Zone>`: a room's envelope, walls, floors, tiers, stairs, openings, ceilings, greybox or finished) | One-off asset (a hero prop, a kitbash import) |
+|---|---|---|---|
+| Export | `batch_export_fbx.py --kit`: one FBX per piece collection, hidden members included | `batch_export_fbx.py --shell`: one FBX per zone collection into `<dir>/SHELL/`, hidden members included, Custom Properties on | the script's `object` or `collection` mode on the selection |
+| Path Mode | Strip: the FBX carries no textures | Strip | Copy with Embed Textures off: it brings its own textures |
+| Material | the family's shared `M_<FAMILY>_*` in `<FAMILY>/_Shared/`, remapped by name | a shared `M_<FAMILY>_*` (finished) or `M_SHL_*` (greybox, in `Assets/World/Shell/Materials/`), remapped by name from anywhere in the project | its own, in its own folder |
+| UV2 | authored in Blender on every render mesh (LOD1+ too: the Progressive Lightmapper gives each LOD its own lightmap space at half the texel scale per level, so pack a LOD's UV2 gaps for that smaller footprint; measured 2026-10-17 in Unity 2022.3.22f1); Generate Lightmap UVs off | authored in Blender on every render mesh, like a piece's (from the zone's `uv` status); Generate Lightmap UVs off | authored, or Unity's Generate Lightmap UVs with Margin Method Calculate |
+| Collision | `<Piece>_COL` shells or primitives | a MeshCollider per mesh (`ShellImport.cs`), none where the object has `unity_collider = 0` | by hand |
+| Unity folder | `Assets/World/Kits/<FAMILY>/<Piece>/` (KitImport.cs applies the settings) | `Assets/World/Shell/` (ShellImport.cs applies the settings) | outside `Kits/` and `Shell/`: set the import settings by hand |
+| In the scene | prefab variants placed under the `PLACEMENTS` root (placement sync) | one instance per zone FBX under a `SHELL` root (ceiling zones under `CEILINGS`), outside `PLACEMENTS`; it changes only by re-exporting the zone | wherever it belongs |
+| Prefab | a variant of the FBX, root at identity | none: the FBX instance itself | a variant, root at identity |
+
+A shell object evolves in place (greybox to finished, same zone, same name) and gets the whole pipeline a piece gets:
+hygiene, smoothing, UV0 and UV2, materials, export, QA (`references/fbx-export.md`, "The world shell").
 
 ## Conventions
 
@@ -126,14 +131,17 @@ Aim between:
 
 | Script | Host | Use |
 |---|---|---|
-| `scripts/batch_export_fbx.py -- --kit --dir <dir> [--set-status]` | Blender 4.2+, headless: `blender -b --factory-startup KIT_<Name>.blend --python-exit-code 1 --python batch_export_fbx.py -- ...` (without `--python-exit-code 1` a failed export still exits 0) | One FBX per piece collection into `<dir>/<FAMILY>/<Piece>.fbx`, every member mesh (hidden ones too) with modifiers applied, Path Mode Strip; prints each file's objects, and warns about custom normals on quads, which the exporter would re-triangulate. `<dir>`: absolute, `//`-relative to the .blend (`//../../export/fbx` from `blender/kits/`), or relative to the current directory. `--set-status` writes `kit_status = "exported"` and saves the KIT file without a .blend1. A single MASTER (`blender-kit-library`'s default layout) holds every family, so export a family from a work file checked out of it (`checkout`) and set the status in MASTER through the MCP (never `--set-status` on a MASTER someone has open) |
+| `scripts/batch_export_fbx.py -- --kit --dir <dir> [--set-status]` | Blender 4.2+, headless: `blender -b --factory-startup KIT_<Name>.blend --python-exit-code 1 --python batch_export_fbx.py -- ...` (without `--python-exit-code 1` a failed export still exits 0) | One FBX per piece collection into `<dir>/<FAMILY>/<Piece>.fbx`, every member mesh (hidden ones too) with modifiers applied, Path Mode Strip; prints each file's objects, and warns about custom normals on quads, which the exporter would re-triangulate. `<dir>`: absolute, `//`-relative to the .blend (`//../../export/fbx` from `blender/kits/`), or relative to the current directory. `--set-status` writes `kit_status = "exported"` and saves the KIT file without a .blend1. A single MASTER.blend (`blender-kit-library`'s default layout) holds every family, so export a family from a work file checked out of it (`checkout`) and set the status in MASTER.blend through the MCP (never `--set-status` on a MASTER.blend someone has open) |
+| `scripts/batch_export_fbx.py -- --shell --dir <dir> [--zones Z ...]` | Blender 4.2+, headless: `blender -b --factory-startup MASTER.blend --python-exit-code 1 --python batch_export_fbx.py -- ...`, or live (`export_shell(dir, zones)`) | One FBX per shell zone collection `SHELL_<Zone>` or `CEIL_<Zone>` into `<dir>/SHELL/<collection>.fbx` (`--zones SCR`: both of that zone), every member mesh (hidden ones too) with modifiers applied, triangulated (Unity loses large concave n-gons otherwise), Path Mode Strip, Custom Properties on (`unity_collider = 0`); does not save the file |
 | `scripts/batch_export_fbx.py` (`MODE`) | Blender Text Editor or Blender MCP | The selection: `object`, `collection` or `single`; set `EXPORT_DIR`, `MODE` and `PATH_MODE` at the top |
-| `scripts/mesh_audit.py` | Blender, headless: `blender -b --factory-startup file.blend --python-exit-code 1 --python mesh_audit.py` | Per mesh, evaluated as the kit export evaluates it (excluded and outside-scene collections included, and in a MASTER or ASM the meshes inside instanced collections, flagged `instanced`): triangles, slots, UV maps (UV2 on everything but `_COL`), n-gons, loose geometry, custom normals on quads, unapplied rotation or scale; render triangles including collection instances, and the instancers Blender does not show (hidden, or in hidden or excluded collections), left out of the total; hidden or excluded objects never count as shown. The total is what Blender shows: Unity gets every instancer, since placement sync ships hidden and excluded ones too |
+| `scripts/mesh_audit.py` | Blender, headless: `blender -b --factory-startup file.blend --python-exit-code 1 --python mesh_audit.py` | Per mesh, evaluated as the kit export evaluates it (excluded and outside-scene collections included, and in a MASTER.blend or ASM file the meshes inside instanced collections, flagged `instanced`): triangles, slots, UV maps (UV2 on everything but `_COL`), n-gons, loose geometry, custom normals on quads, unapplied rotation or scale; render triangles including collection instances, and the instancers Blender does not show (hidden, or in hidden or excluded collections), left out of the total; hidden or excluded objects never count as shown. The total is what Blender shows: Unity gets every instancer, since placement sync ships hidden and excluded ones too |
 | `scripts/collision_shell.py -- --piece <Piece> [--points 64] [--save]` | Blender 4.2+, headless or live (`shell(lod0, max_points)` as a module) | A convex `<Piece>_COL` from `<Piece>_LOD0`: extremes in directions over a sphere (straight down always), then the vertex furthest outside added until max_points corners; replaces an old shell, wire, out of renders; reports triangles, closed, floor gap, how far the mesh sticks out of it and its share of the full hull's volume |
 | `scripts/unity/Editor/KitImport.cs` | Unity 2022.3 editor | Import settings, material remap and `_COL` colliders for `Assets/World/Kits/`; `CreateVariants()`, `SetStaticFlags()`, `Check()` |
+| `scripts/unity/Editor/ShellImport.cs` | Unity 2022.3 editor | Import settings, material remap by name (`M_<FAMILY>_*` or `M_SHL_*`), a MeshCollider per mesh (skipping `unity_collider = 0`) and full static flags for `Assets/World/Shell/`; `Reimport()` |
 
 Through Blender MCP: `get_addon_status` and `get_scene_info` first; run a script with `execute_blender_code` (put
-`BATCH_EXPORT_NO_MAIN = True` in the namespace to load `export_kit()` without exporting the selection); look at the
+`BATCH_EXPORT_NO_MAIN = True` in the namespace to load `export_kit()` and `export_shell()` without exporting the
+selection); look at the
 result with `look`.
 
 ## VRChat notes

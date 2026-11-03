@@ -23,7 +23,7 @@ except ImportError:
     yaml = None
 
 # The ids this round fixed (A5 retired; M9, X6, N8 new; X8 and L7 added 2026-10-18): letter -> count.
-EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 7, "M": 10, "U": 7, "X": 10, "A": 5, "E": 4, "N": 8, "L": 7, "I": 4,
+EXPECTED = {"G": 5, "C": 4, "S": 7, "P": 4, "B": 8, "M": 10, "U": 7, "X": 10, "A": 5, "E": 4, "N": 8, "L": 7, "I": 4,
             "O": 5}
 ID = r"[GCSPBMUXAENLIO][1-9]\d?"
 # flags of other tools the documents quote (uv_audit, texture_seams, pbr_check, Blender itself, git, a Chromium

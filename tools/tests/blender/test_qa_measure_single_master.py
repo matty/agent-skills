@@ -1,6 +1,7 @@
-"""vrchat-world-qa's qa_measure.py on a single MASTER (blender-kit-library's default layout): local pieces under KIT
-and assemblies under ASM are not reported as copies, their kit checks still run, layout problems are reported, each
-placement names the assembly holding it, and an --isolate render of an excluded piece shows the piece.
+"""vrchat-world-qa's qa_measure.py on a single MASTER.blend (blender-kit-library's default layout): local pieces under
+KIT and assemblies under ASM are not reported as copies, their kit checks still run, layout problems are reported (a
+legacy MASTER placements collection too), SHELL meshes are world geometry (neither stray nor REF), each placement
+names the assembly holding it, and an --isolate render of an excluded piece shows the piece.
 
 Host: Blender 5.2 (bpy), headless:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_qa_measure_single_master.py
@@ -76,13 +77,49 @@ def test_kit_checks_run_on_master_pieces():
 
 def test_layout_problems_are_reported():
     kit = build()
-    kit["new_piece"]("INT_Wall_2x3_B", parent=bpy.data.collections["MASTER"]).objects.link(
+    kit["new_piece"]("INT_Wall_2x3_B", parent=bpy.data.collections["PLACEMENTS"]).objects.link(
         box("INT_Wall_2x3_B", (2.0, 0.2, 3.0)))
     bpy.context.view_layer.layer_collection.children["KIT"].exclude = False
     qa = load(QA)
     probs = qa["problems"](qa["measure"](module=1.0, role="master"))
     assert any("INT_Wall_2x3_B: piece outside KIT" in p for p in probs), probs
     assert any("KIT is in the view layer" in p for p in probs), probs
+
+
+def test_shell_meshes_are_world_geometry():
+    build()
+    shell = bpy.data.collections.new("SHELL")
+    bpy.context.scene.collection.children.link(shell)
+    zone = bpy.data.collections.new("SHELL_HAL")
+    shell.children.link(zone)
+    zone["kit_status"] = "grey"
+    zone.objects.link(box("SHL_W30", (0.3, 11.0, 3.5)))
+    ref = bpy.data.collections.new("REF")
+    if "REF" in bpy.context.scene.collection.children:
+        ref = bpy.data.collections["REF"]
+    else:
+        bpy.context.scene.collection.children.link(ref)
+    ref.objects.link(box("REF_Figure", (0.4, 0.3, 1.6)))
+    qa = load(QA)
+    rep = qa["measure"](module=1.0, role="master")
+    assert rep["shell_meshes"] == ["SHL_W30"], rep["shell_meshes"]
+    assert rep["ref_meshes"] == ["REF_Figure"] and rep["stray_meshes"] == [], (rep["ref_meshes"], rep["stray_meshes"])
+    assert "SHELL_HAL" not in rep["unnamed_collections"], rep["unnamed_collections"]
+    assert rep["shell_zones"] == [{"zone": "SHELL_HAL", "kit_status": "grey", "objects": ["SHL_W30"],
+                                   "instances": [], "issues": []}], rep["shell_zones"]
+    assert qa["problems"](rep, expect_status="grey") == [], qa["problems"](rep, expect_status="grey")
+    zone["kit_status"] = "modelled"                                 # modelled: flat-shaded faces now fail
+    probs = qa["problems"](qa["measure"](module=1.0, role="master"), expect_status="grey")
+    assert any("shell SHELL_HAL: SHL_W30: 6 of 6 faces flat-shaded" in p for p in probs), probs
+
+
+def test_legacy_master_collection_is_a_layout_problem():
+    build()
+    bpy.data.collections["PLACEMENTS"].name = "MASTER"
+    qa = load(QA)
+    probs = qa["problems"](qa["measure"](module=1.0, role="master"))
+    assert any("legacy collection MASTER: the placements collection is now PLACEMENTS" in p for p in probs), probs
+    assert any("no PLACEMENTS collection" in p for p in probs), probs
 
 
 def test_isolate_render_shows_an_excluded_piece():
@@ -103,7 +140,8 @@ def test_isolate_render_shows_an_excluded_piece():
 
 
 CASES = [test_clean_single_master_has_no_layout_problems, test_kit_checks_run_on_master_pieces,
-         test_layout_problems_are_reported, test_isolate_render_shows_an_excluded_piece]
+         test_layout_problems_are_reported, test_shell_meshes_are_world_geometry,
+         test_legacy_master_collection_is_a_layout_problem, test_isolate_render_shows_an_excluded_piece]
 
 
 def main():

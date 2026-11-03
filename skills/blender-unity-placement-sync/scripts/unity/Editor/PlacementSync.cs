@@ -16,23 +16,27 @@
 // object that happens to share a folder's name is never used as one. The dump lists every folder path; a plan's
 // "folders" entries rename or move a folder whole (its lights and other contents go along) before any update.
 //
-// Scope targets:  "scene:<root name>"                a root GameObject in an open scene (e.g. scene:MASTER)
+// Scope targets:  "scene:<root name>"                a root GameObject in an open scene (e.g. scene:PLACEMENTS)
 //                 "scene:<scene path>#<root name>"   the same, when more than one open scene has such a root
 //                 "prefab:<asset path>"              a prefab asset edited in place (an ASM_ assembly); the first
 //                                                    Apply creates it (one empty root) when it does not exist yet
 //
 // From Unity MCP execute_code:
-//   return PlacementSync.PlacementSyncTool.Check("scene:MASTER");      // "[placements] ready ..." or why not
-//   return PlacementSync.PlacementSyncTool.Dump("scene:MASTER", "F:/World/placements/MASTER.unity.json", "MASTER");
-//   return PlacementSync.PlacementSyncTool.Apply("scene:MASTER", "F:/World/placements/MASTER.plan.unity.json");
+//   return PlacementSync.PlacementSyncTool.Check("scene:PLACEMENTS");  // "[placements] ready ..." or why not
+//   return PlacementSync.PlacementSyncTool.Dump("scene:PLACEMENTS", "F:/World/placements/PLACEMENTS.unity.json",
+//                                               "PLACEMENTS");
+//   return PlacementSync.PlacementSyncTool.Apply("scene:PLACEMENTS", "F:/World/placements/PLACEMENTS.plan.unity.json");
 // Dump throws when the editor is not ready (Play mode, no prefab root, no or several matching roots) and deletes the
 // old dump first, so a merge never reads a stale one. Apply returns "[placements] REFUSED ..." and changes nothing in
 // Play mode, when the target scene was never saved or already has unsaved changes, or when the target prefab is open
 // in Prefab Mode. save: false applies and leaves the scene unsaved for review (scenes only); force: true saves over
 // pending changes the user confirmed are safe, and lets an asset swap discard Unity-side changes on that instance.
 // Or menu Tools > Placement Sync > Dump All / Apply All, driven by PlacementSync.json in the project root:
-//   {"scopes": [{"name": "MASTER", "target": "scene:MASTER", "dir": "F:/World/placements"}],
+//   {"scopes": [{"name": "PLACEMENTS", "target": "scene:PLACEMENTS", "dir": "F:/World/placements"}],
 //    "prefabRoots": ["Assets/World/Kits", "Assets/World/Assemblies"]}
+// The placements root was called MASTER before 2026-11-03. No fallback: a scene: target naming MASTER, or a
+// scene:PLACEMENTS target in scenes that only have a MASTER root, is not ready, with LegacyMessage, until the root,
+// the target and the sync files are renamed (placement-sync skill, "Migrating from MASTER").
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -360,6 +364,11 @@ namespace PlacementSync
 
         static Config RequireConfig() => LoadConfig() ?? throw new FileNotFoundException($"{ConfigFile} not found in the project root");
 
+        public const string LegacyMessage = "legacy placements root MASTER: the placements root, Blender collection "
+            + "and scope are now PLACEMENTS. Rename the root GameObject MASTER to PLACEMENTS, the target to "
+            + "scene:PLACEMENTS (PlacementSync.json too) and the sync files MASTER.* to PLACEMENTS.* "
+            + "(placement-sync skill, 'Migrating from MASTER')";
+
         // The one root GameObject a "scene:" target names in the loaded scenes, or null with the reason.
         static Transform FindSceneRoot(string target, out Scene scene, out string why)
         {
@@ -369,19 +378,27 @@ namespace PlacementSync
             string scenePath = null, name = spec;
             var hash = spec.LastIndexOf('#');
             if (hash >= 0) { scenePath = spec.Substring(0, hash); name = spec.Substring(hash + 1); }
+            if (name == "MASTER")
+            {
+                why = LegacyMessage;
+                return null;
+            }
             var found = new List<GameObject>();
+            var legacy = false;
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
                 var s = SceneManager.GetSceneAt(i);
                 if (!s.isLoaded || (scenePath != null && s.path != scenePath)) continue;
                 found.AddRange(s.GetRootGameObjects().Where(g => g.name == name));
+                legacy |= s.GetRootGameObjects().Any(g => g.name == "MASTER");
             }
             if (found.Count == 1)
             {
                 scene = found[0].scene;
                 return found[0].transform;
             }
-            why = found.Count == 0
+            why = found.Count == 0 && name == "PLACEMENTS" && legacy ? LegacyMessage
+                : found.Count == 0
                 ? $"no root GameObject called {name} in the open scenes" + (scenePath != null ? $" ({scenePath} must be open)" : "")
                 : $"{found.Count} root GameObjects called {name} ({string.Join(", ", found.Select(g => g.scene.path))}): target one as scene:<scene path>#{name}";
             return null;

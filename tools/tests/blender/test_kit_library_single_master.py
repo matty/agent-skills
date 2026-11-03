@@ -1,4 +1,5 @@
-"""Blender-hosted tests for blender-kit-library's single MASTER helpers in scripts/kit_library.py: new_master and the
+"""Blender-hosted tests for blender-kit-library's single MASTER.blend helpers in scripts/kit_library.py (SHELL meshes
+owned, the legacy MASTER collection refused): new_master and the
 organising collections, new_piece / place_piece defaults, the audit's layout checks (pieces in the excluded KIT read
 as they export, with their transforms and modifiers; off-pivot pieces reported), snapshot / diff_snapshots /
 changes_since, and checkout / integrate (instances follow, names stay clean, materials kept or replaced, refusal when
@@ -80,13 +81,13 @@ def build_master():
 def test_new_master_organises():
     ns = build_master()
     names = {c.name for c in bpy.context.scene.collection.children}
-    assert {"KIT", "ASM", "MASTER", "REF"} <= names, names
+    assert {"KIT", "ASM", "PLACEMENTS", "REF"} <= names, names
     assert bpy.context.scene["kit_layout"] == "single"
     vl = bpy.context.view_layer.layer_collection
-    assert vl.children["KIT"].exclude and vl.children["ASM"].exclude and not vl.children["MASTER"].exclude
+    assert vl.children["KIT"].exclude and vl.children["ASM"].exclude and not vl.children["PLACEMENTS"].exclude
     assert "INT_Wall_2x3_A" in bpy.data.collections["KIT_INT"].children
     assert "ASM_Room_A" in bpy.data.collections["ASM"].children
-    layout = bpy.data.collections["MASTER"].objects
+    layout = bpy.data.collections["PLACEMENTS"].objects
     assert len(layout) == 2 and {o.instance_collection.name for o in layout} == {"INT_Wall_2x3_A", "ASM_Room_A"}
     rep = ns["audit_kit"](0.5)
     assert ns["problems"](rep) == [], ns["problems"](rep)
@@ -94,13 +95,111 @@ def test_new_master_organises():
 
 def test_audit_flags_misplaced_piece_and_visible_kit():
     ns = build_master()
-    stray = ns["new_piece"]("INT_Wall_2x3_B", parent=bpy.data.collections["MASTER"])
+    stray = ns["new_piece"]("INT_Wall_2x3_B", parent=bpy.data.collections["PLACEMENTS"])
     stray.objects.link(box("INT_Wall_2x3_B", (1.0, 0.1, 1.5)))
     bpy.context.view_layer.layer_collection.children["KIT"].exclude = False
     probs = ns["problems"](ns["audit_kit"](0.5))
     assert any("INT_Wall_2x3_B is not inside KIT" in p for p in probs), probs
     assert any("KIT is not excluded" in p for p in probs), probs
-    assert not any("kit name" in p for p in probs), probs          # MASTER holds empties: an organiser, not odd
+    assert not any("kit name" in p for p in probs), probs          # PLACEMENTS holds empties: an organiser, not odd
+
+
+def shell_fixture(ns):
+    """SHELL > SHELL_SCR (a wall and, in a sub-collection, a tier) and CEILINGS > CEIL_SCR (a ceiling slab)."""
+    shell = bpy.data.collections.new("SHELL")
+    bpy.context.scene.collection.children.link(shell)
+    zone = bpy.data.collections.new("SHELL_SCR")
+    shell.children.link(zone)
+    tiers = bpy.data.collections.new("Tiers")                       # any name inside a shell zone
+    zone.children.link(tiers)
+    zone.objects.link(box("SHL_W40", (0.3, 14.0, 5.0)))
+    tiers.objects.link(box("SHL_T1", (4.0, 18.0, 0.3)))
+    ceilings = bpy.data.collections.new("CEILINGS")
+    bpy.context.scene.collection.children.link(ceilings)
+    ceil = bpy.data.collections.new("CEIL_SCR")
+    ceilings.children.link(ceil)
+    ceil.objects.link(box("SHL_C08", (30.0, 28.0, 0.2)))
+    return zone, ceil
+
+
+def test_shell_meshes_are_world_geometry_not_stray():
+    """SHELL / SHELL_<Zone> and CEILINGS / CEIL_<Zone> hold each room's envelope: owned, listed, audited per zone."""
+    ns = build_master()
+    zone, ceil = shell_fixture(ns)
+    zone["kit_status"] = ceil["kit_status"] = "grey"                # greybox: no smoothing, UV2 or material demands
+    rep = ns["audit_kit"](0.5)
+    assert rep["stray_meshes"] == [] and rep["unnamed_collections"] == [], (rep["stray_meshes"],
+                                                                          rep["unnamed_collections"])
+    assert rep["shell_meshes"] == ["SHL_C08", "SHL_T1", "SHL_W40"], rep["shell_meshes"]
+    assert [r["zone"] for r in rep["shell"]] == ["CEIL_SCR", "SHELL_SCR"], rep["shell"]
+    assert ns["problems"](rep) == [], ns["problems"](rep)
+    loose = bpy.data.collections.new("Loose")                       # the same mesh outside SHELL is stray
+    bpy.context.scene.collection.children.link(loose)
+    loose.objects.link(box("SHL_W99", (0.3, 2.0, 3.0)))
+    bpy.data.collections["SHELL"].objects.link(box("SHL_W98", (0.3, 2.0, 3.0)))   # in SHELL but in no zone
+    probs = ns["problems"](ns["audit_kit"](0.5))
+    assert any("stray mesh outside any piece collection: SHL_W99" in p for p in probs), probs
+    assert any("shell mesh outside a SHELL_<Zone> or CEIL_<Zone> collection: SHL_W98" in p for p in probs), probs
+
+
+def test_shell_objects_get_the_stage_checks():
+    """A finished shell zone gets the pipeline's checks: name, applied transform, smoothing, UV2, materials."""
+    ns = build_master()
+    zone, ceil = shell_fixture(ns)
+    zone["kit_status"] = "textured"
+    wall = bpy.data.objects["SHL_W40"]
+    wall.data.uv_layers.remove(wall.data.uv_layers[1])                       # no UV2
+    wall.data.materials.append(None)                                          # an empty slot
+    tier = bpy.data.objects["SHL_T1"]
+    for poly in tier.data.polygons:
+        poly.use_smooth = True                                                # smooth, but no sharp step
+    tier.scale = (1.0, 2.0, 1.0)                                              # scale not applied
+    bad = box("Wall.001", (0.3, 2.0, 3.0), material(("BadName"), (1, 0, 0)))
+    zone.objects.link(bad)
+    rep = next(r for r in ns["audit_kit"](0.5)["shell"] if r["zone"] == "SHELL_SCR")
+    text = "\n".join(rep["issues"])
+    for want in ("SHL_W40: 6 of 6 faces flat-shaded", "SHL_W40: no UV2", "SHL_W40: empty material slot",
+                 "SHL_T1: shaded smooth with no sharp-by-angle step", "SHL_T1: rotation or scale not applied",
+                 "Wall.001: shell object not named SHL_<id>", "Wall.001: material BadName is not named"):
+        assert want in text, (want, rep["issues"])
+    assert not any(i.startswith("SHL_C08") for i in rep["issues"])          # CEIL_SCR is its own zone
+    ceil_rep = next(r for r in ns["audit_kit"](0.5)["shell"] if r["zone"] == "CEIL_SCR")
+    assert any("SHL_C08: 6 of 6 faces flat-shaded" in i for i in ceil_rep["issues"]), ceil_rep   # no status: all
+    # fixed: smooth with a sharp-by-angle step (sharp_edge marked, as Shade Smooth by Angle writes it), UV2, material
+    for ob in (wall, tier, bpy.data.objects["SHL_C08"]):
+        for poly in ob.data.polygons:
+            poly.use_smooth = True
+        attr = ob.data.attributes.get("sharp_edge") or ob.data.attributes.new("sharp_edge", "BOOLEAN", "EDGE")
+        attr.data[0].value = True
+        if len(ob.data.uv_layers) < 2:
+            ob.data.uv_layers.new(name="UV1")
+    wall.data.materials[0] = material("M_SHL_Wall", (0.5, 0.5, 0.5))
+    tier.scale = (1.0, 1.0, 1.0)
+    bpy.data.objects.remove(bad)
+    probs = ns["problems"](ns["audit_kit"](0.5))
+    assert probs == [], probs
+
+
+def test_legacy_master_collection_is_reported_and_refused():
+    """The placements collection used to be called MASTER: the audit names it, and placing or organising refuses
+    rather than starting a second, empty PLACEMENTS beside it."""
+    ns = build_master()
+    bpy.data.collections["PLACEMENTS"].name = "MASTER"
+    probs = ns["problems"](ns["audit_kit"](0.5))
+    assert any("legacy collection MASTER: the placements collection is now PLACEMENTS" in p for p in probs), probs
+    assert not any("kit name: MASTER" in p for p in probs), probs
+    for call in (lambda: ns["place_piece"]("INT_Wall_2x3_A", location=(6.0, 0, 0)),
+                 lambda: ns["setup_single_master"]()):
+        try:
+            call()
+        except RuntimeError as e:
+            assert "Rename MASTER to PLACEMENTS" in str(e), e
+        else:
+            raise AssertionError("a legacy MASTER collection did not stop the call")
+    assert "PLACEMENTS" not in bpy.data.collections, "a second placements collection was made"
+    bpy.data.collections["MASTER"].name = "PLACEMENTS"
+    ns["place_piece"]("INT_Wall_2x3_A", location=(6.0, 0, 0))
+    assert len(bpy.data.collections["PLACEMENTS"].objects) == 3
 
 
 def test_audit_reads_pieces_in_the_excluded_kit_as_they_export():
@@ -150,7 +249,7 @@ def test_audit_reports_instance_offset_and_min_corner():
 def test_snapshot_round_trip_and_diff():
     ns = build_master()
     assert ns["changes_since"](str(SNAP)) == [], ns["describe"](ns["changes_since"](str(SNAP)))
-    inst = next(o for o in bpy.data.collections["MASTER"].objects if o.instance_collection.name == "INT_Wall_2x3_A")
+    inst = next(o for o in bpy.data.collections["PLACEMENTS"].objects if o.instance_collection.name == "INT_Wall_2x3_A")
     inst.location.x += 1.0
     bpy.data.objects["INT_Wall_2x3_A"].data.vertices[0].co.z -= 0.05
     ns["place_piece"]("INT_Wall_2x3_A", location=(6.0, 0, 0), into=None).name = "Extra"
@@ -289,6 +388,8 @@ def test_command_line_changes_and_integrate():
 
 
 CASES = [test_new_master_organises, test_audit_flags_misplaced_piece_and_visible_kit,
+         test_shell_meshes_are_world_geometry_not_stray, test_shell_objects_get_the_stage_checks,
+         test_legacy_master_collection_is_reported_and_refused,
          test_audit_reads_pieces_in_the_excluded_kit_as_they_export, test_audit_reports_instance_offset_and_min_corner,
          test_snapshot_round_trip_and_diff, test_snapshot_reads_pieces_with_modifiers,
          test_checkout_integrate_replaces_in_place, test_integrate_work_materials_replace,

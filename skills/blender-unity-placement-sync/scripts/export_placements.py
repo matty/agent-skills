@@ -3,17 +3,22 @@
 Host: Blender 4.1+ (bpy), no add-ons. Pairs with placement_merge.py (plain Python) and PlacementSync.cs (Unity).
 
 A placement is a collection instance: an empty with instance_type COLLECTION, of a KIT piece or an ASM assembly
-(local collections in a single MASTER, blender-kit-library's default layout; linked from KIT and ASM files when
+(local collections in a single MASTER.blend, blender-kit-library's default layout; linked from KIT and ASM files when
 split). Its stable id lives in the custom property `placement_id` on that empty, so renames, re-parenting and moving
 it between collections never lose it. Transforms are written in Unity space (left-handed, Y up, metres) relative to
 the world origin, which is the scope root.
 
-A scope covers the collection named like the scope when the file has one (in a single MASTER, scene["kit_layout"]
-== "single": the MASTER collection for the MASTER scope and the ASM_<Name>_<Variant> collection under ASM for an
-assembly scope; in a split ASM file its assembly collection), else the whole scene (a split MASTER); --collection
-names another. A single MASTER must have the scope's collection, since its whole scene also holds every assembly's
-insides. apply creates new placements inside that collection. Library overrides are not placements: dump skips them
-and warns. --libraries is for split files: a single MASTER's assets are its own KIT and ASM collections.
+A scope covers the collection named like the scope when the file has one (in a single MASTER.blend,
+scene["kit_layout"] == "single": the PLACEMENTS collection for the PLACEMENTS scope and the ASM_<Name>_<Variant>
+collection under ASM for an assembly scope; in a split ASM file its assembly collection), else the whole scene (a
+split MASTER.blend); --collection names another. A single MASTER.blend must have the scope's collection, since its
+whole scene also holds every assembly's insides (and its SHELL geometry, which never syncs). apply creates new
+placements inside that collection. Library overrides are not placements: dump skips them and warns. --libraries is
+for split files: a single MASTER.blend's assets are its own KIT and ASM collections.
+
+The placements scope and collection were called MASTER before 2026-11-03. There is no fallback: --scope MASTER, or a
+file whose placements are still in a MASTER collection, is refused with LEGACY_MESSAGE until the collection is renamed
+to PLACEMENTS (and the sync files MASTER.* in the placements folder to PLACEMENTS.*).
 
 Names and folders sync too. Each item carries "label", the empty's name without Blender's ".001" suffix, and
 "group", the path of collections from the scope collection down to the one holding the empty ("Street/Shops"; ""
@@ -24,14 +29,14 @@ a plan's "folders" entries rename or move a collection whole (its other objects 
 
 Command line (the usual way). One writer per .blend: not while the file is open in a live Blender session.
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
-        dump  --dir <placements> --scope MASTER [--libraries "kits/*.blend" "asm/*.blend"] [--collection NAME]
+        dump  --dir <placements> --scope PLACEMENTS [--libraries "kits/*.blend" "asm/*.blend"] [--collection NAME]
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python export_placements.py --
-        apply --dir <placements> --scope MASTER [--libraries ...] [--collection NAME] [--no-save]
+        apply --dir <placements> --scope PLACEMENTS [--libraries ...] [--collection NAME] [--no-save]
 
 From a live Blender (Blender MCP execute_blender_code):
     ns = {}; exec(open(r"<skill>/scripts/export_placements.py", encoding="utf-8").read(), ns)
-    ns["dump"](r"F:/World/placements", "MASTER", libraries=[r"F:/World/blender/kits/*.blend"])
-    ns["apply"](r"F:/World/placements", "MASTER", libraries=[...])        # then save the file yourself
+    ns["dump"](r"F:/World/placements", "PLACEMENTS", libraries=[r"F:/World/blender/kits/*.blend"])
+    ns["apply"](r"F:/World/placements", "PLACEMENTS", libraries=[...])    # then save the file yourself
 
 dump deletes the old <dir>/<scope>.blender.json first (a failed dump leaves none, so a merge cannot read a stale one),
 then writes every placement, "assets" (the collection names this file links or could link from --libraries, so the
@@ -53,6 +58,10 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 PROP = "placement_id"
+LEGACY_MESSAGE = ("legacy placements scope %s: the placements collection, Unity root and scope are now PLACEMENTS. "
+                  "Rename the MASTER collection to PLACEMENTS (MASTER_<Zone> to PLACEMENTS_<Zone>), the Unity root "
+                  "MASTER to PLACEMENTS, and the sync files MASTER.* to PLACEMENTS.* (placement-sync skill, "
+                  "'Migrating from MASTER')")
 
 # Blender (right-handed, Z up) -> Unity (left-handed, Y up), matching the FBX exporter's -Z forward / Y up with
 # Use Space Transform and Bake Space Transform on: Unity = (-x, z, -y). Verified by the round-trip test (SKILL.md).
@@ -166,26 +175,31 @@ def from_unity(pos, rot, scl):
 
 
 def is_single(scene=None):
-    """A single MASTER (blender-kit-library): pieces, assemblies and layout as collections in this one file."""
+    """A single MASTER.blend (blender-kit-library): pieces, assemblies and placements as collections in one file."""
     return (scene or bpy.context.scene).get("kit_layout") == "single"
 
 
 def scope_collection(scope, name=None):
     """The local collection a scope covers: `name`, else the one named like the scope, else None (the whole scene;
-    refused in a single MASTER, where the scene also holds every assembly's insides)."""
+    refused in a single MASTER.blend, where the scene also holds every assembly's insides). The legacy scope or
+    collection name MASTER is refused (LEGACY_MESSAGE)."""
+    if (name or scope) == "MASTER":
+        raise KeyError(LEGACY_MESSAGE % "MASTER")
     for want in ([name] if name else [scope]):
         for coll in bpy.data.collections:
             if coll.name == want and coll.library is None:
                 return coll
+    if (name or scope) == "PLACEMENTS" and any(c.name == "MASTER" and c.library is None for c in bpy.data.collections):
+        raise KeyError(LEGACY_MESSAGE % "MASTER (a MASTER collection and no PLACEMENTS)")
     if name or is_single():
         raise KeyError("no local collection %r in %s%s" % (name or scope, bpy.data.filepath or "this file",
-                                                           " (a single MASTER: the scope's collection is required)"
-                                                           if not name else ""))
+                                                           " (a single MASTER.blend: the scope's collection is "
+                                                           "required)" if not name else ""))
     return None
 
 
 def local_assets():
-    """A single MASTER's own piece and assembly collections (everything under KIT and ASM)."""
+    """A single MASTER.blend's own piece and assembly collections (everything under KIT and ASM)."""
     out = set()
     for root in ("KIT", "ASM"):
         coll = next((c for c in bpy.data.collections if c.name == root and c.library is None), None)
@@ -222,8 +236,9 @@ def scope_warnings(scene=None, coll=None, items=None):
                    "them; zero it on the piece or assembly collection (in its KIT or ASM file when split)"
                    % (name, off, ", ".join(sorted(obs))))
     if coll is not None and any(abs(v) > 1e-4 for v in coll.instance_offset):
-        out.append("scope collection %s has instance_offset %s: where MASTER instances it, Blender draws it shifted "
-                   "from the Unity prefab; zero it" % (coll.name, tuple(round(v, 4) for v in coll.instance_offset)))
+        out.append("scope collection %s has instance_offset %s: where the layout instances it, Blender draws it "
+                   "shifted from the Unity prefab; zero it"
+                   % (coll.name, tuple(round(v, 4) for v in coll.instance_offset)))
     tree = _tree(coll)
     multi = sorted(o.name for o in placements(scene, coll) if len(groups_of(o, tree)) > 1)
     if multi:

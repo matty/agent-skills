@@ -570,7 +570,8 @@ def _run(argv):
     lim = dict(LIMITS, fold_deg=a.fold_deg, hard_deg=a.hard_deg)
     obs = [o for o in bpy.data.objects if fnmatch.fnmatchcase(o.name, a.objects)
            and (o.type == "MESH" or (a.joints and o.instance_type == "COLLECTION"))]
-    if a.joints:            # what the scene shows: a MASTER's kit masters sit in excluded collections at the origin
+    if a.joints:            # what the scene shows: a MASTER.blend's kit masters sit in excluded collections at
+                            # the origin
         vl = bpy.context.view_layer.objects
         obs = [o for o in obs if o.name in vl and o.visible_get()]
     if not obs:

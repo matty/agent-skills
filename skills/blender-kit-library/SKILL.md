@@ -1,9 +1,9 @@
 ---
 name: blender-kit-library
-description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in MASTER, a MASTER the user also edits, linked libraries broken after a move, naming, sizing or pivoting pieces. One MASTER .blend with KIT, ASM and layout collections, grid modules, status, place and audit scripts. Export (blender-to-unity); Unity layout sync (blender-unity-placement-sync).
+description: Modular kits in Blender - copies of a piece drifting apart, KIT edits not showing in the layout, a MASTER.blend the user also edits, linked libraries broken after a move, naming, sizing or pivoting pieces, room envelope vs placed piece. One MASTER.blend with KIT, ASM, SHELL and PLACEMENTS collections, grid modules, status, place and audit scripts. Export (blender-to-unity); Unity layout sync (blender-unity-placement-sync).
 ---
 
-# Blender kit library: KIT, ASM and MASTER
+# Blender kit library: KIT, ASM, SHELL and PLACEMENTS
 
 Lay out a modular environment so each piece is edited in one place, every copy stays identical (so an engine can
 instance it), and the user and agents can edit it without overwriting each other. Engine-neutral: it ends at
@@ -13,14 +13,13 @@ well-formed piece collections, whatever engine they go to. Helpers: `scripts/kit
 
 | Layout | When | Files |
 |---|---|---|
-| `single` (**default**) | Always, unless the user explicitly asks for separate files | One `blender/MASTER.blend` holding the KIT pieces, the assemblies and the layout as collections |
-| `split` | Only when the user asks for it (typically a large world with several people or agents modelling families at the same time) | `blender/kits/KIT_<FamilyName>.blend` per family, `blender/asm/ASM_<Name>_<Variant>.blend` per assembly, `blender/MASTER.blend` linking them |
+| `single` (**default**) | Always, unless the user explicitly asks for separate files | One `blender/MASTER.blend` holding the KIT pieces, the assemblies, the placements and the shell as collections |
+| `split` | Only when the user asks for it (typically a large world with several people or agents modelling families at the same time) | `blender/kits/KIT_<FamilyName>.blend` per family, `blender/asm/ASM_<Name>_<Variant>.blend` per assembly, `blender/MASTER.blend` linking them (its placements and shell as collections) |
 
 Never pick `split` on your own: one file is far easier to keep in step on a small project. Record the decision with
-the user's words where the project keeps its decisions (`vrchat-world-orchestration` always builds `single` and has
-no split option); the file records it too, as the scene custom property `kit_layout` (`"single"`), which
-`setup_single_master()` sets and the audit, QA and placement-sync scripts read. No property means a split file.
-Everything below applies to both layouts unless it says otherwise.
+the user's words where the project keeps its decisions (`vrchat-world-orchestration` always builds `single`); the file
+records it as the scene property `kit_layout` (`"single"`), which `setup_single_master()` sets and the audit, QA and
+placement-sync scripts read (no property: a split file). Everything below applies to both layouts unless it says so.
 
 ## Workflow
 
@@ -28,39 +27,40 @@ Everything below applies to both layouts unless it says otherwise.
    project keeps its decisions (the world spec, when `vrchat-world-orchestration` runs the build).
 2. Start the file from Blender run with no file (`blender -b --factory-startup --python-exit-code 1 --python
    task.py`), whose task first calls `new_master(r"<project>/blender/MASTER.blend")`: an empty scene (no default
-   cube), the organising collections, saved at once. Split: `new_file(<path>)` per KIT, ASM or MASTER file.
+   cube), the organising collections, saved at once. Split: `new_file(<path>)` per KIT, ASM or MASTER.blend file.
 3. For each piece: `new_piece("<FAMILY>_<Type>_<Size>_<Variant>")` (single: it lands in `KIT/KIT_<FAMILY>`), model it
-   at the origin with the pivot rules below, and set its `kit_status` (`grey` for a new greybox piece).
+   at the origin with the pivot rules below, and set its `kit_status` (`grey` for a new greybox piece). A zone's
+   envelope: `SHL_<id>` objects modelled in place in `SHELL_<Zone>` (or `CEIL_<Zone>`), `kit_status` on the zone.
 4. Audit at the project's module (Checking a kit, below) and fix every problem it lists.
 5. Build each assembly, then the layout. Single: `new_piece("ASM_<Name>_<Variant>")` and
-   `place_piece(piece, ..., into=<that assembly>)`, then `place_piece(...)` into MASTER. Split: each assembly in its
-   own ASM file, then MASTER, with `link_piece` (relative paths).
+   `place_piece(piece, ..., into=<that assembly>)`, then `place_piece(...)` into `PLACEMENTS`. Split: each assembly
+   in its own ASM file, then MASTER.blend, with `link_piece` (relative paths).
 6. Whenever the file may also be edited by the user, follow "Editing alongside the user" below on every change.
 7. End every headless run with `save_file()`: it saves without a `.blend1` backup. Split: after a KIT or ASM file
    changes, `reload_libraries()` in any live session that links it.
 
-## The three layers
+## The layers
 
-| Layer | Single MASTER (default) | Split files | Holds | Never holds |
+| Layer | Single MASTER.blend (default) | Split files | Holds | Never holds |
 |---|---|---|---|---|
 | KIT | Collection `KIT`, one child `KIT_<FAMILY>` per family (`KIT_EXT`), one collection per piece inside it; **excluded from the view layer** | `blender/kits/KIT_<FamilyName>.blend` per visual family | One collection per piece, piece at the origin, its LODs and collision, the family's shared materials | Placement of anything in the world |
 | ASM | Collection `ASM`, one child `ASM_<Name>_<Variant>` per assembly; **excluded from the view layer** | `blender/asm/ASM_<Name>_<Variant>.blend`, one assembly per file, named after it | The assembly (a facade, a stall, a furnished room) made of instances of KIT pieces, plus empties for sockets | Original geometry. If an assembly needs a new shape, it becomes a KIT piece first |
-| MASTER | Collection `MASTER` (optionally `MASTER_<Zone>` children) | `blender/MASTER.blend` | Layout only: instances of KIT pieces and assemblies placed in the world, zone empties | Geometry, materials, copies of pieces |
+| PLACEMENTS | Collection `PLACEMENTS` (optionally `PLACEMENTS_<Zone>` children), the placement-sync scope: what sits in or on the envelope, whose removal leaves a complete but barer room (linings and panelling over a wall, trims, sconces, lamps, LED strips, seats, furniture, props, glass guards, handrails). Called `MASTER` before 2026-11-03: nothing falls back to that name (`place_piece` and `setup_single_master` refuse it, the audit reports it); migrate with `references/migrate-master.md` | Collection `PLACEMENTS` in `blender/MASTER.blend` | Instances of KIT pieces and assemblies placed in the world, zone empties | Geometry, materials, copies of pieces |
+| SHELL | Collection `SHELL`, one child `SHELL_<Zone>` per zone; ceilings may sit in `CEILINGS`, one `CEIL_<Zone>` per zone, for a one-click hide (same rules) | Collections `SHELL` and `CEILINGS` in `blender/MASTER.blend` | Each room's envelope, greybox or finished: whatever would leave a hole or an open room if removed (walls, a fabric or acoustic surface that is the wall, floors, tiers, stairs, landings, the screen or end wall, door and arch openings, ceilings). Objects `SHL_<id>` in world position, rotation and scale applied; materials a shared `M_<FAMILY>_*` (finished) or `M_SHL_*` (greybox). An object evolves in place, greybox to finished in the same zone, and gets the full pipeline (UV and UV2, materials, smoothing, texel density, QA) with `kit_status` on its zone collection; exported per zone (`blender-to-unity`, `--shell`) | Reusable pieces or their instances; review aids |
+| REF | `REF` or `REF_<Name>`, either layout | The same | Review aids only: scale figures, cameras, reference images. Never exported | Anything meant to stay in the world |
 
-Scale figures and other review aids go in `REF` (or `REF_<Name>`) in either layout; nothing in it is exported. In a
-single MASTER the pieces all sit at the origin, which is why `KIT` and `ASM` are excluded: their instances still draw
-in the layout. To look at or edit a piece by hand, tick `KIT` (or just its family) back on, use local view, and
-exclude it again afterwards; scripts in other skills that need the pieces in the view layer (UV, RizomUV, renders)
-run on a work file instead (Work files, below). A script reading pieces in place includes them first, as `audit_kit`
-does: excluded, their `matrix_world` is stale (identity after a load, Blender 5.2.2) and their bounds lack modifiers.
+In a single MASTER.blend the pieces all sit at the origin, which is why `KIT` and `ASM` are excluded: their
+instances still draw in the layout. To edit a piece by hand, tick `KIT` (or its family) back on, use local view, and
+exclude it again; scripts in other skills that need the pieces in the view layer (UV, RizomUV, renders) run on a
+work file (Work files, below). A script reading pieces in place includes them first, as `audit_kit` does: excluded,
+their `matrix_world` is stale (identity after a load, Blender 5.2.2) and their bounds lack modifiers.
 
-Edit in the lowest layer that owns the thing: geometry in KIT, arrangement in ASM, placement in MASTER. One assembly
-per collection (and, split, per file) keeps each assembly's collection and engine prefab one-to-one (placement sync
-pairs them that way).
+Edit in the lowest layer that owns it: geometry in KIT, arrangement in ASM, placement in PLACEMENTS, one-off geometry
+in SHELL. One assembly per collection (split: per file) keeps its collection and engine prefab one-to-one.
 
 ## Editing alongside the user
 
-The user may change MASTER (or any .blend) between your edits, and their work must survive yours. On every change to
+The user may change MASTER.blend (or any .blend) between your edits, and their work must survive yours. On every change to
 a file the user can also edit (calls and edge cases: `references/master-sync.md`):
 
 1. **Find where it is open.** The Blender MCP has it open: edit **live through the MCP**, never headless. Open in a
@@ -76,13 +76,13 @@ a file the user can also edit (calls and edge cases: `references/master-sync.md`
    report it, and ask before saving unsaved user work. Save (live `bpy.ops.wm.save_mainfile()`, headless
    `save_file()`), then at once `save_snapshot(r"//MASTER.snapshot.json")`.
 
-## Work files (single MASTER)
+## Work files (single MASTER.blend)
 
 `checkout(r"//work/KIT_<label>.blend", [names])` copies piece or assembly collections out to a work file where they
 sit in its scene and view layer, so it reads like a KIT file and every skill's scripts work on it unchanged.
-Work on it headless (several work files at once if needed), then in MASTER `integrate(work, [names])`
+Work on it headless (several work files at once if needed), then in MASTER.blend `integrate(work, [names])`
 replaces each collection in place, so every instance shows the new version (`materials="work"` after texturing;
-by default MASTER's materials win). Command line, assemblies, export and clean-up: `references/master-sync.md`.
+by default MASTER.blend's materials win). Command line, assemblies, export and clean-up: `references/master-sync.md`.
 
 Changing an existing project's layout (split to single, or back) is the user's decision: ask, record it, and follow
 `references/master-sync.md`, "Changing layout".
@@ -98,7 +98,7 @@ the engine can no longer instance it. Split files also need relative links, relo
 
 Split kits by **visual family / material set**, so each family lands on 1-3 materials and one atlas or trim sheet.
 
-| Code | Single MASTER collection | Typical split file | Contents |
+| Code | Single MASTER.blend collection | Typical split file | Contents |
 |---|---|---|---|
 | `EXT` | `KIT/KIT_EXT` | `KIT_Arch_Exterior.blend` | Facade walls, windows, doors, cornices |
 | `INT` | `KIT/KIT_INT` | `KIT_Arch_Interior.blend` | Interior walls, skirting, ceilings, interior doors |
@@ -106,11 +106,10 @@ Split kits by **visual family / material set**, so each family lands on 1-3 mate
 | `TRIM` | `KIT/KIT_TRIM` | `KIT_Trim.blend` | Strips and edge pieces that read off a trim sheet |
 | `PROP` | `KIT/KIT_PROP` | `KIT_Props_<Theme>.blend` | Furniture and clutter (split: one file per theme) |
 | `FOL` | `KIT/KIT_FOL` | `KIT_Foliage.blend` | Plants, trees, grass cards |
-| `ZONE` | `KIT/KIT_ZONE` | `KIT_Zone_<Zone>.blend` | Unique non-repeating shells for one zone (terrain, a hero building shell) |
+| `ZONE` | `KIT/KIT_ZONE` | `KIT_Zone_<Zone>.blend` | Legacy: unique zone shells authored as pieces (terrain, a hero building shell). New work models them in `SHELL_<Zone>` |
 
-Codes are 2-5 capitals. A project can add its own, recorded with their collection (or file) and material set.
-`ZONE` pieces are unique but are still authored as pieces and placed in MASTER like the others, so everything in the
-layout is a collection instance and nothing needs a different export or sync path.
+Codes are 2-5 capitals; a project can add its own, recorded with their collection (or file) and material set. **A KIT
+piece is reusable or repeated**: geometry modelled once for one spot (a room's unique `_Free_` wall) is shell.
 
 ## Naming
 
@@ -131,7 +130,7 @@ Regex: `^[A-Z]{2,5}_[A-Za-z0-9]+_(\d+(x\d+){0,2}|Free)_[A-Z]\d?$`, and `^ASM_[A-
 The **collection** carries the piece name. Inside it: the render mesh named like the piece, or LODs `<Piece>_LOD0`,
 `<Piece>_LOD1`, `<Piece>_LOD2` as siblings, and an optional `<Piece>_COL` collision shell. Names are load-bearing:
 linking, FBX export (one FBX per collection), engine prefab or asset names and placement sync all key on them.
-Renaming a piece or an assembly is a breaking change. Single MASTER: rename the collection in place (every
+Renaming a piece or an assembly is a breaking change. Single MASTER.blend: rename the collection in place (every
 instance follows it, so placement ids survive), then rename its exported file and engine asset to match; moving a
 piece to another family is moving its collection to that family's `KIT_<FAMILY>` (and renaming it, since the family is
 in the name). Split files: `references/split-files.md`, "Renaming".
@@ -156,10 +155,10 @@ https://docs.blender.org/manual/en/latest/editors/3dview/controls/snapping.html)
 
 ## One writer per file
 
-A .blend has one writer at a time: two writers to the same file silently lose one side's work. A single MASTER holds
-everything, so every task that changes the kit, an assembly or the layout writes MASTER and they take turns; work
-that should run in parallel goes to work files (one writer each), integrated one at a time. MASTER's owner is normally
-the user's live Blender, which agents drive through the MCP.
+A .blend has one writer at a time: two writers to the same file silently lose one side's work. A single MASTER.blend
+holds everything, so every task that changes the kit, an assembly, the placements or the shell writes MASTER.blend and
+they take turns; work that should run in parallel goes to work files (one writer each), integrated one at a time.
+MASTER.blend's owner is normally the user's live Blender, which agents drive through the MCP.
 
 Headless work runs one process per file (`blender -b --factory-startup --python-exit-code 1
 blender/work/KIT_EXT.blend --python task.py`) and ends with `save_file()`: with factory settings `save_version` is 1,
@@ -175,7 +174,7 @@ Load in Blender: `ns = {}; exec(open(r"<skill>/scripts/kit_library.py", encoding
 
 ## Checking a kit
 
-Run the audit in each KIT file (single: in MASTER, or in a work file) at the world's grid module. It changes
+Run the audit in each KIT file (single: in MASTER.blend, or in a work file) at the world's grid module. It changes
 nothing.
 
 ```
@@ -192,13 +191,14 @@ at the wrong one, correct pieces fail and pieces built at the wrong size pass.
 | Transforms | Every object in a piece at identity (origin at the pivot, rotation and scale applied); `instance_offset` zero |
 | Footprint | Grid pieces: minimum corner at the origin, extents in whole modules matching the `Size` token (axes under one module skipped) |
 | Materials | Named `M_<FAMILY>_<Name>`, matching `^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$` (a `.001` duplicate fails), and only the piece's family or `M_TRIM_*` (another set: `audit_kit(module, materials=("M_EXT_", ...))`, CLI `--materials M_EXT_,M_STR_,M_TRIM_`) |
-| Stray meshes | Mesh objects outside any piece collection (`REF` aside) |
-| Layout | Single MASTER: every piece inside `KIT`, every assembly inside `ASM`, both excluded from the view layer, a `MASTER` collection |
+| Shell | Per `SHELL_<Zone>` and `CEIL_<Zone>` (`shell`): objects named `SHL_<id>`, rotation and scale applied, materials `M_<FAMILY>_<Name>`; by the zone's `kit_status`, smooth shading with a sharp-by-angle step from `modelled`, UV2 from `uv`, filled slots from `textured`; a mesh under `SHELL` or `CEILINGS` outside a zone is listed |
+| Stray meshes | Mesh objects outside any piece collection or shell zone, `REF` aside (shell meshes are listed as `shell_meshes`) |
+| Layout | Single MASTER.blend: every piece inside `KIT`, every assembly inside `ASM`, both excluded from the view layer, a `PLACEMENTS` collection, no legacy `MASTER` collection (split files: a legacy `MASTER` collection is reported too) |
 | Libraries | Linked libraries whose file is missing, and linked data missing from a file that exists (renamed in it) |
 | `kit_status` | A collection custom property: `grey`, `modelled`, `uv`, `textured`, `exported`. UV2 is required from `uv` on, filled material slots from `textured` on; a piece without `kit_status` gets every check |
 
 ## Getting the kit into an engine
 
 Export one file per piece collection (FBX or glTF), named after the collection, at identity transform. For Unity
-(export settings, per-piece folders, prefabs, shared family materials): `blender-to-unity`. To keep a MASTER layout
-and a Unity scene in step both ways: `blender-unity-placement-sync`.
+(export settings, per-piece folders, prefabs, shared family materials, the shell per zone): `blender-to-unity`. To keep
+the `PLACEMENTS` collection and a Unity scene in step both ways: `blender-unity-placement-sync`.

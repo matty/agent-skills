@@ -1,7 +1,8 @@
 """Blender-hosted tests for blender-unity-placement-sync's scripts/export_placements.py: dump values in Unity space
 (a 90 deg turn, a two-axis rotation with non-uniform scale), apply (assigns with expectations, update, delete, create)
 and re-dump, no .blend1 from the command-line save, an ASM scope limited to its collection, the instance_offset and
-library-override warnings, and a full loop through placement_merge.py (run with Blender's own Python).
+library-override warnings, the legacy MASTER scope refused, and a full loop through placement_merge.py (run with
+Blender's own Python).
 
 Host: Blender 5.2 (bpy), run from anywhere:
     blender -b --factory-startup --python-exit-code 1 --python tools/tests/blender/test_placement_export_roundtrip.py
@@ -150,7 +151,7 @@ def by_key(d):
 def test_dump_in_unity_space():
     build_kit()
     build_master()
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     items = by_key(d)
     assert sorted(items) == ["D1", "W1", "W2"], sorted(items)
     assert d["collection"] is None and d["warnings"] == [], (d["collection"], d["warnings"])
@@ -166,22 +167,22 @@ def test_dump_in_unity_space():
 def test_apply_round_trip_without_blend1():
     build_kit()
     build_master()
-    dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
-    write_plan("MASTER", assign=[{"key": k, "id": "id_" + k, "was": "", "asset": a}
+    dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
+    write_plan("PLACEMENTS", assign=[{"key": k, "id": "id_" + k, "was": "", "asset": a}
                                  for k, a in (("W1", "INT_Wall_2x3_A"), ("W2", "INT_Wall_2x3_A"),
                                               ("D1", "PROP_Desk_Free_A"))])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
     assert code == 0 and "3 assign" in text, text
     assert not Path(str(MASTER) + "1").exists(), "the command-line apply left MASTER.blend1"
-    write_plan("MASTER", delete=["id_W2"],
+    write_plan("PLACEMENTS", delete=["id_W2"],
                update=[{"id": "id_D1", "asset": "PROP_Desk_Free_A", "pos": [-1, 0, -1], "rot": [0, 0, 0, 1],
                         "scl": [1, 1, 1], "key": "x"}],
                create=[{"id": "n1", "asset": "INT_Wall_2x3_A", "pos": [-4, 0, -2], "rot": [0, H, 0, H],
                         "scl": [1, 1, 1], "key": "y"}])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
     assert code == 0 and "1 delete, 1 update, 1 create" in text, text
     assert not Path(str(MASTER) + "1").exists(), "the second apply left MASTER.blend1"
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     items = {i["id"]: i for i in d["items"]}
     assert sorted(items) == ["id_D1", "id_W1", "n1"], sorted(items)
     assert close(items["id_D1"]["pos"], (-1, 0, -1)) and close(items["id_D1"]["scl"], (1, 1, 1)), items["id_D1"]
@@ -196,9 +197,9 @@ def test_apply_round_trip_without_blend1():
 def test_assign_refuses_a_changed_object():
     build_kit()
     build_master()
-    write_plan("MASTER", assign=[{"key": "W1", "id": "x1", "was": "zzz", "asset": "INT_Wall_2x3_A"},
+    write_plan("PLACEMENTS", assign=[{"key": "W1", "id": "x1", "was": "zzz", "asset": "INT_Wall_2x3_A"},
                                  {"key": "W2", "id": "x2", "was": "", "asset": "PROP_Desk_Free_A"}])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER")
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS")
     assert code == 1, "apply exit %s:\n%s" % (code, text)
     assert "has id ''" in text and "instances INT_Wall_2x3_A" in text, text
     bpy.ops.wm.open_mainfile(filepath=str(MASTER))
@@ -232,7 +233,7 @@ def test_asm_scope_is_its_collection():
 def test_instance_offset_warning():
     build_kit()
     build_master(extra=("INT_Off_2x3_A",))
-    d, text = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, text = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     assert any("INT_Off_2x3_A has instance_offset (0.5, 0.0, 0.0)" in w for w in d["warnings"]), d["warnings"]
     assert "WARNING collection INT_Off_2x3_A" in text, text
 
@@ -255,7 +256,7 @@ def test_library_override_is_skipped_and_named():
     over = [o.name for o in bpy.context.scene.objects if o.override_library is not None]
     assert len(over) >= 2, "fixture: no override objects were made (%s)" % over
     save_as(MASTER)
-    d, text = dump(MASTER, "MASTER")
+    d, text = dump(MASTER, "PLACEMENTS")
     assert [i["key"] for i in d["items"]] == [keep.name], [i["key"] for i in d["items"]]
     assert any("library-override" in w for w in d["warnings"]), d["warnings"]
 
@@ -287,8 +288,8 @@ def test_deleting_a_parent_keeps_its_children_in_place():
     want = {o.name: o.matrix_world.copy() for o in (child, lone)}
     assert (want["Child"].translation - Matrix.Translation((6, 1, 0)).translation).length < 1e-5
     save_as(MASTER)
-    write_plan("MASTER", delete=["p"])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER")
+    write_plan("PLACEMENTS", delete=["p"])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS")
     assert code == 0 and "1 delete" in text, text
     bpy.ops.wm.open_mainfile(filepath=str(MASTER))
     for name, mw in want.items():
@@ -323,7 +324,7 @@ def build_parented(folder_between=False):
         ob.matrix_world = mw
     bpy.context.view_layer.update()
     save_as(MASTER)
-    d, _ = dump(MASTER, "MASTER")
+    d, _ = dump(MASTER, "PLACEMENTS")
     return {i["id"]: i for i in d["items"]}
 
 
@@ -332,10 +333,10 @@ def moved(item, dx):
 
 
 def apply_and_dump(**plan):
-    write_plan("MASTER", **plan)
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER")
+    write_plan("PLACEMENTS", **plan)
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS")
     assert code == 0, text
-    d, _ = dump(MASTER, "MASTER")
+    d, _ = dump(MASTER, "PLACEMENTS")
     return {i["id"]: i for i in d["items"]}
 
 
@@ -378,7 +379,7 @@ def test_unmoved_and_constrained_placements_stay_put():
     con.parent = base_
     bpy.context.view_layer.update()
     save_as(MASTER)
-    was, text = dump(MASTER, "MASTER")
+    was, text = dump(MASTER, "PLACEMENTS")
     assert any("constraints: Con" in w for w in was["warnings"]), was["warnings"]
     was = {i["id"]: i for i in was["items"]}
     for _ in range(3):
@@ -392,12 +393,12 @@ def test_unmoved_and_constrained_placements_stay_put():
 def test_failed_dump_leaves_no_stale_file():
     build_kit()
     build_master()
-    dump(MASTER, "MASTER")
-    out = PL / "MASTER.blender.json"
+    dump(MASTER, "PLACEMENTS")
+    out = PL / "PLACEMENTS.blender.json"
     assert out.exists()
-    code, text = run_export(MASTER, "dump", "--dir", PL, "--scope", "MASTER", "--collection", "Nope")
+    code, text = run_export(MASTER, "dump", "--dir", PL, "--scope", "PLACEMENTS", "--collection", "Nope")
     assert code == 1 and "no local collection 'Nope'" in text, text
-    assert not out.exists(), "a failed dump left the previous MASTER.blender.json for the merge to read"
+    assert not out.exists(), "a failed dump left the previous PLACEMENTS.blender.json for the merge to read"
 
 
 def test_full_loop_with_merge():
@@ -405,43 +406,43 @@ def test_full_loop_with_merge():
     build_kit()
     build_master()
     loop = TMP / "placements_loop"                      # a fresh folder: no snapshot yet
-    unity = {"scope": "MASTER", "side": "unity", "target": "scene:MASTER", "items": [],
+    unity = {"scope": "PLACEMENTS", "side": "unity", "target": "scene:PLACEMENTS", "items": [],
              "assets": ["INT_Wall_2x3_A", "PROP_Desk_Free_A"]}
 
     def write_unity():
         loop.mkdir(parents=True, exist_ok=True)
-        (loop / "MASTER.unity.json").write_text(json.dumps(unity), encoding="utf-8")
+        (loop / "PLACEMENTS.unity.json").write_text(json.dumps(unity), encoding="utf-8")
 
     def blender_side():
-        code, text = run_export(MASTER, "apply", "--dir", loop, "--scope", "MASTER", "--libraries", "kits/*.blend")
+        code, text = run_export(MASTER, "apply", "--dir", loop, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
         assert code == 0, text
-        dump(MASTER, "MASTER", "--libraries", "kits/*.blend", folder=loop)
+        dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend", folder=loop)
 
-    dump(MASTER, "MASTER", "--libraries", "kits/*.blend", folder=loop)
+    dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend", folder=loop)
     write_unity()
-    code, text = run_merge("merge", loop, "MASTER")
+    code, text = run_merge("merge", loop, "PLACEMENTS")
     assert code == 0, text
-    plan_u = json.loads((loop / "MASTER.plan.unity.json").read_text(encoding="utf-8"))
+    plan_u = json.loads((loop / "PLACEMENTS.plan.unity.json").read_text(encoding="utf-8"))
     assert len(plan_u["create"]) == 3, plan_u
     unity["items"] = [dict(c, key=str(n), name=c["asset"]) for n, c in enumerate(plan_u["create"])]   # Unity applied
     write_unity()
     blender_side()
-    code, text = run_merge("commit", loop, "MASTER")
+    code, text = run_merge("commit", loop, "PLACEMENTS")
     assert code == 0, text
     desk = next(i for i in unity["items"] if i["asset"] == "PROP_Desk_Free_A")
     desk["pos"] = [-2.5, 1.0, -3.0]                       # someone moves the desk in Unity
     write_unity()
-    dump(MASTER, "MASTER", "--libraries", "kits/*.blend", folder=loop)
-    code, text = run_merge("merge", loop, "MASTER")
+    dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend", folder=loop)
+    code, text = run_merge("merge", loop, "PLACEMENTS")
     assert code == 0 and "unity   -> blender update" in text, text
     blender_side()
-    code, text = run_merge("commit", loop, "MASTER")
+    code, text = run_merge("commit", loop, "PLACEMENTS")
     assert code == 0, text
-    code, text = run_merge("merge", loop, "MASTER")
+    code, text = run_merge("merge", loop, "PLACEMENTS")
     assert code == 0 and "unchanged 3" in text, text
-    snap = json.loads((loop / "MASTER.synced.json").read_text(encoding="utf-8"))
+    snap = json.loads((loop / "PLACEMENTS.synced.json").read_text(encoding="utf-8"))
     assert snap["source"] == {"blender_file": "master.blend", "blender_collection": None,
-                              "unity_target": "scene:MASTER"}, snap["source"]
+                              "unity_target": "scene:PLACEMENTS"}, snap["source"]
 
 
 def test_names_and_folders():
@@ -453,25 +454,25 @@ def test_names_and_folders():
     bpy.data.objects["W2"].name = "W1.001"          # a second "W1": the same label
     bpy.data.objects["W1"].name = "Shop/Front"      # "/" reads as "-"
     save_as(MASTER)
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     items = by_key(d)
     assert items["W1.001"]["label"] == "W1" and items["Shop/Front"]["label"] == "Shop-Front", items
     assert {i["group"] for i in d["items"]} == {"study"}, d["items"]
-    write_plan("MASTER", assign=[{"key": k, "id": "id_" + a, "was": "", "asset": items[k]["asset"]}
+    write_plan("PLACEMENTS", assign=[{"key": k, "id": "id_" + a, "was": "", "asset": items[k]["asset"]}
                                  for k, a in (("Shop/Front", "W1"), ("W1.001", "W2"), ("D1", "D1"))])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
     assert code == 0, text
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     items = {i["id"]: i for i in d["items"]}
     keep = lambda pid, **kw: dict({k: items[pid][k] for k in ("asset", "pos", "rot", "scl")}, id=pid, key="x", **kw)
     plan = dict(update=[keep("id_W1", label="Shop front", group="Street/Shops"), keep("id_D1", label="D1", group="")],
                 create=[{"id": "n1", "asset": "PROP_Desk_Free_A", "pos": [-4, 0, -2], "rot": [0, 0, 0, 1],
                          "scl": [1, 1, 1], "key": "y", "label": "Reception desk", "group": "Lobby"}])
     for run in (1, 2):                                      # the second run of the same plan changes nothing
-        write_plan("MASTER", **plan)
-        code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+        write_plan("PLACEMENTS", **plan)
+        code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
         assert code == 0, text
-        d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+        d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
         got = {i["id"]: (i["label"], i["group"]) for i in d["items"]}
         assert got == {"id_W1": ("Shop front", "Street/Shops"), "id_W2": ("W1", "study"), "id_D1": ("D1", ""),
                        "n1": ("Reception desk", "Lobby")}, (run, got)
@@ -499,13 +500,13 @@ def test_folder_renamed_whole():
     shelf.objects.link(bpy.data.objects["D1"])
     study.objects.unlink(bpy.data.objects["D1"])
     save_as(MASTER)
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     assert d["folders"] == ["study", "study/Shelf"], d["folders"]
     assert by_key(d)["D1"]["group"] == "study/Shelf", by_key(d)["D1"]
-    write_plan("MASTER", folders=[{"from": "study", "to": "Rooms/Library"}])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    write_plan("PLACEMENTS", folders=[{"from": "study", "to": "Rooms/Library"}])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
     assert code == 0 and "folder renamed study -> Rooms/Library" in text, text
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     assert d["folders"] == ["Rooms", "Rooms/Library", "Rooms/Library/Shelf"], d["folders"]
     assert {k: i["group"] for k, i in by_key(d).items()} == {"W1": "Rooms/Library", "W2": "Rooms/Library",
                                                              "D1": "Rooms/Library/Shelf"}, d["items"]
@@ -513,14 +514,34 @@ def test_folder_renamed_whole():
     assert [c.name for c in bpy.data.objects["Lamp light"].users_collection] == ["Library"], "the light went along"
     assert "study" not in bpy.data.collections, "renamed, not copied"
     # Fallbacks: the source folder is gone, so the placements under the path move; then a taken target.
-    write_plan("MASTER", folders=[{"from": "Nowhere", "to": "Rooms"}, {"from": "Rooms/Library/Shelf", "to": "Rooms"}])
-    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    write_plan("PLACEMENTS", folders=[{"from": "Nowhere", "to": "Rooms"}, {"from": "Rooms/Library/Shelf", "to": "Rooms"}])
+    code, text = run_export(MASTER, "apply", "--dir", PL, "--scope", "PLACEMENTS", "--libraries", "kits/*.blend")
     assert code == 0 and "moved 0 placement(s) from Nowhere" in text and "moved 1 placement(s)" in text, text
-    d, _ = dump(MASTER, "MASTER", "--libraries", "kits/*.blend")
+    d, _ = dump(MASTER, "PLACEMENTS", "--libraries", "kits/*.blend")
     assert by_key(d)["D1"]["group"] == "Rooms" and "Rooms/Library/Shelf" in d["folders"], d
 
 
-CASES = [test_dump_in_unity_space, test_apply_round_trip_without_blend1, test_assign_refuses_a_changed_object,
+def test_legacy_master_scope_is_refused():
+    """--scope MASTER, and a single MASTER.blend whose placements are still in a MASTER collection, are refused with
+    the rename instructions instead of syncing the wrong collection or the whole scene."""
+    build_kit()
+    build_master()
+    code, text = run_export(MASTER, "dump", "--dir", PL, "--scope", "MASTER", "--libraries", "kits/*.blend")
+    assert code == 1 and "legacy placements scope MASTER" in text, text
+    bpy.ops.wm.open_mainfile(filepath=str(MASTER))
+    bpy.context.scene["kit_layout"] = "single"
+    bpy.data.collections["study"].name = "MASTER"
+    save_as(MASTER)
+    code, text = run_export(MASTER, "dump", "--dir", PL, "--scope", "PLACEMENTS")
+    assert code == 1 and "a MASTER collection and no PLACEMENTS" in text, text
+    assert not (PL / "PLACEMENTS.blender.json").exists(), "a refused dump left a file"
+    bpy.data.collections["MASTER"].name = "PLACEMENTS"
+    save_as(MASTER)
+    d, _ = dump(MASTER, "PLACEMENTS")
+    assert d["collection"] == "PLACEMENTS" and sorted(i["key"] for i in d["items"]) == ["D1", "W1", "W2"], d
+
+
+CASES = [test_dump_in_unity_space, test_legacy_master_scope_is_refused, test_apply_round_trip_without_blend1, test_assign_refuses_a_changed_object,
          test_asm_scope_is_its_collection, test_instance_offset_warning, test_library_override_is_skipped_and_named,
          test_deleting_a_parent_keeps_its_children_in_place, test_moving_a_parent_leaves_its_child_placements,
          test_parent_and_child_both_moved_land_where_planned, test_unmoved_and_constrained_placements_stay_put,

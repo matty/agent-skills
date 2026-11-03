@@ -1,7 +1,7 @@
 # Split files: linking, reloading, relinking and renaming
 
-Only for a project the user asked to split into KIT, ASM and MASTER files (`SKILL.md`, "Choose the file layout
-first"). A single MASTER links nothing, so none of this applies to it.
+Only for a project the user asked to split into KIT, ASM and MASTER.blend files (`SKILL.md`, "Choose the file layout
+first"). A single MASTER.blend links nothing, so none of this applies to it.
 
 ## Link, never append
 
@@ -9,7 +9,7 @@ first"). A single MASTER links nothing, so none of this applies to it.
   points at the one collection in the KIT file, so editing the piece updates every placement and every copy stays an
   identical mesh (which is what GPU instancing in an engine needs).
 - **Append** copies the data into the file. The copy drifts from the kit at the first edit and the instancing is gone.
-  Do not append kit pieces into ASM or MASTER.
+  Do not append kit pieces into ASM or MASTER.blend.
 - **Library overrides** only when an instance needs a local change Blender cannot get otherwise (rare in a static
   world). An override is a fork: prefer a new kit variant (`_B`), and record any override with the project's
   decisions. Making a library override of a placed instance removes its instancing empty and instances the
@@ -34,7 +34,7 @@ first"). A single MASTER links nothing, so none of this applies to it.
 ## Renaming
 
 Rename the collection in its file (for an assembly, the ASM file too, keeping one assembly per file named after it),
-and rename its exported file and engine asset to match. Then in every file that places it (ASM files, then MASTER) link the renamed collection and re-point the existing
+and rename its exported file and engine asset to match. Then in every file that places it (ASM files, then MASTER.blend) link the renamed collection and re-point the existing
 instances (`ob.instance_collection = <renamed collection>`) instead of deleting and re-placing them, so placement ids
 survive; the old link is dropped when the file is saved. Moving a piece to another KIT file is the same procedure:
 append the piece's collection into the new KIT file, delete it from the old one, then in every file that places it

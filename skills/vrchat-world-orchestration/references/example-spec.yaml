@@ -15,7 +15,7 @@ world:
 
 tools:                              # detected at intake, confirmed by the user
   blender: C:/Users/me/.blender/blender-5.2.2/blender.exe
-  blender_mcp: true                 # connected: MASTER and ASM tasks use the live Blender (@blender-live)
+  blender_mcp: true                 # connected: MASTER.blend tasks use the live Blender (@blender-live)
   unity_project: C:/Users/me/Unity/ExampleMarket
   substance_designer: true
   substance_painter: true

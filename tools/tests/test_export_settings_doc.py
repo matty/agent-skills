@@ -1,7 +1,7 @@
 """Plain-Python tests that blender-to-unity's export settings agree with themselves: every keyword
-scripts/batch_export_fbx.py passes to the FBX exporter (FBX_SETTINGS, the kit and default path modes) is documented
-with the same value in references/fbx-export.md, the doc gives no other value for it, and SKILL.md states the
-canonical axis and path-mode rules.
+scripts/batch_export_fbx.py passes to the FBX exporter (FBX_SETTINGS, the shell's SHELL_SETTINGS over it, the kit and
+default path modes) is documented with the same value in references/fbx-export.md, the doc gives no other value for
+it, and SKILL.md states the canonical axis and path-mode rules.
 
 Host: plain Python 3.9+, standard library (the script is parsed, not run). Run from the repo root:
     python -B -m unittest discover -s tools/tests -p "test_export_*.py"
@@ -19,16 +19,20 @@ DOC = SKILL / "references" / "fbx-export.md"
 
 
 def script_settings():
-    """FBX_SETTINGS plus the module-level constants, as Python values."""
+    """FBX_SETTINGS plus the module-level constants (SHELL_SETTINGS among them, as a dict), as Python values."""
     tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
     consts, settings = {}, None
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
             name = node.targets[0].id
-            if name == "FBX_SETTINGS":
+            if name in ("FBX_SETTINGS", "SHELL_SETTINGS"):
                 call = node.value
                 assert isinstance(call, ast.Call) and getattr(call.func, "id", "") == "dict"
-                settings = {kw.arg: ast.literal_eval(kw.value) for kw in call.keywords}
+                values = {kw.arg: ast.literal_eval(kw.value) for kw in call.keywords}
+                if name == "FBX_SETTINGS":
+                    settings = values
+                else:
+                    consts[name] = values
             else:
                 try:
                     consts[name] = ast.literal_eval(node.value)
@@ -59,10 +63,17 @@ class ExportSettingsAgree(unittest.TestCase):
 
     def test_every_script_setting_is_documented_with_its_value(self):
         self.assertIsNotNone(self.settings)
+        shell = self.consts.get("SHELL_SETTINGS", {})
         for key, value in self.settings.items():
             self.assertIn(key, self.doc, "fbx-export.md has no row for %s" % key)
-            self.assertEqual(set(map(repr, self.doc[key])), {repr(value)},
-                             "%s: script %r, doc %r" % (key, value, self.doc[key]))
+            want = {repr(value)} | ({repr(shell[key])} if key in shell else set())
+            self.assertEqual(set(map(repr, self.doc[key])), want,
+                             "%s: script %r (shell %r), doc %r" % (key, value, shell.get(key), self.doc[key]))
+
+    def test_shell_settings_override_only_known_keywords(self):
+        shell = self.consts.get("SHELL_SETTINGS")
+        self.assertEqual(shell, {"use_custom_props": True})
+        self.assertTrue(set(shell) <= set(self.settings))
 
     def test_path_modes(self):
         self.assertEqual(self.consts["KIT_PATH_MODE"], "STRIP")
