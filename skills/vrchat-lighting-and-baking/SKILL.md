@@ -101,8 +101,8 @@ A baked light cannot be turned off at runtime. Pick the method before the bake:
 Baking lighting states (Udon cannot swap lightmaps: "VRChat does not allow you access to change Lightmaps directly",
 and a second bake replaces the first). Sources and detail: references/lighting-states.md.
 
-1. The placed originals stay under MASTER with their colliders and their place in placement sync, Mesh Renderers
-   off. The render-only copies live under a root of their own (for example `LIGHT_STATES`), outside MASTER, with
+1. The placed originals stay under the placement-sync root (`PLACEMENTS`) with their colliders and their place in placement sync, Mesh Renderers
+   off. The render-only copies live under a root of their own (for example `LIGHT_STATES`), outside `PLACEMENTS`, with
    renderers on and colliders removed (copies duplicated from the originals arrive the other way round).
 2. Build the first state's two parents there (static geometry; that state's lights and reflection probes), then
    duplicate them once per further state. A piece that must change with the switch is lightmapped in every copy,

@@ -10,8 +10,8 @@ rules this skill adds. Checked 2026-10-17.
 
 | Object | Where | Renders | Notes |
 |---|---|---|---|
-| Placed originals of the switched pieces | Under MASTER, as placement sync made them | No: Mesh Renderers off | They keep their colliders and their place in placement sync |
-| State copies | Under a root of their own (for example `LIGHT_STATES`), outside MASTER | Yes | Render-only: Mesh Renderers on, colliders removed. Copies duplicated from the originals arrive the other way round (renderers off, colliders on): fix both. Placement sync never sees them |
+| Placed originals of the switched pieces | Under `PLACEMENTS`, as placement sync made them | No: Mesh Renderers off | They keep their colliders and their place in placement sync |
+| State copies | Under a root of their own (for example `LIGHT_STATES`), outside `PLACEMENTS` | Yes | Render-only: Mesh Renderers on, colliders removed. Copies duplicated from the originals arrive the other way round (renderers off, colliders on): fix both. Placement sync never sees them |
 | Per state | Two parents: the static geometry, and that state's lights and reflection probes | | Build the first state's pair, then duplicate it once per further state |
 
 A piece that must change with the switch is lightmapped in every copy, even a small prop that would otherwise be
