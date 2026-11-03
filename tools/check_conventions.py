@@ -92,6 +92,9 @@ CANON = {
     # scripts take; the Bakery effective-density gate (half the planned texels per metre)
     "bakery": {"area_factor": 2.0, "inset_texels": 3},
     "lightmappers": ["unity", "bakery"],
+    # Mesh-map bakers (pbr-texturing references/baking.md, "Choosing a baker"); the order is the default preference
+    # when the world spec's tools.mesh_baker is auto or unset
+    "mesh_bakers": ["toolbag", "substance", "cycles"],
     "effective_density_min": 0.5,
     # Modifier types that change topology: the hard-surface hand-off to UV work applies the stack from the top down to
     # the last of them (uv-unwrapping's apply_stack and blender-mesh-topology's apply_for_uv_work)
@@ -148,6 +151,8 @@ CONSTANTS = [
     ("vrchat-world-qa/scripts/qa_measure.py", "BAKERY_INSET_TEXELS", ("bakery", "inset_texels")),
     ("vrchat-world-qa/scripts/qa_measure.py", "LIGHTMAPPERS", ("lightmappers",)),
     ("vrchat-world-qa/scripts/qa_measure.py", "EFFECTIVE_DENSITY_MIN", ("effective_density_min",)),
+    ("pbr-texturing/scripts/bakers.py", "MESH_BAKERS", ("mesh_bakers",)),
+    ("vrchat-world-orchestration/scripts/spec_validate.py", "MESH_BAKERS", ("mesh_bakers",)),
     ("vrchat-world-orchestration/scripts/spec_validate.py", "BAKERY_AREA_FACTOR", ("bakery", "area_factor")),
     ("vrchat-world-orchestration/scripts/spec_validate.py", "BAKERY_INSET_TEXELS", ("bakery", "inset_texels")),
     ("uv-unwrapping/scripts/uv_audit.py", "TOPOLOGY_TYPES", ("topology_types",)),
@@ -578,15 +583,17 @@ def check_uv_gate():
 
 
 def check_fbx_and_import():
-    rel = "blender-to-unity/scripts/batch_export_fbx.py"
-    got = module_constant(rel, "FBX_SETTINGS")
     want = CANON["fbx_export"]
-    if got is MISSING:
-        fail(rel, "no FBX_SETTINGS dict")
-    else:
+    # the kit export, and pbr-texturing's copy that sends the low to Marmoset Toolbag exactly as it goes to Unity
+    for rel in ("blender-to-unity/scripts/batch_export_fbx.py", "pbr-texturing/scripts/bake_maps.py"):
+        got = module_constant(rel, "FBX_SETTINGS")
+        if got is MISSING:
+            fail(rel, "no FBX_SETTINGS dict")
+            continue
         for k in sorted(set(got) | set(want)):
             if got.get(k, MISSING) != want.get(k, MISSING):
                 fail(rel, "FBX_SETTINGS %s is %r, canon %r" % (k, got.get(k, "(missing)"), want.get(k, "(missing)")))
+    rel = "blender-to-unity/scripts/batch_export_fbx.py"
     if module_constant(rel, "KIT_PATH_MODE") != CANON["kit_path_mode"]:
         fail(rel, "KIT_PATH_MODE is not %r" % CANON["kit_path_mode"])
     rel = "blender-to-unity/scripts/unity/Editor/KitImport.cs"
