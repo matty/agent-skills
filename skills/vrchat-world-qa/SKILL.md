@@ -46,7 +46,7 @@ JSON; one that did not is unfinished, never clean: fix the command and run it ag
 
 In a single MASTER (the default layout, `kit_layout = "single"`), the kit run is on `blender/MASTER.blend` with
 `--pieces "<FAMILY>_*"` for the task's family, and B2, B3, M9, A1-A3 read as `references/checklists.md` says. When the
-live Blender has MASTER open, measure it there through the MCP without saving (its disk copy may be older).
+live Blender has MASTER.blend open, measure it there through the MCP without saving (its disk copy may be older).
 
 ## Rules while checking
 

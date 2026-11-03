@@ -45,9 +45,15 @@ Workbench (base colour only); --light lookdev is EEVEE with each material's own 
 maps), a grey world, the scene's lights hidden and one key light 45 deg above, behind the camera's left (LOOKDEV).
 
 File role, from the file name or --role: KIT_* kit, ASM_* asm, MASTER* master; --import-fbx makes it fbx. A single
-MASTER (scene["kit_layout"] == "single", blender-kit-library's default) holds the pieces under KIT, the assemblies
-under ASM (both excluded from the view layer) and the layout under MASTER: its pieces get the kit checks and its
-layout the placement checks. A split MASTER or ASM file must hold no local piece collection; a split MASTER no local
+MASTER.blend (scene["kit_layout"] == "single", blender-kit-library's default) holds the pieces under KIT, the
+assemblies under ASM (both excluded from the view layer), each room's envelope (walls, floors, tiers, stairs,
+openings; greybox or finished) under SHELL / SHELL_<Zone>, ceilings under CEILINGS / CEIL_<Zone>, and the placed
+instances under PLACEMENTS: its pieces get the kit checks, its placements the placement checks, and each shell zone
+the stage checks for its kit_status (shell_zones: SHL_<id> names, rotation and scale applied, smoothing from
+"modelled", UV2 from "uv", material slots from "textured"); shell meshes are world geometry (shell_meshes), neither
+stray nor REF. A
+collection still called MASTER (the placements collection's name before 2026-11-03) is a layout problem: rename it to
+PLACEMENTS. A split MASTER.blend or ASM file must hold no local piece collection; a split MASTER.blend no local
 assembly; an ASM file exactly the one assembly named after the file. With no .blend open and no --import-fbx (a blank
 session), the scene is not measured.
 
@@ -66,8 +72,9 @@ instance_offset}], placements [{object, asset, kind (grid, free, asm, other), li
 mirrored (negative scale, read as the unmirrored placement: a PROBLEM on a tiling piece, else a note), scale_ok,
 on_grid, right_angle, tile_phase (with --families: u_px, v_px, turn_deg, tile_m, px_per_m, horizontal; a wall's v_px
 against the walls of its family its box touches, with v_abs_px and v_against), assembly (the ASM_ collection holding
-it in a single MASTER, else null: compare only
-those with null against the zones' placements)}], appended, shadowing_linked, ref_meshes, stray_meshes, problems, notes (advisory:
+it in a single MASTER.blend, else null: compare only
+those with null against the zones' placements)}], appended, shadowing_linked, shell_zones [{zone, kit_status, objects,
+instances, issues}], shell_meshes, ref_meshes, stray_meshes, problems, notes (advisory:
 LOD0 footprints under 64 px, where only a Free PROP or FOL piece is told to become probe-lit; UV2 box fill under 0.5
 at a footprint of 64 px or more, unless Bakery's density gate already makes it a PROBLEM),
 linked_assembly_offsets {name: [x, y, z]}; optional fbx_folded_materials, placement_changes (matched by placement id
@@ -164,6 +171,74 @@ def _in_ref(ob):
     return any(_is_ref(c) for c in ob.users_collection)
 
 
+SHELL_ZONE_RE = re.compile(r"^(SHELL|CEIL)_[A-Za-z0-9]+$")
+SHELL_OBJ_RE = re.compile(r"^SHL_[A-Za-z0-9][A-Za-z0-9_-]*$")
+SHELL_STAGES = ("grey", "modelled", "uv", "textured", "exported")     # a zone collection's kit_status
+
+
+def _shell_tree(local):
+    """SHELL, SHELL_<Zone>, CEILINGS, CEIL_<Zone> and every collection inside them: each room's envelope."""
+    roots = [c for c in local if c.name in ("SHELL", "CEILINGS") or SHELL_ZONE_RE.match(c.name)]
+    return set(roots) | {x for c in roots for x in c.children_recursive}
+
+
+def _sharp_step(ob):
+    """A sharp-by-angle step on a smooth-shaded object: a Smooth by Angle modifier, sharp edges in the mesh, a
+    Weighted Normal stack, custom normals or legacy auto smooth."""
+    me = ob.data
+    if any((m.type == "NODES" and m.node_group and m.node_group.name.startswith("Smooth by Angle"))
+           or m.type == "WEIGHTED_NORMAL" for m in ob.modifiers):
+        return True
+    attr = me.attributes.get("sharp_edge")
+    if attr is not None and any(v.value for v in attr.data):
+        return True
+    return bool(getattr(me, "use_auto_smooth", False) or getattr(me, "has_custom_normals", False))
+
+
+def measure_shell_zone(coll):
+    """One shell-type zone (SHELL_<Zone> or CEIL_<Zone>) checked for its kit_status (none: every check)."""
+    status = coll.get("kit_status")
+    stage = SHELL_STAGES.index(status) if status in SHELL_STAGES else len(SHELL_STAGES)
+    rep = {"zone": coll.name, "kit_status": status, "objects": [], "instances": [], "issues": []}
+    for ob in sorted(coll.all_objects, key=lambda o: o.name):
+        if ob.instance_type == "COLLECTION" and ob.instance_collection is not None:
+            rep["instances"].append(ob.name)
+            continue
+        if ob.type != "MESH":
+            continue
+        rep["objects"].append(ob.name)
+        bad = rep["issues"].append
+        if not SHELL_OBJ_RE.match(ob.name):
+            bad("%s: shell object not named SHL_<id>" % ob.name)
+        _loc, rot, scl = ob.matrix_world.decompose()
+        if rot.angle > 1e-4 or any(abs(v - 1.0) > 1e-4 for v in scl):
+            bad("%s: rotation or scale not applied" % ob.name)
+        if ob.name.endswith("_COL"):
+            continue
+        me = ob.data
+        if stage >= SHELL_STAGES.index("modelled") and len(me.polygons):
+            flat = sum(1 for p in me.polygons if not p.use_smooth)
+            if flat:
+                bad("%s: %d of %d faces flat-shaded" % (ob.name, flat, len(me.polygons)))
+            elif not _sharp_step(ob):
+                bad("%s: shaded smooth with no sharp-by-angle step" % ob.name)
+        if stage >= SHELL_STAGES.index("uv") and len(me.uv_layers) < 2:
+            bad("%s: no UV2 (lightmap) layer" % ob.name)
+        for slot in ob.material_slots:
+            if slot.material is None:
+                if stage >= SHELL_STAGES.index("textured"):
+                    bad("%s: empty material slot" % ob.name)
+            elif not re.match(r"^M_[A-Z]{2,5}_[A-Za-z0-9][A-Za-z0-9_]*$", slot.material.name):
+                bad("%s: material %s is not named M_<FAMILY>_<Name> (M_SHL_<Name> on greybox)"
+                    % (ob.name, slot.material.name))
+    return rep
+
+
+LEGACY_PLACEMENTS = ("legacy collection MASTER: the placements collection is now PLACEMENTS. Rename MASTER to "
+                     "PLACEMENTS and MASTER_<Zone> to PLACEMENTS_<Zone> (kit-library skill, "
+                     "references/migrate-master.md)")
+
+
 def lightmapper_name(name):
     """unity (also "progressive", the world spec's lighting.baker for it) or bakery; raises ValueError otherwise."""
     n = str(name or "unity").strip().lower()
@@ -204,9 +279,12 @@ def _is_lod0(ob):
 
 
 def _single_layout(scene, local, local_pieces):
-    """A single MASTER: where its pieces and assemblies sit. Returns (assembly of each object, problems)."""
-    roots = {n: next((c for c in local if c.name == n), None) for n in ("KIT", "ASM", "MASTER")}
-    out = ["no %s collection in a single MASTER" % n for n, c in roots.items() if c is None]
+    """A single MASTER.blend: where its pieces and assemblies sit, and that the placements are under PLACEMENTS (not
+    the legacy MASTER collection). Returns (assembly of each object, problems)."""
+    roots = {n: next((c for c in local if c.name == n), None) for n in ("KIT", "ASM", "PLACEMENTS")}
+    legacy = any(c.name == "MASTER" or c.name.startswith("MASTER_") for c in local)
+    out = [LEGACY_PLACEMENTS] if legacy else []
+    out += ["no %s collection in a single MASTER" % n for n, c in roots.items() if c is None]
     under = {n: set(c.children_recursive) if c else set() for n, c in roots.items()}
     out += ["%s: piece outside KIT in a single MASTER" % c.name for c in local_pieces if c not in under["KIT"]]
     out += ["%s: assembly outside ASM in a single MASTER" % c.name for c in local
@@ -1004,6 +1082,8 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
         p["assembly"] = owner.get(p["object"])
     used_locally = {p["asset"] for p in places if not p["linked"]} if not single else set()
     owned = {o.name for c in local_pieces for o in c.all_objects}
+    shell_tree = _shell_tree(local)
+    in_shell = lambda ob: any(c in shell_tree for c in ob.users_collection)
     return {
         "file": bpy.data.filepath,
         "role": role,
@@ -1014,13 +1094,14 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
         "lightmapper": lightmapper,
         "libraries": [_library_entry(lib) for lib in bpy.data.libraries],
         "pieces": pieces,
-        # local collections holding meshes under a name that is neither a piece nor an assembly (REF aside)
+        # local collections holding meshes under a name that is neither a piece nor an assembly (REF and SHELL aside)
         "unnamed_collections": sorted(c.name for c in local if not NAME_RE.match(c.name) and not ASM_RE.match(c.name)
-                                      and not _is_ref(c) and any(o.type == "MESH" for o in c.objects)),
+                                      and not _is_ref(c) and c not in shell_tree
+                                      and any(o.type == "MESH" for o in c.objects)),
         "local_assemblies": sorted(c.name for c in local if ASM_RE.match(c.name)),
         "local_assembly_offsets": {c.name: _vec(c.instance_offset) for c in local if ASM_RE.match(c.name)},
         "images": measure_images(),
-        # In MASTER or an ASM file: what each linked piece currently is, as loaded from its KIT file.
+        # In a MASTER.blend or an ASM file: what each linked piece currently is, as loaded from its KIT file.
         "linked_assembly_offsets": {c.name: _vec(c.instance_offset) for c in bpy.data.collections
                                     if c.library is not None and ASM_RE.match(c.name)},
         "linked_pieces": [{"piece": c.name, "library": c.library.filepath, "kit_status": c.get("kit_status"),
@@ -1029,15 +1110,21 @@ def measure(module=1.0, scene=None, role=None, lightmap_texels=None, lightmap_sc
                           if c.library is not None and NAME_RE.match(c.name)],
         "placements": places,
         "placement_overlaps": placement_overlaps(dg, scene) if places else [],
-        # a kit-named local collection that is also placed here is a copy, not a link (in a single MASTER, the norm)
+        # a kit-named local collection that is also placed here is a copy, not a link (in a single MASTER.blend, the
+        # norm)
         "appended": sorted(n for n in used_locally if NAME_RE.match(n) or ASM_RE.match(n)),
         "shadowing_linked": sorted(c.name for c in local if (NAME_RE.match(c.name) or ASM_RE.match(c.name))
                                    and c.name in linked_names),
-        # REF: scale figures and other review aids a MASTER may hold (never exported); everything else local is stray
+        # SHELL / CEILINGS: each room's envelope (world geometry, exported per zone). REF: scale figures and other
+        # review aids a MASTER.blend may hold (never exported). Everything else local is stray.
+        "shell_zones": [measure_shell_zone(c) for c in sorted(local, key=lambda c: c.name)
+                        if SHELL_ZONE_RE.match(c.name)],
+        "shell_meshes": sorted(o.name for o in scene.objects if o.type == "MESH" and o.library is None
+                               and o.name not in owned and in_shell(o)),
         "ref_meshes": sorted(o.name for o in scene.objects if o.type == "MESH" and o.library is None
-                             and o.name not in owned and _in_ref(o)),
-        "stray_meshes": sorted(o.name for o in scene.objects
-                               if o.type == "MESH" and o.library is None and o.name not in owned and not _in_ref(o)),
+                             and o.name not in owned and not in_shell(o) and _in_ref(o)),
+        "stray_meshes": sorted(o.name for o in scene.objects if o.type == "MESH" and o.library is None
+                               and o.name not in owned and not in_shell(o) and not _in_ref(o)),
     }
 
 
@@ -1289,8 +1376,10 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
     for n in rep.get("unnamed_collections", []):
         out.append("collection %s holds meshes but is named neither <FAMILY>_<Type>_<Size>_<Variant> nor "
                    "ASM_<Name>_<Variant>" % n)
+    for z in rep.get("shell_zones", []):
+        out += ["shell %s: %s" % (z["zone"], i) for i in z["issues"]]
     for n in rep.get("stray_meshes", []):
-        out.append("stray mesh %s: outside every piece collection and not in REF" % n)
+        out.append("stray mesh %s: outside every piece collection and not in SHELL or REF" % n)
     for lib in rep.get("libraries", []):
         if not lib["relative"]:
             out.append("library %s is linked by an absolute path (link with relative paths)" % lib["path"])
@@ -1302,7 +1391,8 @@ def problems(rep, piece_tris=None, expect_status=None, pieces=None, probe_lit=No
         out += ["%s: local piece collection in a %s file, a copy rather than a link" % (p["piece"], role.upper())
                 for p in rep["pieces"]]
     if role == "master" and not single:
-        out += ["%s: local assembly in MASTER; link it from its ASM file" % n for n in rep.get("local_assemblies", [])]
+        out += ["%s: local assembly in a split MASTER.blend; link it from its ASM file" % n
+                for n in rep.get("local_assemblies", [])]
     if role == "asm":
         own = os.path.splitext(os.path.basename(rep.get("file", "")))[0]
         if own not in rep.get("local_assemblies", []):

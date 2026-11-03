@@ -1094,7 +1094,7 @@ def master_copies_reported(r):
     check(rep["role"] == "master", rep["role"])
     check("ASM_Copy_A" in rep["appended"] and has(rep["problems"], "ASM_Copy_A is placed from a local copy"),
           rep["appended"])
-    check(has(rep["problems"], "ASM_Copy_A: local assembly in MASTER"), "local assembly not reported")
+    check(has(rep["problems"], "ASM_Copy_A: local assembly in a split MASTER.blend"), "local assembly not reported")
     check(has(rep["problems"], "TST_Slab_2x2_A: local piece collection in a MASTER file"), "local piece missed")
     check(f["shadow_name"] == "TST_Bevel_1x1x1_A", "fixture: Blender renamed the local collection %s"
           % f["shadow_name"])
