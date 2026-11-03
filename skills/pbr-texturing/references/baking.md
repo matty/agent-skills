@@ -1,12 +1,41 @@
 # Baking mesh maps from a high poly
 
-Two routes, both measured on 2026-10-18 on the same fixture: a 1 m low-poly cube (12 triangles, hard edges, each
-face its own UV island) and a bevelled, subdivided high-poly cube with half-sunk spheres standing 6 cm proud (11,136
-triangles), exported from Blender 5.2.2 with the kit FBX settings (Tangent Space off). UV rules for a clean bake (a
-seam on every hard edge, stacked copies moved out of 0-1, padding per mip) are `uv-unwrapping`'s: this page is the
-bake itself.
+Three routes, all measured on the same fixture: a 1 m low-poly cube (12 triangles, hard edges, each face its own UV
+island) and a bevelled, subdivided high-poly cube with half-sunk spheres standing 6 cm proud (11,136 triangles),
+exported from Blender 5.2.2 with the kit FBX settings (Tangent Space off). Routes A and B were measured on 2026-10-18,
+Route C on 2026-11-03 (the fixture is `build_fixture()` in `tools/tests/blender/test_pbr_texturing_bake.py`). UV
+rules for a clean bake (a seam on every hard edge, stacked copies moved out of 0-1, padding per mip) are
+`uv-unwrapping`'s: this page is the bake itself.
 
-## Before either route
+## Choosing a baker
+
+One rule, in `scripts/bakers.py` (`choose_baker`) and applied by `bake_maps.py --engine auto`:
+
+1. **Detect what works, never assume it** (`detect_bakers()`, or `python bakers.py --maps ...`). Toolbag counts
+   only once a probe script ran in it (`toolbag_bake.py --probe`: licence active, desktop session present); the
+   Substance baker when `substance3d_baker --help` runs; Cycles always.
+2. **The project's baker** wins when it fits the job: the world spec's `tools.mesh_baker` (`toolbag`, `substance`,
+   `cycles` or `auto`), set at intake from what was detected; the user's word overrides it. With none, or `auto`:
+   Toolbag, then the Substance baker, then Cycles (fastest first, then native features).
+3. **The job filters first.** An unattended run (CI, a scheduled task, SSH: no desktop) cannot use Toolbag. A baker
+   that lacks a map, or was not measured for it, is skipped: the Substance baker's texture transfer is not
+   measured, so base colour, roughness and metallic go to Toolbag or Cycles. With no project baker, thin parts close
+   to other surfaces prefer a baker that skips back faces natively (Toolbag, Substance) over Cycles' resolver (1,616 s
+   of a 2,241 s bake on a cauldron set).
+4. **One baker per texture set or atlas.** Bakers differ slightly in tangents, padding and AO falloff; mixed in one
+   atlas the islands show it. A set already baked with one keeps it (`atlas_baker=`).
+5. **The same gate for every baker** (`check_outputs()`): the asked size, 16-bit normal and height maps, the
+   `<name>_<Suffix>.png` names, and an OpenGL normal map (`pbr_check.py` reads it). A baker that fails, or whose
+   maps fail the gate, hands over to the next in the order; the bake report records `baker`, `reason` and
+   `fallback`.
+
+| Baker | Maps (measured) | Needs | Fixture time |
+|---|---|---|---|
+| Marmoset Toolbag (Route C) | normal, AO, curvature, thickness, height; base colour, roughness, metallic transferred | Toolbag 5, a desktop session, FBX in | 1.5 s for the whole job at 512 (0.2 s of baking) |
+| Substance 3D baker (Route A) | normal, AO, curvature, thickness, position, ID, world normal, bent normals | Designer installed | under a second per map |
+| Blender Cycles (Route B) | normal, AO, curvature; base colour, roughness, metallic copied | Blender | seconds to minutes (the resolver dominates) |
+
+## Before any route
 
 1. Low poly final and triangulated as it exports (a Triangulate modifier with Keep Normals, live during the bake), so
    baker and engine split quads the same way; its custom normals (weighted normals) are part of the tangent basis.
@@ -201,6 +230,41 @@ curvature 0.10 s):
 Blender facts behind it, measured on 5.2.2: `Image.save()` of a float image writes a 16-bit PNG; a 16-bit PNG loaded
 under the default sRGB tag is linearised (a stored 0.5 reads 0.214), so read data maps as Non-Color.
 
+## Route C: Marmoset Toolbag
+
+From Blender, one call does it all: export, cage, textures, bake, gate:
+
+```text
+blender -b --factory-startup scene.blend --python-exit-code 1 --python bake_maps.py --
+        --low PROP_Crate_Free_A --high Crate_high --size 2048 --out blender/substance/PROP/bake
+        --name T_PROP_Crate_Free_A --maps normal,ao,curvature --engine toolbag     (or --engine auto --prefer toolbag)
+```
+
+On FBX files already exported, `python toolbag_bake.py --low x_low.fbx --high x_high.fbx --cage 0.08 ...`;
+`python toolbag_bake.py --probe` checks that Toolbag runs scripts on this machine. Find Toolbag, never assume it:
+`TOOLBAG_EXE`, then PATH, then `C:/Program Files/Marmoset/Toolbag 5/toolbag.exe`; otherwise ask the user.
+
+Measured with Toolbag 5.0.3.3 (2026-11-03, Windows 11, RTX 3090 Ti) by introspecting the installed `mset` module and
+baking the fixture and a generated rug:
+
+| Fact | Consequence in the scripts |
+|---|---|
+| `toolbag.exe -hide script.py <args>` runs the script (`sys.argv` = `['toolbag', <args>...]`); the launch returns before the script ends; `mset.quit(code)` closes Toolbag; `__file__` is undefined inside it | `toolbag_job.py` takes the job and result paths from argv; `toolbag_bake.run_job` waits for the result file (written to a temp name, then renamed) |
+| Toolbag needs a logged-in desktop session (it opens a window, even with `-hide`) | `choose_baker(unattended=True)` skips it |
+| The baker's quick loader (`BakerObject.importModel`) groups by name: `<stem>_low`, `<stem>_high`, one group per stem with Low and High children; several high files with one stem share one High | `bake_maps` exports the low as `tbbake_low` and each high as `tbbake_high`, one FBX each |
+| `mset.importModel` plus parenting under High baked the high at the wrong scale (bounds +-56 against 0.56 m: the cube lost its bevels, domes grew) | every mesh goes through the quick loader |
+| A `.glb` is not read: the quick loader skips it, `mset.importModel` reports "not found" | FBX only, kit export settings; `build_job` refuses anything else |
+| FBX textures do not arrive (`Albedo Map` empty: a transfer bake comes out flat white). `setField("Albedo Map", path)` with a string is ignored without an error | `bake_maps` writes each high material's base colour, roughness and metallic to PNG (`transfer_textures`); the job assigns them as `mset.Texture(path)`, albedo `sRGB = True` |
+| The cage is `minOffset` / `maxOffset` on the Low group (`BakerTargetObject`), in scene units: an FBX scene is in centimetres (`getSceneUnitScale()` 0.01). The default (-1000000, automatic) did not enclose the fixture's 6 cm bumps: they baked as crescents; 8 cm baked whole domes | the job converts metres to scene units; `bake_maps` sizes the push with `cage_extrusion()` (0.114 m on the fixture), inward the same |
+| Normal maps come out OpenGL (`pbr_check`: opengl, mean length 0.999) with `tangentSpace = "Mikk"` on each mesh by default | no flip; the job sets Mikk and clears the flips explicitly |
+| Output: `<outputPath stem>_<suffix>.png`, 16-bit RGB at `outputBits = 16` (AO and curvature too); `getMapPath()` takes display names (`Normals`, `Ambient Occlusion`), not suffixes | the job renames each map's suffix to ours (`T_X_Normal.png`) and checks the files itself |
+| `edgePadding = "Custom"` with `edgePaddingSize` is accepted (the help text lists only None, Moderate, Extreme) | the job uses Custom with `--margin`, Extreme if a build refuses it |
+| Maps by default suffix: `normal`, `ao`, `curve`, `thickness`, `height`, `albedo`, `roughness`, `metalness` (31 in all, incl. `bentnormal`, `position`, IDs) | `TOOLBAG_MAPS` in `toolbag_bake.py` |
+
+Timings: the fixture, normal, AO and curvature at 512, 0.17 s of baking, 1.5 s for the whole job from Blender
+including Toolbag's start; normal and AO at 2048, 0.54 s. A generated rug (a 700k-triangle high onto a 192-triangle
+low) baked normal, AO and transferred albedo at 2048 in about 1 s, where Cycles had not finished after 10 minutes.
+
 ## Parts that sit close together: an exploded bake
 
 A low made of parts close to one another (a lid on its box, a drawer in its carcass, a bracket on a plank) shares one
@@ -250,3 +314,7 @@ union, then clean the slivers it leaves) or split them into parts of their own.
 | Banding in the normal map's gradients | 8-bit master | 16-bit masters; dithered 8-bit exports |
 | A panel line or groove reads as paint, flat in the normal map | Square walls and sharp rims: every ray lands on a face parallel to the low (a 3 mm groove baked exactly 0, 0, 1 across) | Groove walls under about 45 deg (a V or a rounded section) or rims rounded at least 3 texels wide |
 | AO darkened by something that is not the piece | Another object rendered during the bake (a second texture set, a floor, a design leftover) | `bake()` hides it; pass `occluders=` only for what should shadow the map |
+| Toolbag: domes bake as crescents | Its automatic cage does not reach past the protrusion | Set the cage (`bake_maps` sizes it; `toolbag_bake.py --cage` in metres) |
+| Toolbag: transferred base colour is flat white | The high's FBX textures never arrive, or a texture was set as a path string | `bake_maps --engine toolbag` writes and assigns them; by hand `setField(field, mset.Texture(path))` |
+| Toolbag: the high bakes oversized, bevels missing | The high came in through `mset.importModel` and was parented under High | Quick-load every file, named `<stem>_low` / `<stem>_high` |
+| Toolbag: no result, the launcher times out | A licence or crash dialog, or no desktop session | Run `toolbag_bake.py --probe` with the user at the machine; bake unattended with Cycles |
