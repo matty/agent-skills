@@ -235,7 +235,7 @@ def test_nested_assembly():
     assert code == 0, out[-1500:]
     kit["integrate"](str(work), ["ASM_Block_A"])
     names = sorted(c.name for c in bpy.data.collections)
-    assert names == sorted(["KIT", "KIT_INT", "KIT_PROP", "ASM", "MASTER", "REF", "INT_Wall_2x3_A",
+    assert names == sorted(["KIT", "KIT_INT", "KIT_PROP", "ASM", "PLACEMENTS", "REF", "INT_Wall_2x3_A",
                             "PROP_Desk_Free_A", "ASM_Room_A", "ASM_Block_A"]), names
     assert bpy.data.objects["BlockRoom"].instance_collection == bpy.data.collections["ASM_Room_A"]
     assert abs(bpy.data.objects["BlockDesk"].location.y - 1.5) < 1e-6
@@ -281,7 +281,7 @@ def test_placement_ids_and_placement_sync_scopes():
     kit["save_file"]()
     sync = load(PLACEMENTS)
     out = TMP / "placements"
-    data = json.loads(Path(sync["dump"](str(out), "MASTER")).read_text(encoding="utf-8"))
+    data = json.loads(Path(sync["dump"](str(out), "PLACEMENTS")).read_text(encoding="utf-8"))
     assert sorted(i["key"] for i in data["items"]) == ["LayDesk", "LayRoom", "LayWall"], data["items"]
     assert {"INT_Wall_2x3_A", "PROP_Desk_Free_A", "ASM_Room_A"} <= set(data["assets"]), data["assets"]
     data = json.loads(Path(sync["dump"](str(out), "ASM_Room_A")).read_text(encoding="utf-8"))

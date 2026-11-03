@@ -23,7 +23,7 @@ blender -b --factory-startup --python-exit-code 1 --python <skill>/scripts/kit_l
   once. When several files share a name (an archive copy, a backup), only the one whose parent and grandparent
   folders match the old path's is taken; otherwise that link is left alone and reported as "ambiguous". A file on
   another drive is stored with its absolute path, and the run says so.
-- A MASTER (or any file) open in a live Blender session is relinked in that session and saved there: the session's
+- A MASTER.blend (or any file) open in a live Blender session is relinked in that session and saved there: the session's
   next save would overwrite a headless relink.
 
 ## A file renamed

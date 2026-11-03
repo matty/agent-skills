@@ -1,9 +1,9 @@
-"""Kit library helpers: KIT pieces as collections, placed as collection instances, in one MASTER file (the default)
+"""Kit library helpers: KIT pieces as collections, placed as collection instances, in one MASTER.blend (the default)
 or linked from separate KIT and ASM files.
 
-Kit rules (naming, pivots, the single MASTER layout and the split KIT / ASM / MASTER files): the blender-kit-library
-skill's SKILL.md, or world-spec.md in vrchat-world-orchestration. This file ships identically in both skills; keep the
-copies the same (tools/check_conventions.py in the agent-skills repo checks it).
+Kit rules (naming, pivots, the single MASTER.blend and the split KIT / ASM / MASTER.blend files): the
+blender-kit-library skill's SKILL.md, or world-spec.md in vrchat-world-orchestration. This file ships identically in
+both skills; keep the copies the same (tools/check_conventions.py in the agent-skills repo checks it).
 
 Host: Blender 4.1+ (bpy), no add-ons. Checked against the Blender 5.2 API (bpy.data.libraries.load, Library.reload,
 Collection.instance_offset, PreferencesFilePaths.save_version, wm.read_homefile, BlendDataLibraries.write,
@@ -11,10 +11,11 @@ ID.user_remap), 2026-10-20.
 
 Load in Blender:  ns = {}; exec(open(r"<skill>/scripts/kit_library.py", encoding="utf-8").read(), ns)
 
-Single MASTER (the default layout: pieces under KIT, assemblies under ASM, the layout under the MASTER collection):
+Single MASTER (the default: one MASTER.blend with pieces under KIT, assemblies under ASM, the rooms' envelope under
+SHELL/SHELL_<Zone> (and CEILINGS/CEIL_<Zone>), placed instances under PLACEMENTS, review aids under REF):
     ns["new_master"](r"F:/World/blender/MASTER.blend")       # Blender started with no file: organised, saved
     ns["new_piece"]("EXT_Wall_2x3_A")                         # lands in KIT/KIT_EXT, offset zero
-    ns["place_piece"]("EXT_Wall_2x3_A", location=(4, 0, 0), rot_z=90)    # into the MASTER collection
+    ns["place_piece"]("EXT_Wall_2x3_A", location=(4, 0, 0), rot_z=90)    # into the PLACEMENTS collection
     ns["changes_since"](r"//MASTER.snapshot.json")            # what changed since the agent's last save, by anyone
     ns["save_snapshot"](r"//MASTER.snapshot.json")            # right after each save the agent makes
     ns["checkout"](r"//work/KIT_EXT.blend", ["EXT_Wall_2x3_A"])   # copy pieces out to a work file (live session)
@@ -31,9 +32,10 @@ Split files (only when the user asked for them):
     ns["missing_libraries"](); ns["relink"]([r"F:/World/blender/kits", r"F:/World/blender/asm"])   # the live folders
 
 The audit follows each piece's kit_status: UV2 is required from "uv" on, filled material slots from "textured" on;
-a piece without kit_status gets every check. The Size token names grid axes only: an axis under one module is
-thickness and is skipped (a 2.0 x 0.3 x 3.0 m wall at a 0.5 m module is 4x6). Materials match MAT_RE and the
-family (or M_TRIM_) prefix. Missing linked libraries are reported.
+a piece without kit_status gets every check. Shell zones (SHELL_<Zone>, CEIL_<Zone>) carry kit_status too, and their
+objects (SHL_<id>) get the same stage checks plus smoothing from "modelled" on (audit_shell_zone). The Size token
+names grid axes only: an axis under one module is thickness and is skipped (a 2.0 x 0.3 x 3.0 m wall at a 0.5 m
+module is 4x6). Materials match MAT_RE and the family (or M_TRIM_) prefix. Missing linked libraries are reported.
 
 From the command line (one line per piece; --json writes the full report; exit 1 on problems, 2 without --module):
     blender -b --factory-startup --python-exit-code 1 KIT_Arch_Exterior.blend --python kit_library.py --
@@ -46,7 +48,7 @@ of them; exit 1 if anything is still missing). --renamed is for a renamed file w
         F:/World/blender/asm --files F:/World/blender/asm/ASM_Stall_A.blend F:/World/blender/MASTER.blend
         [--renamed KIT_Old.blend=KIT_New.blend]
 Snapshots and work files, headless on a file nobody has open (exit 1 when --changes finds changes, or --integrate
-refuses; --integrate saves MASTER and its snapshot when it integrated):
+refuses; --integrate saves MASTER.blend and its snapshot when it integrated):
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python kit_library.py --
         --changes MASTER.snapshot.json            # or --snapshot MASTER.snapshot.json
     blender -b --factory-startup --python-exit-code 1 MASTER.blend --python kit_library.py --
@@ -78,11 +80,26 @@ EPS = 1e-4
 GRID_TOL = 0.01      # modules: how far an extent may be from a whole number of modules (and from one module)
 STATUS_ORDER = ("grey", "modelled", "uv", "textured", "exported")   # collection custom property kit_status
 
-# Single MASTER layout: scene["kit_layout"] = "single" (absent or "split": separate KIT and ASM files).
+# Single MASTER.blend: scene["kit_layout"] = "single" (absent or "split": separate KIT and ASM files).
 LAYOUT_PROP = "kit_layout"
-KIT_ROOT, ASM_ROOT, LAYOUT_ROOT, REF_ROOT = "KIT", "ASM", "MASTER", "REF"
-# Collections that only organise: KIT, KIT_<FAMILY>, ASM, MASTER, MASTER_<Zone>, REF, REF_<Name>.
-ORGANISER_RE = re.compile(r"^(KIT(_[A-Z]{2,5})?|ASM|MASTER(_[A-Za-z0-9]+)?|REF(_[A-Za-z0-9]+)?)$")
+# Top-level collections: KIT (reusable pieces), ASM (assemblies), SHELL (each room's envelope: walls, floors, tiers,
+# stairs, openings, greybox or finished, one SHELL_<Zone> per zone; optional), CEILINGS (the envelope's ceilings, kept
+# apart for a one-click hide, one CEIL_<Zone> per zone; optional), PLACEMENTS (placed instances of pieces and
+# assemblies, the placement-sync scope), REF (review aids only).
+KIT_ROOT, ASM_ROOT, PLACEMENTS_ROOT, SHELL_ROOT, REF_ROOT = "KIT", "ASM", "PLACEMENTS", "SHELL", "REF"
+CEILINGS_ROOT = "CEILINGS"
+SHELL_ZONE_RE = re.compile(r"^(SHELL|CEIL)_[A-Za-z0-9]+$")       # a shell-type zone collection
+SHELL_OBJ_RE = re.compile(r"^SHL_[A-Za-z0-9][A-Za-z0-9_-]*$")      # a shell object (no .001 duplicate suffix)
+# Collections that only organise: KIT, KIT_<FAMILY>, ASM, PLACEMENTS, PLACEMENTS_<Zone>, SHELL, SHELL_<Zone>,
+# CEILINGS, CEIL_<Zone>, REF, REF_<Name>.
+ORGANISER_RE = re.compile(
+    r"^(KIT(_[A-Z]{2,5})?|ASM|PLACEMENTS(_[A-Za-z0-9]+)?|SHELL(_[A-Za-z0-9]+)?|CEILINGS|CEIL_[A-Za-z0-9]+"
+    r"|REF(_[A-Za-z0-9]+)?)$")
+# The placements collection was called MASTER (zones MASTER_<Zone>) before 2026-11-03. No fallback: a file that
+# still has it is reported, and placing into it is refused, until it is renamed.
+LEGACY_PLACEMENTS_RE = re.compile(r"^MASTER(_[A-Za-z0-9]+)?$")
+LEGACY_MESSAGE = ("legacy collection %s: the placements collection is now PLACEMENTS. Rename MASTER to PLACEMENTS and "
+                  "MASTER_<Zone> to PLACEMENTS_<Zone> (kit-library skill, references/migrate-master.md)")
 OLD_SUFFIX = "~old"  # integrate() renames the current version of a piece while the new one comes in
 
 
@@ -107,6 +124,17 @@ def is_single(scene=None):
 def _local(datas, name):
     """The local (not linked) data-block called `name` in `datas` (bpy.data.collections etc.), or None."""
     return next((d for d in datas if d.name == name and d.library is None), None)
+
+
+def legacy_collections():
+    """Local collections still named for the old placements root (MASTER, MASTER_<Zone>)."""
+    return sorted(c.name for c in bpy.data.collections if c.library is None and LEGACY_PLACEMENTS_RE.match(c.name))
+
+
+def _refuse_legacy():
+    old = legacy_collections()
+    if old:
+        raise RuntimeError(LEGACY_MESSAGE % ", ".join(old))
 
 
 def _local_collection(name):
@@ -185,11 +213,13 @@ def _evaluated(colls):
 
 
 def setup_single_master(scene=None):
-    """Organise the open file as a single MASTER: KIT and ASM collections excluded from the view layer (the pieces
-    all sit at the origin; instances of them still draw), MASTER for the layout, REF for review aids, and
-    scene["kit_layout"] = "single". Safe to run again. Returns {name: collection}."""
+    """Organise the open file as a single MASTER.blend: KIT and ASM collections excluded from the view layer (the
+    pieces all sit at the origin; instances of them still draw), PLACEMENTS for the placed instances, REF for review
+    aids, and scene["kit_layout"] = "single". SHELL is not created: add it when the world has shell geometry. Refuses
+    a file that still has the legacy MASTER collection. Safe to run again. Returns {name: collection}."""
+    _refuse_legacy()
     scene = scene or bpy.context.scene
-    top = {n: _child(scene.collection, n) for n in (KIT_ROOT, ASM_ROOT, LAYOUT_ROOT, REF_ROOT)}
+    top = {n: _child(scene.collection, n) for n in (KIT_ROOT, ASM_ROOT, PLACEMENTS_ROOT, REF_ROOT)}
     for n in (KIT_ROOT, ASM_ROOT):
         lc = _layer_collection(top[n])
         if lc is not None and scene == bpy.context.scene:
@@ -199,15 +229,18 @@ def setup_single_master(scene=None):
 
 
 def new_master(filepath):
-    """Start a new, empty single MASTER .blend at `filepath` (Blender run with no file), organised and saved."""
+    """Start a new, empty single MASTER.blend at `filepath` (Blender run with no file), organised and saved."""
     bpy.ops.wm.read_homefile(use_factory_startup=True, use_empty=True)
     setup_single_master()
     return save_file(filepath)
 
 
 def _default_parent(name):
-    """Where a new piece or assembly goes: KIT/KIT_<FAMILY> or ASM in a single MASTER, else the scene collection."""
+    """Where a new piece, assembly or shell zone goes: KIT/KIT_<FAMILY>, ASM, SHELL or CEILINGS in a single MASTER,
+    else the scene collection."""
     scene = bpy.context.scene
+    if SHELL_ZONE_RE.match(name):                 # a shell zone checked out to a work file and integrated back
+        return _child(scene.collection, SHELL_ROOT if name.startswith("SHELL_") else CEILINGS_ROOT)
     if not is_single(scene):
         return scene.collection
     if ASM_RE.match(name):
@@ -250,14 +283,17 @@ def link_collection(path, name, relative=True):
 
 def place(coll, location=(0.0, 0.0, 0.0), rot_z=0.0, name=None, into=None):
     """Add a collection instance of `coll` (an empty), rotated `rot_z` degrees about Z, into collection `into`
-    (default: the MASTER collection in a single MASTER, else the scene collection)."""
+    (default: the PLACEMENTS collection in a single MASTER.blend, else the scene collection)."""
     inst = bpy.data.objects.new(name or coll.name, None)
     inst.instance_type = "COLLECTION"
     inst.instance_collection = coll
     inst.empty_display_size = 0.25
     inst.matrix_world = Matrix.Translation(Vector(location)) @ Matrix.Rotation(math.radians(rot_z), 4, "Z")
     scene = bpy.context.scene
-    (into or (_child(scene.collection, LAYOUT_ROOT) if is_single(scene) else scene.collection)).objects.link(inst)
+    if into is None and is_single(scene):
+        _refuse_legacy()
+        into = _child(scene.collection, PLACEMENTS_ROOT)
+    (into or scene.collection).objects.link(inst)
     return inst
 
 
@@ -267,8 +303,8 @@ def link_piece(path, name, location=(0.0, 0.0, 0.0), rot_z=0.0, into=None, relat
 
 
 def place_piece(name, location=(0.0, 0.0, 0.0), rot_z=0.0, into=None):
-    """Single MASTER: place one instance of the local piece or assembly `name` (into the MASTER collection, or into
-    `into`, such as an assembly's collection)."""
+    """Single MASTER.blend: place one instance of the local piece or assembly `name` (into the PLACEMENTS
+    collection, or into `into`, such as an assembly's collection)."""
     return place(_local_collection(name), location, rot_z, into=into)
 
 
@@ -700,7 +736,7 @@ def _remove_tree(coll):
 
 def integrate(work_path, names, materials="master", force=False):
     """Bring the named collections back from a work file into this single MASTER, in place: every instance of the
-    old version (in MASTER and in assemblies) now shows the new one, and its parent collection keeps it. A name not
+    old version (in PLACEMENTS and in assemblies) now shows the new one, and its parent collection keeps it. A name not
     in this file yet is added under its family collection (or ASM). Refuses (RuntimeError) when those collections
     changed here since checkout() wrote <work>.checkout.json, unless force=True: someone edited them meanwhile.
     materials: "master" keeps this file's materials, node groups and images of the same name (the work file's are
@@ -885,10 +921,86 @@ def audit_piece(coll, module, materials=None):
     return rep
 
 
+def _has_sharp_step(ob):
+    """True when the object's normals get a sharp-by-angle step: a Smooth by Angle modifier (Shade Auto Smooth, Blender
+    4.1+), sharp edges marked in the mesh (Shade Smooth by Angle writes the sharp_edge attribute), or legacy auto
+    smooth. Custom normals (a hard-surface stack) count too."""
+    me = ob.data
+    if any(m.type == "NODES" and m.node_group and m.node_group.name.startswith("Smooth by Angle")
+           for m in ob.modifiers):
+        return True
+    if any(m.type in ("WEIGHTED_NORMAL",) for m in ob.modifiers):
+        return True
+    attr = me.attributes.get("sharp_edge")
+    if attr is not None and any(v.value for v in attr.data):
+        return True
+    return bool(getattr(me, "use_auto_smooth", False) or getattr(me, "has_custom_normals", False))
+
+
+def audit_shell_zone(coll, materials=None):
+    """Report for one shell-type zone collection (SHELL_<Zone> or CEIL_<Zone>): the room's envelope, greybox or
+    finished, audited like a piece by its kit_status (a collection property; none means every check). Each mesh object
+    (render meshes and <Name>_COL shells): named SHL_<id>, rotation and scale applied (location is its place in the
+    world), materials named M_<FAMILY>_<Name> (a shared family material, or M_SHL_<Name> on greybox), limited to
+    `materials` prefixes when given. From "modelled": every face shaded smooth with a sharp-by-angle step (flat or
+    unsplit shading reads as faceted or melted in the engine); from "uv": a UV2 layer; from "textured": no empty slot.
+    Collection instances inside the zone are listed, not audited (their piece is audited in KIT)."""
+    rep = {"zone": coll.name, "issues": [], "objects": [], "instances": []}
+    issues = rep["issues"]
+    status = coll.get("kit_status")
+    rep["kit_status"] = status
+    stage = STATUS_ORDER.index(status) if status in STATUS_ORDER else len(STATUS_ORDER)
+    for ob in sorted(coll.all_objects, key=lambda o: o.name):
+        if ob.instance_type == "COLLECTION" and ob.instance_collection is not None:
+            rep["instances"].append(ob.name)
+            continue
+        if ob.type != "MESH":
+            continue
+        rep["objects"].append(ob.name)
+        if not SHELL_OBJ_RE.match(ob.name):
+            issues.append("%s: shell object not named SHL_<id> (letters, digits, _ and -; a .001 suffix is a duplicate)"
+                          % ob.name)
+        loc, rot, scl = ob.matrix_world.decompose()
+        if rot.angle > 1e-4 or any(abs(v - 1.0) > 1e-4 for v in scl):
+            issues.append("%s: rotation or scale not applied" % ob.name)
+        if ob.name.endswith("_COL"):
+            continue
+        me = ob.data
+        if stage >= STATUS_ORDER.index("modelled") and len(me.polygons):
+            flat = sum(1 for p in me.polygons if not p.use_smooth)
+            if flat:
+                issues.append("%s: %d of %d faces flat-shaded (shade smooth, then sharp by angle)"
+                              % (ob.name, flat, len(me.polygons)))
+            elif not _has_sharp_step(ob):
+                issues.append("%s: shaded smooth with no sharp-by-angle step (Shade Auto Smooth or Smooth by Angle)"
+                              % ob.name)
+        if stage >= STATUS_ORDER.index("uv") and len(me.uv_layers) < 2:
+            issues.append("%s: no UV2 (lightmap) layer" % ob.name)
+        for slot in ob.material_slots:
+            if slot.material is None:
+                if stage >= STATUS_ORDER.index("textured"):
+                    issues.append("%s: empty material slot" % ob.name)
+            elif not MAT_RE.match(slot.material.name):
+                issues.append("%s: material %s is not named M_<FAMILY>_<Name> (M_SHL_<Name> on greybox)"
+                              % (ob.name, slot.material.name))
+            elif materials and not slot.material.name.startswith(tuple(materials)):
+                issues.append("%s: material %s outside %s" % (ob.name, slot.material.name, "/".join(materials)))
+    if not rep["objects"] and not rep["instances"]:
+        issues.append("empty shell zone")
+    return rep
+
+
+def shell_zones():
+    """Local shell-type zone collections (SHELL_<Zone>, CEIL_<Zone>), sorted by name."""
+    return sorted((c for c in bpy.data.collections if c.library is None and SHELL_ZONE_RE.match(c.name)),
+                  key=lambda c: c.name)
+
+
 def _single_layout_problems(pieces):
-    """Single MASTER: pieces under KIT, assemblies under ASM, KIT and ASM excluded from the view layer."""
-    out = []
-    roots = {n: _local(bpy.data.collections, n) for n in (KIT_ROOT, ASM_ROOT, LAYOUT_ROOT)}
+    """Single MASTER.blend: pieces under KIT, assemblies under ASM, placements under PLACEMENTS (no legacy MASTER
+    collection left), KIT and ASM excluded from the view layer."""
+    out = [LEGACY_MESSAGE % n for n in legacy_collections()]
+    roots = {n: _local(bpy.data.collections, n) for n in (KIT_ROOT, ASM_ROOT, PLACEMENTS_ROOT)}
     for n, coll in roots.items():
         if coll is None:
             out.append("no %s collection (setup_single_master() makes it)" % n)
@@ -905,8 +1017,10 @@ def _single_layout_problems(pieces):
 
 def audit_kit(module, materials=None):
     """Audit every piece collection in this file at grid `module` metres (the world's grid module: no default, since
-    a wrong module fails good pieces and passes mis-sized ones), plus mesh objects that sit outside any piece (REF
-    review aids aside). In a single MASTER, also where pieces and assemblies sit (`layout`)."""
+    a wrong module fails good pieces and passes mis-sized ones), every shell zone (`shell`: audit_shell_zone), plus
+    mesh objects that sit outside any piece or shell zone (REF review aids aside; `shell_meshes` lists the shell's). In
+    a single MASTER.blend, also where pieces and assemblies sit and whether a legacy MASTER collection is left
+    (`layout`; `legacy` in other files)."""
     if not module or module <= 0:
         raise ValueError("audit_kit needs module=<the grid module in metres>, e.g. 0.5 or 1.0")
     pieces = [c for c in bpy.data.collections if c.library is None and NAME_RE.match(c.name)]
@@ -915,24 +1029,41 @@ def audit_kit(module, materials=None):
     owned = {o.name for c in pieces for o in c.all_objects}
     refs = [c for c in bpy.data.collections if c.library is None and re.match(r"^REF(_|$)", c.name)]
     owned |= {o.name for c in refs for o in c.all_objects}
+    zones = shell_zones()
+    with _evaluated(zones):                   # a hidden ceiling zone audited as it exports
+        shell_reps = [audit_shell_zone(c, materials) for c in zones]
+    shells = [c for c in bpy.data.collections if c.library is None
+              and (re.match(r"^SHELL(_|$)", c.name) or c.name == CEILINGS_ROOT or SHELL_ZONE_RE.match(c.name))]
+    shell = sorted({o.name for c in shells for o in c.all_objects if o.type == "MESH"})
+    zoned = {o.name for c in zones for o in c.all_objects}
+    loose = sorted(n for n in shell if n not in zoned)
+    owned |= set(shell)
     stray = [o.name for o in bpy.data.objects if o.library is None and o.type == "MESH" and o.name not in owned]
+    inside = {x for r in refs + shells for x in r.children_recursive}
     odd = [c.name for c in bpy.data.collections
            if c.library is None and not NAME_RE.match(c.name) and not ASM_RE.match(c.name)
-           and not ORGANISER_RE.match(c.name) and c not in {x for r in refs for x in r.children_recursive}
+           and not ORGANISER_RE.match(c.name) and not LEGACY_PLACEMENTS_RE.match(c.name) and c not in inside
            and c.objects]
-    rep = {"module": module, "pieces": reps, "stray_meshes": stray, "unnamed_collections": odd,
+    rep = {"module": module, "pieces": reps, "shell": shell_reps, "shell_meshes": shell,
+           "shell_outside_zones": loose, "stray_meshes": stray, "unnamed_collections": odd,
            "missing_libraries": missing_libraries(), "missing_data": missing_ids(found_files_only=True)}
     if is_single():
         rep["layout"] = _single_layout_problems(pieces)
+    else:
+        rep["legacy"] = [LEGACY_MESSAGE % n for n in legacy_collections()]
     return rep
 
 
 def problems(report):
     """Flat list of readable failures from audit_kit() (empty when the kit passes)."""
     out = ["%s: %s" % (r["piece"], i) for r in report["pieces"] for i in r["issues"]]
+    out += ["%s: %s" % (r["zone"], i) for r in report.get("shell", []) for i in r["issues"]]
+    out += ["shell mesh outside a SHELL_<Zone> or CEIL_<Zone> collection: %s" % n
+            for n in report.get("shell_outside_zones", [])]
     out += ["stray mesh outside any piece collection: %s" % n for n in report["stray_meshes"]]
     out += ["collection with objects but no kit name: %s" % n for n in report["unnamed_collections"]]
     out += ["single MASTER: %s" % n for n in report.get("layout", [])]
+    out += report.get("legacy", [])
     out += ["linked library missing (moved or renamed? relink): %s" % n for n in report.get("missing_libraries", [])]
     out += ["linked data missing (renamed in its file, or moved to another KIT file? re-point the instances): %s" % n
             for n in report.get("missing_data", [])]
