@@ -1,6 +1,6 @@
 ---
 name: pbr-texturing
-description: Texturing and materials for real-time 3D - flat, plastic, too clean, too dark or bright materials, visible tiling or repetition, a normal map inverted or shimmering, bake seams or skewed detail. Kits, trim sheets, props, decals, wear, mesh-map bakes, Substance Designer and Painter, PBR checks, look-dev. UVs (uv-unwrapping); formats and VRAM (vrchat-texture-and-vram); lightmaps (vrchat-lighting-and-baking).
+description: Texturing and materials for real-time 3D - flat, plastic, too clean, too dark or bright materials, visible tiling or repetition, a normal map inverted or shimmering, bake seams or skewed detail. Kits, trim sheets, props, decals, wear, mesh-map bakes and which baker (Marmoset Toolbag, Substance, Cycles), Substance Designer and Painter, PBR checks, look-dev. UVs (uv-unwrapping); formats and VRAM (vrchat-texture-and-vram); lightmaps (vrchat-lighting-and-baking).
 ---
 
 # PBR texturing
@@ -50,15 +50,21 @@ Every number, the measured materials and how `scripts/pbr_check.py` judges them:
    cage (`--cage fitted`); thin cords and chamfers under about 3 texels wide `--filter-sigma 0.8`; parts that sit close
    together (a lid on its box) bake exploded (`--explode`, `references/baking.md`). Building the high and the low:
    `blender-mesh-topology`.
-3. Bake with one of two measured routes (`references/baking.md`):
+3. Bake with one of three measured routes (`references/baking.md`), picked by one rule ("Choosing a baker" there,
+   `scripts/bakers.py`): detect what works; the project's baker (the world spec's `tools.mesh_baker`, the user's
+   word over it) when it fits the job, else Toolbag, Substance, Cycles in that order; an unattended run skips
+   Toolbag; one baker per texture set; every baker's maps pass the same gate. `bake_maps.py --engine auto` applies it
+   and falls back when a baker fails.
 
    | Route | When | Gives |
    |---|---|---|
+   | Marmoset Toolbag: `bake_maps.py --engine toolbag` (or `scripts/toolbag_bake.py` on FBX files; measured with 5.0.3.3) | Toolbag installed and a desktop session | Normal (OpenGL, MikkT), AO, curvature, thickness, height, and base colour, roughness and metallic transferred from a textured high; native back-face skip; 1.5 s for a whole job on the test fixture, about 1 s at 2048 from a 700k-triangle high |
    | Substance 3D baker CLI (`substance3d_baker`, in Designer's install folder: how to find it is in `references/baking.md`; measured with 16.0.7) | Designer installed | Raytraced normal, AO, curvature, thickness, position, ID, world normal, bent normals; GPU, under a second on the test fixture |
-   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself, uniform or fitted per vertex; square or tall maps; 16-bit PNGs. Also base colour, roughness and metallic copied from a textured high (a scan or a generated model) |
+   | Blender Cycles: `scripts/bake_maps.py` | Always (Blender only) | Normal, AO, curvature (Pointiness) through a cage it sizes itself, uniform or fitted per vertex; square or tall maps; 16-bit PNGs. Also base colour, roughness and metallic copied from a textured high (a scan or a generated model); `--explode` for parts close together |
 
    The Substance baker writes **DirectX** normal maps unless told `--output_texture_orientation opengl`, and pads only
-   2 px by default (measured 2026-10-18): pass both every time.
+   2 px by default (measured 2026-10-18): pass both every time. Toolbag's automatic cage misses protruding detail
+   and reads only FBX: the scripts set the cage and export FBX for you.
 4. Ship the normal map; keep AO, curvature, thickness and position as masks for wear (section 5). In a baked-lighting
    world the lightmap carries large-scale occlusion: AO in the shipped material only for small-scale crevices.
 5. Check the normal map: `pbr_check.py` reads its Y convention from the map itself (section 8).
@@ -142,8 +148,12 @@ Detail and the mask recipes: `references/wear-and-variation.md`.
 | `scripts/pbr_check.py` | Plain Python with numpy, or Blender | Base-colour, metallic, smoothness and normal-map values per material, the normal map's Y convention, power-of-two and size limits; for tiling maps (`--tiling`, `--trim`) seam ratios, a windowed seam, tile-scale variation and 3 x 3 composites; exit 1 on a PROBLEM |
 | `scripts/texture_seams.py` | Blender | `seams(ob, map, kind)`: the step across every UV seam against the texture's own, colour or normal (object space, MikkTSpace); `joints(objects, map)`: the same where placed pieces meet, collection instances expanded; a CLI, exit 1 when a seam shows |
 | `scripts/tile_flatten.py` | Plain Python with numpy | Removes a tiling map set's lowest harmonics (tile-scale patches, bands, tilt) keeping the detail and each map's channels and bit depth; `--keep` leaves a share in |
-| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`, plus `"basecolor"`, `"roughness"`, `"metallic"` copied from the highs' own materials; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high and a resolver that re-bakes their texels with back faces ignored (`resolve_faults`), supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; a CLI |
+| `scripts/bake_maps.py` | Blender (Cycles) | `bake(low, highs, maps=("normal", "ao", "curvature"), size, out_dir, name, cage="fitted")`, plus `"basecolor"`, `"roughness"`, `"metallic"` copied from the highs' own materials; `bake_exploded(low, parts_by_name(low, highs), ...)` for parts close together: a uniform cage sized to enclose the high poly or a fitted one per vertex, a report of rays starting inside a high and a resolver that re-bakes their texels with back faces ignored (`resolve_faults`), supersampling with a Gaussian pre-filter, `size=(w, h)`, 16-bit or dithered 8-bit PNGs of 1-4 channels; `bake_with(engine, ...)` and `--engine cycles|toolbag|auto` for the other bakers (`bake_toolbag`: kit FBX export, the highs' textures, the gate); a CLI |
+| `scripts/bakers.py` | Plain Python | `detect_bakers()` (Toolbag counts once a script ran in it), `choose_baker(maps, available, preference, unattended, thin_parts, atlas_baker)` returning the baker, a reason and the fallback order, `check_outputs(paths, size)`: the gate every baker's maps pass (size, 16-bit normal and height, `_<Suffix>` names, OpenGL normals); a CLI that prints what works and what it would pick |
+| `scripts/toolbag_bake.py` | Plain Python | Finds `toolbag.exe`, builds a job (`build_job`: maps, size, cage in metres, transfer textures), runs `scripts/toolbag_job.py` inside Toolbag with `-hide` and waits for its result (`run_job`, `bake`); `--probe` checks Toolbag runs scripts here |
+| `scripts/toolbag_job.py` | Marmoset Toolbag 5 (`mset`) | The job inside Toolbag: quick-loads the `<stem>_low` and `<stem>_high` FBX files, assigns transfer textures, sets the cage, Mikk tangents and maps, bakes, writes the result, quits; launched by `toolbag_bake.py`, never by hand |
 | `scripts/lookdev_render.py` | Blender (EEVEE or Cycles) | `material_from_maps(...)` wires exported maps into a Principled BSDF; `render(objects, png, eye=, target=)` under a bundled CC0 HDRI; a CLI for maps, objects, or maps on objects from an eye point |
 
 Load a Blender script from the Blender MCP with `exec(open(path, encoding="utf-8").read(), ns)` after setting
-`ns["BAKE_MAPS_NO_MAIN"] = True` or `ns["LOOKDEV_NO_MAIN"] = True`; `pbr_check.py` imports as a module anywhere.
+`ns["BAKE_MAPS_NO_MAIN"] = True` or `ns["LOOKDEV_NO_MAIN"] = True` (and `ns["__file__"] = path`, so `bake_maps.py`
+finds `bakers.py` beside it); `pbr_check.py`, `bakers.py` and `toolbag_bake.py` import as modules anywhere.

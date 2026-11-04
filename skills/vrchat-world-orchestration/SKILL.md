@@ -57,8 +57,9 @@ found and these decisions, each with its default:
 
 What you detect, for the user to confirm: the Blender CLI path and whether the Blender MCP answers (without it kit
 work runs headless, which does not block the build), the Unity project path, installed packages and build modules,
-Substance Designer and Painter (else the Blender fallback; Painter is user-assisted unless a bridge answers),
-RizomUV.
+Substance Designer and Painter (else the Blender fallback; Painter is user-assisted unless a bridge answers), the
+mesh-map bakers (`python bakers.py` in `pbr-texturing`: Marmoset Toolbag counts once a probe ran in it; recorded as
+`tools.mesh_baker`) and RizomUV.
 
 Also ask for the brief if it is thin: the place, mood, scale (zones, rough size), reference images, must-have
 interactions, how worn the place is, and two or three images of finished work at the quality they want (the spec's

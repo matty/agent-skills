@@ -98,6 +98,7 @@ ZONE_KINDS = {"exterior", "interior"}
 FACINGS = {"north", "south", "east", "west"}
 SYNC = {"none", "manual", "continuous"}
 BAKERS = {"progressive", "bakery"}
+MESH_BAKERS = ("toolbag", "substance", "cycles")     # tools.mesh_baker (pbr-texturing bakers.py; CANON mesh_bakers)
 LIGHT_MODES = {"baked", "mixed"}
 QUALITY = {"pc_lead", "parity"}       # world.quality: PC gets its own budgets and sources, or ships what mobile ships
 WEAR = {"pristine", "lived-in", "weathered", "derelict"}
@@ -293,7 +294,7 @@ KNOWN_KEYS = {
     "world": ("name", "platforms", "scale", "allow_generated_assets", "mockups", "style", "quality",
               "performance_tier"),
     "tools": ("blender", "blender_mcp", "unity_project", "substance_designer", "substance_painter", "rizomuv",
-              "unity_packages", "build_modules"),
+              "mesh_baker", "unity_packages", "build_modules"),
     "grid": ("module", "sub_module", "storey_height"),
     "family": ("file", "materials", "texturing", "texel_density", "map_px", "thickness", "detail_map", "tile_phase",
                "turn_symmetry", "scale_range", "floor"),                                       # file: legacy
@@ -584,6 +585,10 @@ def check_tools(tools, f):
         f.error("tools.unity_project must be the Unity project's path, got %r" % (tools["unity_project"],))
     if "blender_mcp" in tools and tools["blender_mcp"] not in (True, False):
         f.error("tools.blender_mcp must be true or false (is the Blender MCP connected?)")
+    mb = tools.get("mesh_baker")
+    if mb is not None and mb not in MESH_BAKERS + ("auto",):
+        f.error("tools.mesh_baker must be one of %s or auto (pbr-texturing, Choosing a baker), got %r"
+                % (", ".join(MESH_BAKERS), mb))
 
 
 def check_budgets(budgets, platforms, families, f):

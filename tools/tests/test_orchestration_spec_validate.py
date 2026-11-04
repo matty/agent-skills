@@ -933,6 +933,17 @@ class SpecChecks(unittest.TestCase):
         errors = messages(run(spec)[0], "ERROR")
         self.assertTrue(any("world_tris = 500000" in m for m in errors), errors)
 
+    def test_mesh_baker(self):
+        spec = {k: v for k, v in study_spec().items() if k in ("version", "world", "tools")}
+        for ok in ("toolbag", "substance", "cycles", "auto"):
+            spec["tools"] = dict(spec["tools"], mesh_baker=ok)
+            f, _ = run(spec)
+            self.assertEqual(f.errors, 0, (ok, f.items))
+        spec["tools"] = dict(spec["tools"], mesh_baker="xnormal")
+        errors = messages(run(spec)[0], "ERROR")
+        self.assertTrue(any("tools.mesh_baker must be one of toolbag, substance, cycles or auto" in m for m in errors),
+                        errors)
+
 
 class LedgerChecks(unittest.TestCase):
     def ledger(self, *tasks):

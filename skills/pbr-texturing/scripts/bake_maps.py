@@ -22,9 +22,14 @@ Command line (open the .blend that holds the meshes):
             --name T_PROP_Crate --maps normal,ao,curvature[,basecolor,roughness,metallic] [--size 1024x2048] [--cage fitted] [--supersample 2]
             [--filter-sigma 0.5] [--extrusion 0.02] [--margin 16] [--samples 64] [--ao-distance 0.2] [--bits 16]
             [--gpu] [--explode] [--no-resolve]
+            [--engine cycles|toolbag|auto] [--prefer toolbag] [--unattended] [--thin-parts] [--toolbag-exe ...]
+--engine toolbag bakes with Marmoset Toolbag instead (references/baking.md, Route C: kit FBX export, the highs'
+textures, the cage sized here, the shared gate); --engine auto picks a baker with bakers.choose_baker() (--prefer:
+the world spec's tools.mesh_baker) and falls back along its order. --explode always runs on Cycles.
 As a module (Blender MCP or another script):
-    ns = {"BAKE_MAPS_NO_MAIN": True}; exec(open(path, encoding="utf-8").read(), ns)
+    ns = {"BAKE_MAPS_NO_MAIN": True, "__file__": path}; exec(open(path, encoding="utf-8").read(), ns)
     paths = ns["bake"](low, [high], maps=("normal", "ao"), size=1024, out_dir=..., name="T_PROP_Crate")
+    paths = ns["bake_with"]("auto", low, [high], maps=("normal", "ao"), size=2048, out_dir=..., prefer="toolbag")
     paths = ns["bake"](low, highs, size=(1024, 2048), cage="fitted")         # per-vertex cage, a tall map
     paths = ns["bake_exploded"](low, ns["parts_by_name"](low, highs), size=1024, out_dir=...)  # parts close together
 
@@ -1371,6 +1376,181 @@ def bake_exploded(low, parts, maps=("normal", "ao", "curvature"), explode=("norm
     return out
 
 
+# ---- other bakers: Marmoset Toolbag (references/baking.md, Route C) and choosing one ------------------------------
+
+# The kit FBX export (blender-to-unity batch_export_fbx.py FBX_SETTINGS; tools/check_conventions.py keeps both equal):
+# the low goes to Toolbag exactly as it goes to Unity, triangulated, so both see the same triangles.
+FBX_SETTINGS = dict(object_types={"MESH"}, use_custom_props=False, global_scale=1.0, apply_unit_scale=True,
+                    apply_scale_options="FBX_SCALE_ALL", axis_forward="-Z", axis_up="Y", use_space_transform=True,
+                    bake_space_transform=True, mesh_smooth_type="FACE", use_mesh_modifiers=True, use_subsurf=False,
+                    use_mesh_edges=False, use_triangles=True, use_tspace=False, colors_type="NONE",
+                    add_leaf_bones=False, bake_anim=False, embed_textures=False)
+TRANSFER_SOCKETS = {"basecolor": "Base Color", "roughness": "Roughness", "metallic": "Metallic"}
+TOOLBAG_STEM = "tbbake"                    # the low exports as <stem>_low, the name Toolbag's quick loader groups by
+
+
+def _scripts_dir():
+    """This script's folder (bakers.py and toolbag_bake.py sit beside it). When the script is exec'd as a module, put
+    "__file__" in its namespace, or set PBR_TEXTURING_SCRIPTS."""
+    f = globals().get("__file__")
+    if f and os.path.isfile(f):
+        return os.path.dirname(os.path.abspath(f))
+    d = os.environ.get("PBR_TEXTURING_SCRIPTS")
+    if d and os.path.isdir(d):
+        return d
+    raise RuntimeError("bake_maps: cannot find its folder for bakers.py; exec it with ns['__file__'] set or set "
+                       "PBR_TEXTURING_SCRIPTS")
+
+
+def _sibling(name):
+    d = _scripts_dir()
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    keep = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True                 # never leave a __pycache__ in the skill
+    try:
+        return __import__(name)
+    finally:
+        sys.dont_write_bytecode = keep
+
+
+def _export_fbx(objs, path):
+    """Export exactly `objs` with the kit FBX settings; the selection and active object are put back."""
+    vl = bpy.context.view_layer
+    sel = [o for o in vl.objects if o.select_get()]
+    act = vl.objects.active
+    try:
+        for o in sel:
+            o.select_set(False)
+        for o in objs:
+            o.select_set(True)
+        vl.objects.active = objs[0]
+        bpy.ops.export_scene.fbx(filepath=path, use_selection=True, path_mode="STRIP", **FBX_SETTINGS)
+    finally:
+        for o in objs:
+            o.select_set(False)
+        for o in sel:
+            o.select_set(True)
+        vl.objects.active = act
+
+
+def transfer_textures(highs, maps, out_dir):
+    """({material: {map: png}}, warnings): each high material's base colour, roughness and metallic as files Toolbag
+    can load (an FBX carries none). An image input is written as it is stored (a glTF import's packed
+    roughness/metallic channel taken out on its own); a plain value as a 4 x 4 swatch; a node chain is skipped with a
+    warning (bake it to an image first, or use the Cycles route)."""
+    want = [m for m in maps if m in TRANSFER_SOCKETS]
+    out, warnings = {}, []
+    for mat in {s.material for h in highs for s in h.material_slots if s.material is not None}:
+        for m in want:
+            src = _socket_source(mat, TRANSFER_SOCKETS[m])
+            path = os.path.join(out_dir, "%s_%s.png" % (bpy.path.clean_name(mat.name), m))
+            if src is None:
+                warnings.append("%s %s: a node chain, not an image or value: not transferred" % (mat.name, m))
+                continue
+            if src[0] == "value":
+                v = np.array(src[1], np.float32)
+                if m == "basecolor":
+                    v = _linear_to_srgb(v)
+                px = np.broadcast_to(v[None, None, :3] if m == "basecolor" else v[None, None, :1],
+                                     (4, 4, 3 if m == "basecolor" else 1))
+            else:
+                img, channel = src[1], src[3]
+                a = _image_array(img)
+                px = a[:, :, :3] if m == "basecolor" else a[:, :, (channel or 0):(channel or 0) + 1]
+            save_png(path, np.ascontiguousarray(px), bits=8)
+            out.setdefault(mat.name, {})[m] = path
+    return out, warnings
+
+
+def bake_toolbag(low, highs, maps=("normal",), size=1024, out_dir=".", name=None, margin=16, bits=16,
+                 extrusion=None, ao_distance=None, samples=None, exe=None, timeout=600):
+    """Bake `maps` from `highs` onto `low` with Marmoset Toolbag (Route C): export both as kit FBX, write the highs'
+    transfer textures, run toolbag_bake.bake(), then the shared gate (bakers.check_outputs). The cage push is
+    `extrusion` or cage_extrusion() (the same sizing as the Cycles route), used outward and inward; ao_distance
+    defaults to 10% of the low's diagonal, as on the Cycles route. Returns {map: path, "report": {...}}; raises
+    RuntimeError when Toolbag fails or the maps fail the gate."""
+    import shutil
+    import tempfile
+    tb, bk = _sibling("toolbag_bake"), _sibling("bakers")
+    name = name or low.name
+    highs = [h for h in highs if h is not None and h != low]
+    if not highs:
+        raise ValueError("no high-poly objects to bake from")
+    w, h = map_size(size)
+    diag = max(low.dimensions.length, 1e-6)
+    # Toolbag pushes its cage along smoothed normals, as cage_extrusion() assumes; a floor of 0.5% of the diagonal
+    # for a high that sits wholly inside the low (nothing to enclose, but rays still need room to start)
+    push = extrusion if extrusion is not None else max(cage_extrusion(low, highs)[0], 0.005 * diag)
+    if ao_distance is None:
+        ao_distance = 0.1 * diag
+    tmp = tempfile.mkdtemp(prefix="tbbake_")
+    low_fbx, high_fbxs = os.path.join(tmp, "low.fbx"), []
+    for i, ob in enumerate([low] + highs):      # the quick loader groups by name: <stem>_low, <stem>_high per file
+        keep_name = ob.name
+        try:
+            want = TOOLBAG_STEM + ("_low" if i == 0 else "_high")
+            ob.name = want
+            if ob.name != want:
+                raise RuntimeError("an object named %s already exists: rename it to bake with Toolbag" % want)
+            path = low_fbx if i == 0 else os.path.join(tmp, "high%d.fbx" % i)
+            _export_fbx([ob], path)
+        finally:
+            ob.name = keep_name
+        if i:
+            high_fbxs.append(path)
+    try:
+        textures, warns = transfer_textures(highs, maps, tmp)
+        res = tb.bake(low_fbx, high_fbxs, out_dir, name, exe=exe, timeout=timeout, maps=maps, size=(w, h),
+                      bits=bits, samples=samples or 16, margin=margin, cage_out=push, cage_in=push,
+                      ao_distance=ao_distance, textures=textures)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    gate = bk.check_outputs({m: p for m, p in res.items() if m != "report"}, (w, h), bits=bits)
+    res["report"].update(cage_push=round(push, 4), ao_distance=round(ao_distance, 4), gate=gate,
+                         warnings=res["report"].get("warnings", []) + warns)
+    if not gate["ok"]:
+        raise RuntimeError("Toolbag maps failed the gate: %s" % "; ".join(gate["problems"]))
+    return res
+
+
+def bake_with(engine, low, highs, maps=("normal",), size=1024, out_dir=".", name=None, prefer=None,
+              unattended=False, thin_parts=False, toolbag_exe=None, timeout=600, **cycles_kw):
+    """Bake with `engine` ("cycles", "toolbag" or "auto"), the report saying which baker ran and why. "auto" detects
+    the bakers, picks one with bakers.choose_baker() (prefer: the project's tools.mesh_baker) and falls back along
+    its order when one fails or fails the gate. "substance" is run by hand (references/baking.md, Route A)."""
+    if engine == "substance":
+        raise ValueError("bake_maps.py does not drive the Substance baker: run substance3d_baker as in "
+                         "references/baking.md, Route A")
+    if engine == "auto":
+        bk = _sibling("bakers")
+        avail = bk.detect_bakers(toolbag_exe=toolbag_exe)
+        first, reason, order = bk.choose_baker(maps, avail, preference=prefer, unattended=unattended,
+                                               thin_parts=thin_parts, driven_only=True)
+    elif engine in ("cycles", "toolbag"):
+        order, reason = [engine], "asked for %s" % engine
+    else:
+        raise ValueError("engine must be auto, cycles, toolbag or substance, not %r" % (engine,))
+    fallback = []
+    for b in order:
+        try:
+            if b == "toolbag":
+                tb_kw = {k: cycles_kw[k] for k in ("margin", "bits", "extrusion", "ao_distance", "samples")
+                         if cycles_kw.get(k) is not None}
+                res = bake_toolbag(low, highs, maps=maps, size=size, out_dir=out_dir, name=name, exe=toolbag_exe,
+                                   timeout=timeout, **tb_kw)
+            else:
+                res = bake(low, highs, maps=maps, size=size, out_dir=out_dir, name=name, **cycles_kw)
+        except (RuntimeError, TimeoutError) as ex:
+            if engine != "auto" or b == order[-1]:
+                raise
+            fallback.append("%s failed: %s" % (b, str(ex).splitlines()[0]))
+            print("[bake] %s failed, falling back: %s" % (b, ex))
+            continue
+        res["report"].update(baker=b, reason=reason, fallback=fallback)
+        return res
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="bake_maps.py", description=__doc__.split("\n")[0])
     ap.add_argument("--low", required=True, help="the low-poly object")
@@ -1394,6 +1574,13 @@ def main(argv):
                     "as Cycles baked them (default: re-baked with back faces ignored)")
     ap.add_argument("--explode", action="store_true", help="parts close together: pair <Part>_high objects with the "
                     "low's <Part> vertex groups and bake every map with the parts moved apart")
+    ap.add_argument("--engine", choices=("cycles", "toolbag", "auto", "substance"), default="cycles",
+                    help="the baker (references/baking.md, Choosing a baker); auto detects and falls back")
+    ap.add_argument("--prefer", help="with --engine auto: the project's baker (the world spec's tools.mesh_baker)")
+    ap.add_argument("--unattended", action="store_true", help="with --engine auto: no desktop session, no Toolbag")
+    ap.add_argument("--thin-parts", action="store_true", help="with --engine auto: prefer a native back-face skip")
+    ap.add_argument("--toolbag-exe")
+    ap.add_argument("--timeout", type=int, default=600, help="seconds to wait for Toolbag")
     a = ap.parse_args(argv)
     obs = bpy.data.objects
     missing = [n for n in [a.low] + a.high if n not in obs]
@@ -1410,9 +1597,19 @@ def main(argv):
               ao_distance=a.ao_distance, bits=a.bits, uv_layer=a.uv_layer, curvature_gain=a.curvature_gain, gpu=a.gpu,
               cage=a.cage, filter_sigma=a.filter_sigma, resolve=not a.no_resolve)
     highs = [obs[n] for n in a.high]
+    if a.explode and a.engine != "cycles":
+        print("[bake] --explode runs on Cycles only; baking with --engine cycles")
     try:
-        res = (bake_exploded(obs[a.low], parts_by_name(obs[a.low], highs), **kw) if a.explode
-               else bake(obs[a.low], highs, **kw))
+        if a.explode:
+            res = bake_exploded(obs[a.low], parts_by_name(obs[a.low], highs), **kw)
+        elif a.engine == "cycles":
+            res = bake(obs[a.low], highs, **kw)
+        else:
+            res = bake_with(a.engine, obs[a.low], highs, prefer=a.prefer, unattended=a.unattended,
+                            thin_parts=a.thin_parts, toolbag_exe=a.toolbag_exe, timeout=a.timeout, **kw)
+    except (RuntimeError, TimeoutError) as ex:
+        print("[bake] %s" % ex)
+        return 1
     except ValueError as ex:
         print("[bake] %s" % ex)
         return 2
