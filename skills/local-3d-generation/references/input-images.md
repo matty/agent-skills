@@ -77,7 +77,8 @@ light-grey background, no borders, dividers, labels or text. Flat even overcast 
 level and shadow-free, but the sheet came back 2172 x 724 (the tool's widest ratio is 3:1, so four square panels
 cannot be asked for) and the views did not sit on equal quarters (front 665 px wide, side 295). Split by outline
 (`scripts/multiview.py split`), never into equal quarters. The two side views differed slightly in fullness; check
-them against each other. Run image jobs one at a time: two in parallel saved the same picture under both names.
+them against each other. Make these sheets through the `codex-image-jobs` skill: run directly, two parallel jobs saved
+the same picture under both names.
 
 The split finds each view by its difference from the background colour, so ask for a plain background that
 contrasts with the object (light grey for dark iron, mid grey for white plaster), or for separate images.
