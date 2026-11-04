@@ -9,7 +9,8 @@ and QA judge against pictures rather than one line of style (`world-spec.md`, "L
 A tool does not qualify just because it generates images. Asset generators do not count: texture, sprite or icon
 tools, or anything that imports its output into an engine project (Unity MCP's `generate_image` is one, and cannot
 make usable mockups). Never decide from a tool's name. At intake, name the tool you would use and ask the user to
-confirm it can make concept art; if they are unsure, skip the stage.
+confirm it can make concept art; if they are unsure, skip the stage. If the tool is gpt-image-2 through the Codex CLI,
+load `codex-image-jobs` and generate through its runner.
 
 Mockups are references, not blueprints. The spec and its generated plans and elevations are what agents build to.
 
