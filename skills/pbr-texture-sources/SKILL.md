@@ -94,9 +94,9 @@ asset lacks. Exit 1 means nothing usable was written: read the `ERROR` line.
 - Physical sizes: Poly Haven reports millimetres and ambientCG centimetres (inferred from the values,
   2026-10-25; 0 means unknown). Check the page when the scale matters.
 - Left out on purpose: ShareTextures, TextureCan, cgbookcase and 3DTextures.me are free (CC0 or similar) but have
-  no API (3DTextures.me hosts its files on Google Drive). Give their URLs for manual browsing. Fab / Megascans has
-  not been free since 2024 and uses its own licence; Textures.com and FreePBR are not CC0. AMD's GPUOpen MaterialX
-  Library has an API but many entries re-host Poly Haven, and its licence label ("MIT Public Domain") is unclear.
+  no API (3DTextures.me hosts its files on Google Drive). Give their URLs for manual browsing. Fab / Megascans went
+  free in Nov 2026 but is not CC0 and has no public download API, so it has its own skill (`megascans-assets`);
+  Textures.com and FreePBR are not CC0. AMD's GPUOpen MaterialX Library has an API but many entries re-host Poly Haven, and its licence label ("MIT Public Domain") is unclear.
 
 ## Scripts
 
